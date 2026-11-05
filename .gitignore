@@ -1,0 +1,25 @@
+# Environments and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Release output
+dist/
+
+# Keys never enter the repository. The app key lives outside it, under
+# C:\Users\Student\.nextcloud\certificates\<app_id>.key, and in CI only as the
+# secret APP_PRIVATE_KEY (see SKELETON.md).
+*.key
+*.pem
+*.p12
+*.csr
+.env
+.env.*
+
+# Tool state
+.claude-active
+.DS_Store

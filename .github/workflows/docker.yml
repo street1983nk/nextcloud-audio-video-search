@@ -1,0 +1,182 @@
+name: Multi-arch image
+
+# Builds the image for amd64 and arm64 on native runners, smoke tests each one
+# out of the registry by digest, and merges both into one manifest. On a release
+# tag the manifest also gets the version tag that <image-tag> in info.xml names.
+# Taken over from Findling's docker.yml, without its app specific probes.
+#
+# Release lesson: the store submission (store-submit.yml) refuses to run until
+# ghcr.io/<owner>/<app_id>:<version> exists and can be pulled anonymously, so
+# set the package to public after the first push (see the last step).
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  # Monthly rebuild picks up base image security fixes for the dev tag.
+  schedule:
+    - cron: '17 4 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/street1983nk/audio_video_search
+
+jobs:
+  build:
+    name: Build and smoke test ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The git tag, the info.xml version and the image tag have to agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          image_tag=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' appinfo/info.xml)
+          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml)
+          echo "git tag ${tag}, image-tag ${image_tag}, version ${version}"
+          [ "${image_tag}" = "${tag}" ] && [ "${version}" = "${tag}" ]
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image for this architecture and push it by digest
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }},mode=max
+
+      # The smoke test runs against the manifest this run published, pulled back
+      # by digest, not against a local build cache that might differ.
+      - name: Smoke test the pushed digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          test -n "${DIGEST}" || { echo "the push step returned no digest"; exit 1; }
+          docker pull "${IMAGE}@${DIGEST}"
+          docker run -d --name smoke \
+            -e APP_ID=audio_video_search -e APP_SECRET=smoke-secret -e APP_PORT=10035 \
+            -e APP_HOST=0.0.0.0 -e APP_VERSION=0.0.0 -e NEXTCLOUD_URL=http://127.0.0.1:8080 \
+            -e APP_PERSISTENT_STORAGE=/nc_app_audio_video_search_data \
+            -p 10035:10035 "${IMAGE}@${DIGEST}"
+          answer=""
+          for _ in $(seq 30); do
+            answer=$(curl -sf http://127.0.0.1:10035/heartbeat || true)
+            [ -n "${answer}" ] && break
+            sleep 1
+          done
+          unsigned=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:10035/status)
+          uid=$(docker exec smoke id -u || echo unknown)
+          health=""
+          for _ in $(seq 30); do
+            health=$(docker inspect --format '{{.State.Health.Status}}' smoke)
+            [ "${health}" = "healthy" ] && break
+            sleep 2
+          done
+          echo "::group::container log"; docker logs smoke; echo "::endgroup::"
+          docker rm -f smoke
+          echo "heartbeat '${answer}', unsigned /status ${unsigned}, uid ${uid}, health ${health}"
+          test "${answer}" = '{"status":"ok"}'
+          test "${unsigned}" = "401"
+          test "${uid}" = "10001"
+          test "${health}" = "healthy"
+
+      - name: Write the digest to a file
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      - name: Hand the digest to the merge job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge both digests into one manifest
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Collect the digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          tags=(-t "${IMAGE}:dev" -t "${IMAGE}:${GITHUB_SHA}")
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+            [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag ${GITHUB_REF} is not vMAJOR.MINOR.PATCH"; exit 1; }
+            tags+=(-t "${IMAGE}:${version}")
+          fi
+          # shellcheck disable=SC2046
+          docker buildx imagetools create "${tags[@]}" $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Verify the manifest carries both platforms
+        run: |
+          ref="${IMAGE}:dev"
+          [[ "${GITHUB_REF}" == refs/tags/v* ]] && ref="${IMAGE}:${GITHUB_REF#refs/tags/v}"
+          docker buildx imagetools inspect "${ref}" | tee manifest.txt
+          grep -q 'linux/amd64' manifest.txt
+          grep -q 'linux/arm64' manifest.txt
+
+      - name: Say what still needs a human
+        run: |
+          echo "After the first push, set the ghcr package to public, otherwise AppAPI cannot pull it:"
+          echo "https://github.com/users/street1983nk/packages/container/audio_video_search/settings"

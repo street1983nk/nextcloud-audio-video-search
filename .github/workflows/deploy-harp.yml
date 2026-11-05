@@ -1,0 +1,207 @@
+name: Deploy through HaRP
+
+# The integration proof every ExApp needs before a store release: a throwaway
+# Nextcloud with AppAPI, a real HaRP container, the image of this commit pushed
+# into a local registry, and the ExApp installed through the deploy daemon the
+# way an admin installs it. Lean form of Findling's deploy-harp.yml.
+#
+# What it proves: the container starts behind HaRP with mutual TLS on the FRP
+# tunnel, AppAPI reaches /heartbeat and /init, PUT /enabled registers the
+# declarative settings form, and the ADMIN route answers through the HaRP proxy.
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-harp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ID: audio_video_search
+  HARP_IMAGE: ghcr.io/nextcloud/nextcloud-appapi-harp@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39
+  LOCAL_REGISTRY: 'localhost:5000'
+  LOCAL_IMAGE_TAG: 'citest'
+  ADMIN_PASS: 'skeleton-ci-only'
+
+jobs:
+  deploy-harp:
+    name: deploy-harp ${{ matrix.server-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - server-version: stable33
+            php-version: '8.2'
+          - server-version: stable34
+            php-version: '8.2'
+          - server-version: stable35
+            php-version: '8.3'
+    steps:
+      # The server checkout comes first: actions/checkout empties its target.
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server-version }}
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: ${{ matrix.server-version }}
+          path: apps/app_api
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Nextcloud and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          NEXTCLOUD_HOST=0.0.0.0 composer run serve > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8080/status.php > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:8080/status.php
+          ./occ app:enable -vvv -f app_api
+
+      - name: Start a local registry and push the image of this commit
+        run: |
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LOCAL_REGISTRY}/${APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src
+          docker push "${LOCAL_REGISTRY}/${APP_ID}:${LOCAL_IMAGE_TAG}"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="http://localhost:8080" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      # Nextcloud and HaRP behind one address, the way a reverse proxy serves
+      # /exapps/ in production.
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Point a temporary info.xml at the local registry
+        run: |
+          sed -e "s|<registry>ghcr.io</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+              -e "s|<image>street1983nk/${APP_ID}</image>|<image>${APP_ID}</image>|" \
+              -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${LOCAL_IMAGE_TAG}</image-tag>|" \
+              app-src/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
+          grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-citest.xml"
+
+      - name: Register the HaRP daemon and install the ExApp through it
+        run: |
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-citest.xml" --wait-finish
+
+      - name: The container runs as 10001, is healthy and the app is enabled
+        run: |
+          container=$(docker ps --filter "name=nc_app_${APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+          test "$(docker exec "${container}" id -u)" = "10001"
+          for _ in $(seq 1 30); do
+            [ "$(docker inspect --format '{{.State.Health.Status}}' "${container}")" = "healthy" ] && break
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' "${container}")" = "healthy"
+          timeout 30 ./occ app_api:app:list | tee app-list.txt
+          grep -q "${APP_ID}" app-list.txt
+
+      - name: The settings form is registered and the admin route answers through HaRP
+        run: |
+          # PUT /enabled registered the form into AppAPI's table ex_settings_forms.
+          forms=$(sqlite3 data/owncloud.db "SELECT appid || ':' || formid FROM oc_ex_settings_forms")
+          echo "registered forms: ${forms}"
+          grep -qx "${APP_ID}:${APP_ID}_admin" <<<"${forms}"
+          code=$(curl -s -o status.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+            "http://localhost:8090/exapps/${APP_ID}/status")
+          cat status.json; echo
+          test "${code}" = "200"
+          jq -e --arg id "${APP_ID}" '.app_id == $id' status.json
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deploy-harp-logs-${{ matrix.server-version }}
+          path: logs/
+          retention-days: 7

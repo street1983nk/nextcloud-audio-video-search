@@ -1,0 +1,72 @@
+name: Python gates
+
+# Mirrors Findling's python.yml. Every action is pinned to a commit SHA with an
+# exact version comment (tests/test_workflow_pins.py); a tag can be moved and
+# would hand a third party code execution in this build.
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A push on top of a push makes the older verdict worthless.
+concurrency:
+  group: python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: ruff, format, pyright, vulture, pytest, shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # The uv release that wrote uv.lock, so --frozen resolves the same here and locally.
+          version: '0.11.7'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the locked environment
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        env:
+          # The pyright release CI runs, also locally (owner rule).
+          PYRIGHT_PYTHON_FORCE_VERSION: latest
+        run: uv run pyright
+
+      - name: Dead code
+        run: uv run vulture src tests scripts --min-confidence 80
+
+      - name: Shell check of the image and release scripts
+        run: |
+          command -v shellcheck || sudo apt-get install -y shellcheck
+          shellcheck --version
+          shellcheck docker/entrypoint.sh docker/healthcheck.sh scripts/release/store-archive.sh scripts/ci/head_green.sh
+
+      # The Dockerfile linter, as a pinned PyPI wheel so it runs without Docker.
+      # tests/test_dockerfile.py holds the project rules on top of it.
+      - name: Dockerfile lint
+        run: uvx --from hadolint-py==2.15.1.3 hadolint Dockerfile
+
+      # -rs names every skip with its reason; the coverage floor (fail_under in
+      # pyproject.toml) rides along, so a feature without tests fails here.
+      - name: Tests
+        run: uv run pytest -q -rs --cov=src/audio_video_search --cov-report=term

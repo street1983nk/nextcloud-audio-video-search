@@ -1,0 +1,176 @@
+name: Release archive for the app store
+
+# One run produces what the store submission needs: the staged app, the store
+# validation path over the info.xml that really ships, both size limits, the
+# tarball and the release signature over it, verified against the certificate.
+# Taken over from Findling's release.yml, reduced to the ExApp half: an ExApp
+# archive carries no PHP, so there is no occ integrity:sign-app step.
+#
+# Release flow (SKELETON.md): tag only after HEAD is green
+# (scripts/ci/head_green.sh <sha>); this run publishes the GitHub release; the
+# store submission is store-submit.yml by hand, after the image of the tag exists
+# on ghcr.io.
+#
+# There is no pull_request trigger, and that absence is the primary defence of
+# the signing key: a fork workflow can never reach the secret.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish a GitHub release (leave off for a rehearsal)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_ID: audio_video_search
+  # The appstore commit whose pre-info.xslt and info.xsd the store validates with.
+  APPSTORE_SHA: eda850ba61407c6e4da3e23316614c6126406652
+  ARCHIVE_MAX_BYTES: 20971520
+  INFO_XML_MAX_BYTES: 524288
+  # sha256 over the DER public key of the app certificate, recorded when the
+  # certificate request was merged. TODO(skeleton) until then, and the run fails.
+  CERT_PUBKEY_SHA256: TODO(skeleton)
+
+jobs:
+  archive:
+    name: Build, validate, sign and size check the archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse to sign anything outside a tag or a manual run of this repository
+        run: |
+          if [ "${GITHUB_REPOSITORY}" != "street1983nk/nextcloud-audio-video-search" ]; then
+            echo "this workflow signs with the release key of street1983nk/nextcloud-audio-video-search only"
+            exit 1
+          fi
+          case "${GITHUB_EVENT_NAME}:${GITHUB_REF}" in
+            push:refs/tags/v*) echo "a release tag, signing is in scope" ;;
+            workflow_dispatch:*) echo "a manual run, which needs write access and cannot come from a fork" ;;
+            *) echo "unexpected event ${GITHUB_EVENT_NAME} on ${GITHUB_REF}"; exit 1 ;;
+          esac
+
+      - name: No skeleton placeholder may ship
+        run: |
+          if grep -rn 'TODO(skeleton)' appinfo l10n README.md README.en.md README.fr.md docs; then
+            echo "the lines above still carry a skeleton placeholder"
+            exit 1
+          fi
+          echo "no placeholder in the shipped or public texts"
+
+      - name: On a tag, the tag, the version and the image tag have to agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml)
+          image_tag=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' appinfo/info.xml)
+          echo "git tag ${tag}, version ${version}, image-tag ${image_tag}"
+          [ "${version}" = "${tag}" ] && [ "${image_tag}" = "${tag}" ]
+
+      - name: Install xsltproc and xmllint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
+
+      - name: Fetch the pinned store transform and schema
+        run: |
+          base="https://raw.githubusercontent.com/nextcloud/appstore/${APPSTORE_SHA}/nextcloudappstore/api/v1/release"
+          curl -fsSL "${base}/pre-info.xslt" -o "${RUNNER_TEMP}/pre-info.xslt"
+          curl -fsSL "${base}/info.xsd" -o "${RUNNER_TEMP}/info.xsd"
+
+      - name: Fetch the certificate and prove it belongs to our key
+        run: |
+          curl -fsSL "https://github.com/nextcloud/app-certificate-requests/raw/master/${APP_ID}/${APP_ID}.crt" \
+            -o "${RUNNER_TEMP}/${APP_ID}.crt"
+          subject=$(openssl x509 -in "${RUNNER_TEMP}/${APP_ID}.crt" -noout -subject -nameopt RFC2253)
+          actual=$(openssl x509 -in "${RUNNER_TEMP}/${APP_ID}.crt" -noout -pubkey \
+            | openssl pkey -pubin -outform DER | openssl sha256 -r | cut -d' ' -f1)
+          echo "subject     ${subject}"
+          echo "fingerprint ${actual}"
+          [ "${subject}" = "subject=CN=${APP_ID}" ] || { echo "the certificate subject is not the app id"; exit 1; }
+          [ "${actual}" = "${CERT_PUBKEY_SHA256}" ] || { echo "the certificate does not belong to the recorded key"; exit 1; }
+
+      - name: Stage the app
+        run: scripts/release/store-archive.sh stage "${RUNNER_TEMP}/build"
+
+      - name: Validate the staged info.xml the way the store does
+        run: |
+          xsltproc "${RUNNER_TEMP}/pre-info.xslt" "${RUNNER_TEMP}/build/${APP_ID}/appinfo/info.xml" \
+            | xmllint --noout --schema "${RUNNER_TEMP}/info.xsd" -
+
+      - name: The info.xml has to stay under 512 KB
+        run: |
+          bytes=$(stat -c%s "${RUNNER_TEMP}/build/${APP_ID}/appinfo/info.xml")
+          echo "info.xml is ${bytes} bytes, the store limit is ${INFO_XML_MAX_BYTES}"
+          [ "${bytes}" -lt "${INFO_XML_MAX_BYTES}" ]
+
+      - name: Pack the archive
+        run: scripts/release/store-archive.sh pack "${RUNNER_TEMP}/build" "dist/${APP_ID}.tar.gz"
+
+      - name: The archive has to stay under 20 MB
+        run: |
+          bytes=$(stat -c%s "dist/${APP_ID}.tar.gz")
+          echo "the archive is ${bytes} bytes, the store limit is ${ARCHIVE_MAX_BYTES}"
+          [ "${bytes}" -lt "${ARCHIVE_MAX_BYTES}" ]
+
+      - name: Prove what the archive contains and what it does not
+        run: scripts/release/store-archive.sh assert-contents "dist/${APP_ID}.tar.gz"
+
+      - name: Sign the archive for the store and verify the signature
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "${APP_PRIVATE_KEY}" ]; then
+            echo "APP_PRIVATE_KEY is empty; the secret is missing and an unsigned upload must not be prepared"
+            exit 1
+          fi
+          ( umask 077; printf '%s\n' "${APP_PRIVATE_KEY}" | tr -d '\r' > "${RUNNER_TEMP}/app.key" )
+          openssl dgst -sha512 -sign "${RUNNER_TEMP}/app.key" "dist/${APP_ID}.tar.gz" \
+            | openssl base64 -A > "dist/${APP_ID}.tar.gz.sig"
+          test -s "dist/${APP_ID}.tar.gz.sig"
+          openssl x509 -in "${RUNNER_TEMP}/${APP_ID}.crt" -noout -pubkey > "${RUNNER_TEMP}/app.pub"
+          openssl base64 -d -A -in "dist/${APP_ID}.tar.gz.sig" -out "${RUNNER_TEMP}/app.sig.bin"
+          openssl dgst -sha512 -verify "${RUNNER_TEMP}/app.pub" \
+            -signature "${RUNNER_TEMP}/app.sig.bin" "dist/${APP_ID}.tar.gz"
+
+      - name: Upload the archive and its signature
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: store-release
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish a GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.create_release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF#refs/tags/}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF#refs/tags/}" \
+            --notes-file <(awk -v v="## ${GITHUB_REF#refs/tags/v}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md) \
+            "dist/${APP_ID}.tar.gz" "dist/${APP_ID}.tar.gz.sig"
+
+      - name: Remove the key file
+        if: always()
+        run: |
+          shred -u "${RUNNER_TEMP}/app.key" 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/app.key"
+          test ! -e "${RUNNER_TEMP}/app.key"

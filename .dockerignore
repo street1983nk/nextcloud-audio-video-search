@@ -1,0 +1,17 @@
+# Nothing that must not reach the build context. A local .venv copied into the
+# image would shadow the one built from the lock file.
+.git/
+.github/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.planning/
+__pycache__/
+*.pyc
+*.key
+*.pem
+dist/
+tests/
+scripts/
+docs/
+store/

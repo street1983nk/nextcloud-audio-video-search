@@ -1,0 +1,124 @@
+name: Store submission
+
+# Submits the signed archive of one GitHub release to the Nextcloud App Store.
+# By hand only (workflow_dispatch): a store release is a decision, not a side
+# effect of a push. Taken over from Findling's store-submit.yml, one app instead
+# of the pair.
+#
+# Lessons that are enforced here, not only written down:
+#   - the image of the tag must exist on ghcr.io and be pullable WITHOUT
+#     credentials before the store knows the release, otherwise every
+#     installation fails on the pull (checked below, anonymously)
+#   - the release assets must exist (release.yml runs only after a green HEAD)
+#   - no polling here: check the store API afterwards at most every 10 minutes
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag whose assets are submitted, for example v0.1.0'
+        required: true
+        type: string
+      register:
+        description: 'Register the app id first (only for the very first submission)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: store-submit
+  cancel-in-progress: false
+
+env:
+  APP_ID: audio_video_search
+  IMAGE: ghcr.io/street1983nk/audio_video_search
+
+jobs:
+  submit:
+    name: Check image and assets, then submit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Refuse to run outside this repository and on a malformed tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ "${GITHUB_REPOSITORY}" != "street1983nk/nextcloud-audio-video-search" ]; then
+            echo "this workflow submits with the store token of street1983nk/nextcloud-audio-video-search only"
+            exit 1
+          fi
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag '${TAG}' is not vMAJOR.MINOR.PATCH"; exit 1; }
+
+      - name: The image of the tag exists on ghcr.io and pulls without credentials
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          if ! docker buildx imagetools inspect "${IMAGE}:${version}" | tee manifest.txt; then
+            echo "${IMAGE}:${version} cannot be read anonymously: not built yet, or the package is still private"
+            exit 1
+          fi
+          grep -q 'linux/amd64' manifest.txt
+          grep -q 'linux/arm64' manifest.txt
+
+      - name: The release assets exist
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          curl -sfIL "${base}/${APP_ID}.tar.gz" > /dev/null || { echo "${APP_ID}.tar.gz is missing on ${TAG}"; exit 1; }
+          curl -sfL "${base}/${APP_ID}.tar.gz.sig" -o "${RUNNER_TEMP}/signature"
+          test -s "${RUNNER_TEMP}/signature"
+
+      - name: Register the app id
+        if: inputs.register
+        env:
+          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${APP_PRIVATE_KEY}" || { echo "APP_PRIVATE_KEY is empty; the secret is missing"; exit 1; }
+          ( umask 077; printf '%s\n' "${APP_PRIVATE_KEY}" | tr -d '\r' > "${RUNNER_TEMP}/app.key" )
+          curl -sfL "https://raw.githubusercontent.com/nextcloud/app-certificate-requests/master/${APP_ID}/${APP_ID}.crt" \
+            -o "${RUNNER_TEMP}/app.crt"
+          signature=$(printf '%s' "${APP_ID}" | openssl dgst -sha512 -sign "${RUNNER_TEMP}/app.key" | openssl base64 -A)
+          code=$(jq -n --rawfile certificate "${RUNNER_TEMP}/app.crt" --arg signature "${signature}" \
+                   '{certificate: $certificate, signature: $signature}' \
+                 | curl -s -o "${RUNNER_TEMP}/register.json" -w '%{http_code}' \
+                     -X POST 'https://apps.nextcloud.com/api/v1/apps' \
+                     -H "Authorization: Token ${APPSTORE_TOKEN}" \
+                     -H 'Content-Type: application/json' \
+                     --data @-)
+          echo "register ${APP_ID}: HTTP ${code}"; cat "${RUNNER_TEMP}/register.json"; echo
+          case "${code}" in
+            200|201) echo "registered" ;;
+            400) echo "400 is also the answer for an id that is registered already; the release step settles it" ;;
+            *) echo "unexpected answer"; exit 1 ;;
+          esac
+
+      - name: Submit the release
+        env:
+          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          download="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APP_ID}.tar.gz"
+          code=$(jq -n --arg download "${download}" --rawfile signature "${RUNNER_TEMP}/signature" \
+                   '{download: $download, signature: ($signature | rtrimstr("\n"))}' \
+                 | curl -s -o "${RUNNER_TEMP}/release.json" -w '%{http_code}' \
+                     -X POST 'https://apps.nextcloud.com/api/v1/apps/releases' \
+                     -H "Authorization: Token ${APPSTORE_TOKEN}" \
+                     -H 'Content-Type: application/json' \
+                     --data @-)
+          echo "release ${APP_ID} ${TAG}: HTTP ${code}"; cat "${RUNNER_TEMP}/release.json"; echo
+          case "${code}" in
+            200|201) echo "submitted; check https://apps.nextcloud.com/api/v1/apps.json at most every 10 minutes" ;;
+            *) echo "the submission failed"; exit 1 ;;
+          esac
+
+      - name: Remove the key file
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/app.key"

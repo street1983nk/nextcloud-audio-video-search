@@ -1,0 +1,20 @@
+# Scripts, container configuration and strict text formats are read by Linux
+# shells, containers and CI runners. A checkout with core.autocrlf=true would hand
+# them a carriage return at the end of the shebang, and every start would fail on
+# an invisible character. The store archive refuses CRLF as well
+# (scripts/release/store-archive.sh).
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+*.png binary
+*.jpg binary

@@ -1,0 +1,19 @@
+# Licensing information in REUSE 3.2 form (reuse.software), as one bulk
+# annotation rather than per-file headers, as in Findling.
+version = 1
+SPDX-PackageName = "Audio & Video Search"
+SPDX-PackageSupplier = "street1983nk <admin@infranode.dev>"
+SPDX-PackageDownloadLocation = "https://github.com/street1983nk/nextcloud-audio-video-search"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 street1983nk"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# HaRP's published start script, copied unchanged from nextcloud/HaRP.
+[[annotations]]
+path = "docker/start.sh"
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Nextcloud GmbH and Nextcloud contributors"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
