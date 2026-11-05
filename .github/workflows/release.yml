@@ -38,8 +38,8 @@ env:
   ARCHIVE_MAX_BYTES: 20971520
   INFO_XML_MAX_BYTES: 524288
   # sha256 over the DER public key of the app certificate, recorded when the
-  # certificate request was merged. TODO(skeleton) until then, and the run fails.
-  CERT_PUBKEY_SHA256: TODO(skeleton)
+  # certificate request was merged (05.11.2026).
+  CERT_PUBKEY_SHA256: 0ab74bbaa2972f1cac290b8445e71ffe9d450063db32170262448052ab6aa4c8
 
 jobs:
   archive:
