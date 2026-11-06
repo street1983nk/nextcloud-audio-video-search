@@ -39,19 +39,21 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Ein Nutzer sucht ein Dummy-Wort und bekommt in der Unified Search einen Treffer mit Dateiname, Zeitmarke und Ausschnitt; der Klick öffnet die Abspielansicht, die per Range-Seek über WebDAV an der Zeitstelle startet (NC 33 bis 35, hell/dunkel, drei Breiten, Playwright).
   4. Ein Test-Transkript trägt Herkunft (Engine, Modell-sha256, Konfigurationsversion, Profilstufe) und Inhalts-Schlüssel; ein Schreibversuch mit älterer Herkunft wird abgewiesen.
   5. Das Transkript-Schema hält Nutzerkorrekturen als eigene Schicht über den Maschinen-Stufen; ein Test zeigt, dass eine Korrektur einen simulierten Ersatz durch ein besseres Maschinen-Transkript übersteht (Vorbedingung für BITV-01).
-**Plans**: 11 plans
+**Plans**: 13 plans (8 Wellen)
 Plans:
-- [ ] 01-01-PLAN.md: Gerüst beider Apps (backend/ + php/), Paket-Freigabe, Lockstep-Build-Gate, php.yml
-- [ ] 01-02-PLAN.md: Datenkern SQLite mit Inhalts-Schlüssel, Provenienz, bedingtem Schreiben und Korrektur-Schicht (TRANS-06)
-- [ ] 01-03-PLAN.md: PHP-Suchtreffer: ExAppService, Rechte-Recheck, Provider mit Zeitmarke, Gateway, occ-Saat
-- [ ] 01-04-PLAN.md: Kataloge DE/EN/FR mit Gate und fehlschlagender Playwright-Kernweg
-- [ ] 01-05-PLAN.md: Container-Hälfte: Tantivy-Index, /sample mit sha256 im Strom, /search, /excerpt
-- [ ] 01-06-PLAN.md: Abspielansicht mit Range-Seek über WebDAV und allen Zuständen
-- [ ] 01-07-PLAN.md: Admin-Sektion mit Gegen-App-Zustand, Erneut prüfen, Debug-Schalter (PLAT-02)
-- [ ] 01-08-PLAN.md: Handshake: Container erkennt fehlende PHP-App, erweiterter /status
-- [ ] 01-09-PLAN.md: CI-Integrationsbeweis auf sechs Beinen mit Playwright und Screenshots
-- [ ] 01-10-PLAN.md: Upgrade 0.0.1 nach 0.1.0, Drift-Schritte, zwei Store-Archive, Doku DE/EN/FR
-- [ ] 01-11-PLAN.md: Owner: Push-Freigabe, CI-Läufe, gemeinsame UI-Abnahme
+- [ ] 01-01-PLAN.md: (W1) Gerüst beider Apps (backend/ + php/), Paket-Freigabe, Workflows, Lockstep-Build-Gate, php.yml
+- [ ] 01-02-PLAN.md: (W2) Datenkern SQLite mit Inhalts-Schlüssel, Provenienz, bedingtem Schreiben, Korrektur-Schicht, remove_sample (TRANS-06)
+- [ ] 01-03-PLAN.md: (W2) PHP-Suchtreffer: ExAppService, Rechte-Recheck, Provider mit Zeitmarke, Gateway, occ-Saat mit --remove
+- [ ] 01-04-PLAN.md: (W2) Kataloge DE/EN/FR mit Gate und fehlschlagender Playwright-Kernweg
+- [ ] 01-12-PLAN.md: (W3) Owner: früher Push auf Branch phase-01, php.yml/phpunit in CI, Korrekturschleife
+- [ ] 01-05-PLAN.md: (W4) Container-Hälfte: Tantivy-Index, /sample mit sha256 im Strom, /sample/remove, /search, /excerpt
+- [ ] 01-06-PLAN.md: (W4) Abspielansicht mit Range-Seek über WebDAV und allen Zuständen
+- [ ] 01-07-PLAN.md: (W5) Admin-Sektion mit Gegen-App-Zustand, Erneut prüfen, Debug-Schalter (PLAT-02)
+- [ ] 01-08-PLAN.md: (W5) Handshake: Container erkennt fehlende PHP-App, erweiterter /status
+- [ ] 01-09-PLAN.md: (W6) CI-Integrationsbeweis auf sechs Beinen mit Playwright und Screenshots
+- [ ] 01-13-PLAN.md: (W6) Doku DE/EN/FR, DESIGN.md, PRODUCT.md, CHANGELOG
+- [ ] 01-10-PLAN.md: (W7) Upgrade 0.0.1 nach 0.1.0, Drift-Schritte, zwei Store-Archive
+- [ ] 01-11-PLAN.md: (W8) Owner: Push-Freigabe main oder phase-01, CI mit Korrekturschleife, gemeinsame UI-Abnahme
 **UI hint**: yes
 **Research flag**: Range-Seek über WebDAV mit Sitzungs-Cookie, Mobil-Apps, Verhalten NC 33/34/35, Store-Ablauf mit zwei Apps. Vor dem Plan klären: viewer#2176/#3226 (Startzeit im Viewer, Folge in jedem Fall eigene Route), Suchindex Tantivy vs. FTS5 (Empfehlung Tantivy, SQLite als Wahrheit), Inhalts-Schlüssel Datei-Hash vs. PCM-Fingerabdruck (Datei-Hash als Vorfilter, PCM-Fingerabdruck als Schlüssel prüfen), Verankerung von Korrekturen an Zeit- und Wortpositionen.
 

@@ -22,10 +22,10 @@ Ein Admin installiert die PHP-App `audio_video_search` und die ExApp `audio_vide
 | Suchindex | Tantivy 0.26.2, abgeleitet und jederzeit aus SQLite neu baubar; Felder `media_id`, `index_rev`, `seg_idx`, `start_ms`, `body_de`, `body_en`, `body_fr`; nur `index/open.py` öffnet; Suche übernimmt nur Treffer mit `index_rev` gleich `current.index_rev` oder `current.index_rev - 1` (je `media_id` die höchste), `index_outbox` + Anlauf-Abgleich | RESEARCH Entscheid 2, Pattern 3; Planer-Festlegung des Tauschfensters |
 | Abspielansicht | PHP-Template `play.php` mit nativem `<video>`/`<audio>` auf `/remote.php/dav/files/{uid}/{pfad}#t={s}`; `resourceUrl` trägt `?t=`; kein eigener Stream-Controller, kein Autoplay, kein Bundler | RESEARCH Entscheid 1, UI-SPEC Fläche 2 |
 | Suchtreffer | Provider-ID `audio_video_search`, Gruppenname "Audio und Video", `subline` = `m:ss · Ausschnitt`, Attribute `fileId` + `path` (Mobil nativ ab 0:00), Rechte-Recheck je fileId zur Abfragezeit | RESEARCH Entscheid 7, Owner 06.11. |
-| Testtreffer | `occ audio_video_search:sample <fileId> [--at=<s>]` nur mit `config.php` `debug => true`; Stufe `sample` (level 1) wird von jeder echten Stufe verdrängt; Schalter `sample_visible` in IAppConfig | Owner 06.11. |
+| Testtreffer | `occ audio_video_search:sample <fileId> [--at=<s>]` zum Anlegen und `--remove` zum Entfernen (nur per occ, UI-SPEC Entscheid 6), beides nur mit `config.php` `debug => true`; Stufe `sample` (level 1) wird von jeder echten Stufe verdrängt; Schalter `sample_visible` in IAppConfig | Owner 06.11. |
 | Auth | Nextcloud-Sitzung für Seite und WebDAV (GET ohne CSRF); PHP nach Container nur signiert über `PublicFunctions::exAppRequest`; Container nach PHP nur `#[ExAppRequired]` + `EX-APP-ID`-Prüfung | ASVS V2/V4 |
 | Env-Präfix Container | `AVS_` (z. B. `AVS_LOG_LEVEL`) | Planer-Festlegung (RESEARCH Runtime State) |
-| Deployment / Lauf | Kein lokaler Stack (RAM). Voller Lauf in CI: `deploy-harp.yml` mit HaRP, Matrix NC 33/34/35 x amd64/arm64, beide Apps, Testmedien per ffmpeg im Runner, Playwright `ci/playwright/`; Push nur nach Owner-Freigabe | Owner-Regeln |
+| Deployment / Lauf | Kein lokaler Stack (RAM). Voller Lauf in CI: `deploy-harp.yml` mit HaRP, Matrix NC 33/34/35 x amd64/arm64, beide Apps, Testmedien per ffmpeg im Runner, Playwright `ci/playwright/`; Push nur nach Owner-Freigabe; früher Push auf Branch `phase-01` nach Welle 2 für phpunit (Owner 06.11.) | Owner-Regeln |
 
 ## Stack Touched in Phase 1
 
