@@ -52,7 +52,7 @@ Plans:
 - [x] 01-08-PLAN.md: (W5) Handshake: Container erkennt fehlende PHP-App, erweiterter /status
 - [x] 01-09-PLAN.md: (W6) CI-Integrationsbeweis auf sechs Beinen mit Playwright und Screenshots
 - [x] 01-13-PLAN.md: (W6) Doku DE/EN/FR, DESIGN.md, PRODUCT.md, CHANGELOG
-- [ ] 01-10-PLAN.md: (W7) Upgrade 0.0.1 nach 0.1.0, Drift-Schritte, zwei Store-Archive
+- [x] 01-10-PLAN.md: (W7) Upgrade 0.0.1 nach 0.1.0, Drift-Schritte, zwei Store-Archive
 - [ ] 01-11-PLAN.md: (W8) Owner: Push-Freigabe main oder phase-01, CI mit Korrekturschleife, gemeinsame UI-Abnahme
 **UI hint**: yes
 **Research flag**: Range-Seek über WebDAV mit Sitzungs-Cookie, Mobil-Apps, Verhalten NC 33/34/35, Store-Ablauf mit zwei Apps. Vor dem Plan klären: viewer#2176/#3226 (Startzeit im Viewer, Folge in jedem Fall eigene Route), Suchindex Tantivy vs. FTS5 (Empfehlung Tantivy, SQLite als Wahrheit), Inhalts-Schlüssel Datei-Hash vs. PCM-Fingerabdruck (Datei-Hash als Vorfilter, PCM-Fingerabdruck als Schlüssel prüfen), Verankerung von Korrekturen an Zeit- und Wortpositionen.
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Zwei-App-Gerüst und Integrationsbeweis | 11/13 | In Progress|  |
+| 1. Zwei-App-Gerüst und Integrationsbeweis | 12/13 | In Progress|  |
 | 2. Erfassung aller Dateien | 0/TBD | Not started | - |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
