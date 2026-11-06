@@ -1,0 +1,11 @@
+{
+    "translations": {
+        "Audio & Video Search": "Audio & Video Search",
+        "This app is the backend of Audio & Video Search and needs the app \"Audio & Video Search\". The state of both apps is shown under Administration, Audio & Video Search.": "Cette application est le backend d'Audio & Video Search et nécessite l'application « Audio & Video Search ». L'état des deux applications figure dans Administration, Audio & Video Search.",
+        "Processing": "Traitement",
+        "Process new files automatically": "Traiter automatiquement les nouveaux fichiers",
+        "Largest file in MB": "Taille maximale d'un fichier en Mo",
+        "Larger files are skipped and listed as skipped.": "Les fichiers plus grands sont ignorés et listés comme ignorés."
+    },
+    "pluralForm": "nplurals=3; plural=(n == 0 || n == 1) ? 0 : n != 0 && n % 1000000 == 0 ? 1 : 2;"
+}

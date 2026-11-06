@@ -1,0 +1,85 @@
+[project]
+name = "audio_video_search_backend"
+# Lockstep: this version, <version> and <image-tag> in backend/appinfo/info.xml,
+# <version> in php/appinfo/info.xml and the git tag v<version> are one number
+# (tests/test_store_metadata.py and tests/test_lockstep_versions.py hold them).
+version = "0.1.0"
+description = "Audio & Video Search: Nextcloud External App (ExApp) backend"
+# uv_build takes no path outside backend/, so the package carries its own short README.
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "AGPL-3.0-or-later"
+authors = [{ name = "street1983nk" }]
+dependencies = [
+    # Same pins as Findling 1.6.x. nc-py-api owns the AppAPI contract (signed
+    # requests, /enabled, /heartbeat, /init, declarative settings); the sync API
+    # disappears in 0.31.0, so only the async entry points are used.
+    "nc-py-api[app]==0.30.3",
+    "fastapi==0.162.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.17.3",
+    "pyright==1.1.414",
+    "vulture==2.16",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "pytest-cov==7.1.0",
+    # starlette.testclient needs it; src never imports it.
+    "httpx==0.28.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "audio_video_search_backend"
+module-root = "src"
+
+# starlette comes in through nc-py-api. The floor stays above CVE-2026-48710
+# (BadHost, path desync defeating path based authorization).
+[tool.uv]
+constraint-dependencies = ["starlette>=1.0.1"]
+# nc-py-api 0.30.3 caps filelock at <4 while the ReadWriteLock advisories are
+# fixed only in 4.2.1; the classic FileLock API it uses is unchanged in 4.x.
+override-dependencies = ["filelock>=4.2.1"]
+
+[tool.coverage.report]
+fail_under = 90
+skip_covered = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+src = ["src", "tests", "../scripts"]
+
+[tool.ruff.lint]
+# The full rule set of Findling, unchanged.
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "SIM", "C4", "RUF", "PT", "RET", "A", "ISC"]
+
+[tool.ruff.lint.per-file-ignores]
+# S101 flags every plain assert; tests are the one place where assert is meant.
+"tests/*" = ["S101"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.13"
+include = ["src", "tests", "../scripts"]
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src", "tests", "../scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# A synchronous enabled_handler only warns in nc-py-api 0.30.x and breaks in
+# 0.31.0; turning the warning into an error surfaces the mistake now.
+# The second entry silences the starlette.testclient hint about httpx2, tests only.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
