@@ -22,8 +22,13 @@ VERSION = "0.1.0"
 
 
 @pytest.fixture(autouse=True)
-def appapi_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """What AppAPI hands every container, with values that are clearly not real."""
+def appapi_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """What AppAPI hands every container, with values that are clearly not real.
+
+    The persistent volume is the test's own temporary directory, so a lifespan
+    never writes state.db or the index outside of it.
+    """
+    monkeypatch.setenv("APP_PERSISTENT_STORAGE", str(tmp_path))
     monkeypatch.setenv("APP_ID", APP_ID)
     monkeypatch.setenv("APP_SECRET", SECRET)
     monkeypatch.setenv("APP_VERSION", VERSION)

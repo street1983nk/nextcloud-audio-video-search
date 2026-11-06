@@ -42,7 +42,12 @@ def test_only_the_boundary_imports_nc_py_api() -> None:
     files = sorted(PACKAGE.rglob("*.py"))
 
     assert len(files) >= 5
-    assert guarded_imports(BOUNDARY.read_text(encoding="utf-8"))
+    # Both guarded clients live in the boundary: nc_py_api for AppAPI, httpx
+    # for the streamed read of the content gateway.
+    assert {name.split(".")[0] for name in guarded_imports(BOUNDARY.read_text(encoding="utf-8"))} == {
+        "nc_py_api",
+        "httpx",
+    }
     assert offenders(files) == []
 
 
