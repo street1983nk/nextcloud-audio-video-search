@@ -16,6 +16,11 @@ dependencies = [
     # disappears in 0.31.0, so only the async entry points are used.
     "nc-py-api[app]==0.30.3",
     "fastapi==0.162.0",
+    # The derived search index (Findling pin, owner approved in plan 01-01;
+    # wheel sha256 for amd64 and arm64 are held in uv.lock).
+    "tantivy==0.26.2",
+    # Streams the file bytes from the PHP content gateway (nc.py only).
+    "httpx==0.28.1",
 ]
 
 [dependency-groups]
@@ -26,8 +31,6 @@ dev = [
     "pytest==9.2.0",
     "pytest-asyncio==1.4.1.post1",
     "pytest-cov==7.1.0",
-    # starlette.testclient needs it; src never imports it.
-    "httpx==0.28.1",
 ]
 
 [build-system]

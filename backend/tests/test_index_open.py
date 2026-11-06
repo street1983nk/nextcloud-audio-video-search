@@ -84,7 +84,7 @@ def _write(index_dir: Path, text: str) -> SearchIndex:
 def _count(index_dir: Path, term: str, field: str) -> int:
     index = open_index(index_dir, CONSTITUENTS)
     searcher = open_reader(index)
-    return searcher.search(index.parse_query(term, [field]), 10).count
+    return len(searcher.search(index.parse_query(term, [field]), 10).hits)
 
 
 def test_the_three_chains_are_registered_on_open(tmp_path: Path) -> None:
@@ -202,3 +202,12 @@ def test_open_generation_rebuilds_when_a_mark_differs(tmp_path: Path, store: Sto
         assert [h.media_id for h in rebuilt.search("Audiosuche", 5)] == [media_id]
     finally:
         rebuilt.close()
+
+
+@pytest.mark.parametrize("key", ["schema_version", "index_generation", "Bad-Key", ""])
+def test_set_meta_refuses_the_stores_own_marks_and_odd_keys(store: Store, key: str) -> None:
+    with pytest.raises(ValueError, match="key"):
+        store.set_meta(key, "1")
+
+    assert store.schema_version() == 1
+    assert store.index_generation() == 0

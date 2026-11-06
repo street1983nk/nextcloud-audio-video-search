@@ -52,6 +52,13 @@ _MAX_UID_LENGTH: Final = 64
 
 _SET_META_DEFAULT: Final = "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)"
 _GET_META: Final = "SELECT value FROM meta WHERE key = ?"
+_SET_META: Final = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value"
+_BUMP_GENERATION: Final = """
+UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'index_generation' RETURNING value
+"""
+# The store's own mark is written by open() alone; set_meta refuses it.
+_OWN_META_KEYS: Final = frozenset({"schema_version", "index_generation"})
+_META_KEY: Final = re.compile(r"[a-z][a-z_]{0,63}")
 
 _MEDIA_FOR_KEY: Final = "SELECT media_id FROM media_key WHERE kind = 'file_sha256' AND value = ?"
 _INSERT_MEDIA: Final = "INSERT INTO media (created_at) VALUES (?)"
@@ -96,6 +103,7 @@ _CHANGES: Final = "SELECT changes()"
 _CURRENT: Final = "SELECT version_id, epoch, level, config_version, index_rev FROM current WHERE media_id = ?"
 _BUMP_INDEX_REV: Final = "UPDATE current SET index_rev = index_rev + 1 WHERE media_id = ? RETURNING index_rev"
 _COUNT_AT_LEVEL: Final = "SELECT COUNT(*) FROM current WHERE level = ?"
+_CURRENT_MEDIA_IDS: Final = "SELECT media_id FROM current ORDER BY media_id"
 _MACHINE_WORDS: Final = """
 SELECT start_ms, end_ms, surface, norm, conf, src FROM word WHERE version_id = ? ORDER BY idx
 """
@@ -277,6 +285,34 @@ class Store:
         row = self._conn.execute(_GET_META, ("schema_version",)).fetchone()
         return int(row[0]) if row else 0
 
+    # Version marks of the derived index.
+
+    def meta_value(self, key: str) -> str | None:
+        """One value of the meta table, None when the key is not set."""
+        row = self._conn.execute(_GET_META, (key,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Write a mark of the derived index; the store's own marks are refused."""
+        if _META_KEY.fullmatch(key) is None or key in _OWN_META_KEYS:
+            raise ValueError("invalid meta field: key")
+        with self._transaction():
+            self._conn.execute(_SET_META, (key, value))
+
+    def index_generation(self) -> int:
+        """The generation of the index directory; a new one means a rebuild from SQLite."""
+        value = self.meta_value("index_generation")
+        return int(value) if value is not None and value.isdigit() else 0
+
+    def bump_index_generation(self) -> int:
+        """Raise the index generation and return the new value."""
+        with self._transaction():
+            row = self._conn.execute(_BUMP_GENERATION).fetchone()
+        if row is None:
+            raise RuntimeError("meta row index_generation is missing")
+        _LOG.info("index generation raised", extra={"generation": int(row[0])})
+        return int(row[0])
+
     # Content keys and files.
 
     def media_for_file_sha256(self, sha256: str) -> int:
@@ -417,6 +453,10 @@ class Store:
     def current(self, media_id: int) -> CurrentRow | None:
         row = self._conn.execute(_CURRENT, (media_id,)).fetchone()
         return None if row is None else CurrentRow(*(int(v) for v in row))
+
+    def current_media_ids(self) -> list[int]:
+        """Every media item with a current version, what a rebuild of the index reads."""
+        return [int(r[0]) for r in self._conn.execute(_CURRENT_MEDIA_IDS)]
 
     def count_current_at_level(self, level: int) -> int:
         return int(self._conn.execute(_COUNT_AT_LEVEL, (int(level),)).fetchone()[0])
