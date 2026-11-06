@@ -46,7 +46,7 @@ Plans:
 - [x] 01-03-PLAN.md: (W2) PHP-Suchtreffer: ExAppService, Rechte-Recheck, Provider mit Zeitmarke, Gateway, occ-Saat mit --remove
 - [x] 01-04-PLAN.md: (W2) Kataloge DE/EN/FR mit Gate und fehlschlagender Playwright-Kernweg
 - [x] 01-12-PLAN.md: (W3) Owner: früher Push auf Branch phase-01, php.yml/phpunit in CI, Korrekturschleife
-- [ ] 01-05-PLAN.md: (W4) Container-Hälfte: Tantivy-Index, /sample mit sha256 im Strom, /sample/remove, /search, /excerpt
+- [x] 01-05-PLAN.md: (W4) Container-Hälfte: Tantivy-Index, /sample mit sha256 im Strom, /sample/remove, /search, /excerpt
 - [ ] 01-06-PLAN.md: (W4) Abspielansicht mit Range-Seek über WebDAV und allen Zuständen
 - [ ] 01-07-PLAN.md: (W5) Admin-Sektion mit Gegen-App-Zustand, Erneut prüfen, Debug-Schalter (PLAT-02)
 - [ ] 01-08-PLAN.md: (W5) Handshake: Container erkennt fehlende PHP-App, erweiterter /status
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Zwei-App-Gerüst und Integrationsbeweis | 5/13 | In Progress|  |
+| 1. Zwei-App-Gerüst und Integrationsbeweis | 6/13 | In Progress|  |
 | 2. Erfassung aller Dateien | 0/TBD | Not started | - |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |

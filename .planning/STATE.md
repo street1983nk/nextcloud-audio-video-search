@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 01-04 abgeschlossen (Kataloge DE/EN/FR, E2E-Kernweg)
-last_updated: "2026-11-06T13:18:24.533Z"
+stopped_at: Plan 01-05 abgeschlossen (Tantivy-Index, Container-Routen)
+last_updated: "2026-11-06T13:32:49.675Z"
 last_activity: 2026-11-06
 progress:
   total_phases: 11
   completed_phases: 0
   total_plans: 13
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 01 (Zwei-App-Gerüst und Integrationsbeweis) — EXECUTING
-Plan: 6 of 13
+Plan: 7 of 13
 Status: Ready to execute
 Last activity: 2026-11-06
 
-Progress: [███░░░░░░░] 31%
+Progress: [█████░░░░░] 46%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [███░░░░░░░] 31%
 | Phase 01 P02 | 9min | 2 tasks | 10 files |
 | Phase 01 P03 | 45 min | 2 tasks | 11 files |
 | Phase 01 P04 | 35 min | 2 tasks | 18 files |
+| Phase 01 P05 | 60 min | 2 tasks | 23 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-03: SAMPLE_TIMEOUT_SECONDS 120 s für /sample und /sample/remove, Suche bleibt bei 1,5 s
 - [Phase 01]: 01-03: occ-Besitzerauflösung über FileAccess::ownerOf, getFirstNodeById nur in FileAccess.php
 - [Phase 01]: 01-04: l10n_js.py prüft ohne --root beide Katalogwurzeln; Gate verlangt jedes t()-Literal der PHP-App in php/l10n
+- [Phase 1]: 01-05: Trefferzeit = erstes passendes Wort im Segment (SearchIndex.first_match_ms), sonst Segmentbeginn
+- [Phase 1]: 01-05: Index-Marken in meta (index_schema_version, index_analyzer mit Wortlisten-Digest, index_tantivy); Abweichung baut neue Generation index/gen-N aus SQLite
+- [Phase 1]: 01-05: Eine Sperre (api.Services.lock) um alle Store- und Indexarbeit; Image braucht noch wngerman für Kompositazerlegung (deferred)
 
 ### Pending Todos
 
@@ -108,6 +112,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-06T13:10:21.897Z
-Stopped at: Plan 01-04 abgeschlossen (Kataloge DE/EN/FR, E2E-Kernweg)
+Last session: 2026-11-06T13:32:49.656Z
+Stopped at: Plan 01-05 abgeschlossen (Tantivy-Index, Container-Routen)
 Resume file: None
