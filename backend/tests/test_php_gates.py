@@ -47,7 +47,7 @@ LOOKUP_CALL = "->getFirstNodeById("
 LOOKUP_HOME = "FileAccess.php"
 DEBUG_OUTPUT = ("error_log", "var_dump", "print_r")
 LEAKING_LOG_ARGUMENTS = re.compile(r"getPath\(\)|getName\(\)|\$path\b")
-DASHES = ("–", "—")
+DASHES = ("\u2013", "\u2014")
 PHP_HEADER = re.compile(r"\A<\?php\r?\n(?:\r?\n)*declare\(strict_types=1\);")
 
 _FUNCTION = re.compile(r"^\s*(?:public|protected|private)\s+(?:static\s+)?function\s+(\w+)\s*\(")
@@ -340,5 +340,5 @@ def test_self_rule7_fires_on_a_missing_or_late_strict_declaration() -> None:
 
 
 def test_self_rule8_fires_on_both_dashes() -> None:
-    assert dashes_in("a – b — c") == ["U+2013", "U+2014"]
-    assert dashes_in("a - b · c …") == []
+    assert dashes_in("a \u2013 b \u2014 c") == ["U+2013", "U+2014"]
+    assert dashes_in("a - b \u00b7 c \u2026") == []
