@@ -21,7 +21,8 @@ updates:
           - minor
           - patch
   - package-ecosystem: docker
-    directory: "/"
+    # The Dockerfile and the uv lock file live in the backend half.
+    directory: "/backend"
     schedule:
       interval: weekly
       day: monday
@@ -31,7 +32,7 @@ updates:
     commit-message:
       prefix: "chore(docker)"
   - package-ecosystem: uv
-    directory: "/"
+    directory: "/backend"
     schedule:
       interval: weekly
       day: monday

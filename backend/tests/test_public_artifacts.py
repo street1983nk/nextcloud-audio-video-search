@@ -12,7 +12,7 @@ carry what it keeps out.
 
 import re
 
-from tests.conftest import REPO_ROOT
+from tests.conftest import BACKEND_ROOT, REPO_ROOT
 from tests.test_public_texts import BINARY_SUFFIXES, tracked_files
 
 PEM_PRIVATE_KEY = re.compile("-----BEGIN(?: [A-Z0-9]+)* " + "PRIVATE KEY-----")
@@ -51,10 +51,13 @@ def test_no_tracked_file_carries_a_secret() -> None:
 
 
 def test_gitignore_and_dockerignore_keep_keys_out() -> None:
-    for name in (".gitignore", ".dockerignore"):
-        lines = (REPO_ROOT / name).read_text(encoding="utf-8").splitlines()
-        assert "*.key" in lines, name
-        assert "*.pem" in lines, name
+    # The image is built out of backend/, so its .dockerignore lives there.
+    for path in (REPO_ROOT / ".gitignore", BACKEND_ROOT / ".dockerignore"):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert "*.key" in lines, path.name
+        assert "*.pem" in lines, path.name
+        if path.name == ".dockerignore":
+            assert ".venv/" in lines, path.name
 
 
 def test_every_family_fires_on_a_sample() -> None:

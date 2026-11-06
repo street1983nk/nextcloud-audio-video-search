@@ -1,0 +1,13 @@
+# The build context is backend/. Nothing that must not reach it: a local .venv
+# copied into the image would shadow the one built from the lock file.
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+__pycache__/
+*.pyc
+*.key
+*.pem
+dist/
+tests/

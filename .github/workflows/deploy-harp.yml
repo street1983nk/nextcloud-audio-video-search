@@ -25,7 +25,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_ID: audio_video_search
+  # The ExApp half; the PHP half joins this proof in a later plan.
+  BACKEND_APP_ID: audio_video_search_backend
   HARP_IMAGE: ghcr.io/nextcloud/nextcloud-appapi-harp@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39
   LOCAL_REGISTRY: 'localhost:5000'
   LOCAL_IMAGE_TAG: 'citest'
@@ -91,8 +92,8 @@ jobs:
       - name: Start a local registry and push the image of this commit
         run: |
           docker run -d -p 5000:5000 --name registry registry:2
-          docker build -t "${LOCAL_REGISTRY}/${APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src
-          docker push "${LOCAL_REGISTRY}/${APP_ID}:${LOCAL_IMAGE_TAG}"
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}"
 
       - name: Start HaRP
         run: |
@@ -147,9 +148,9 @@ jobs:
       - name: Point a temporary info.xml at the local registry
         run: |
           sed -e "s|<registry>ghcr.io</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
-              -e "s|<image>street1983nk/${APP_ID}</image>|<image>${APP_ID}</image>|" \
+              -e "s|<image>street1983nk/${BACKEND_APP_ID}</image>|<image>${BACKEND_APP_ID}</image>|" \
               -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${LOCAL_IMAGE_TAG}</image-tag>|" \
-              app-src/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
+              app-src/backend/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
           grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-citest.xml"
 
       - name: Register the HaRP daemon and install the ExApp through it
@@ -160,12 +161,12 @@ jobs:
             --harp --harp_frp_address localhost:8782 \
             --harp_shared_key "${HARP_SHARED_KEY}" \
             --net host --set-default
-          timeout 600 ./occ app_api:app:register "${APP_ID}" harp_proxy_host \
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
             --info-xml "${RUNNER_TEMP}/info-citest.xml" --wait-finish
 
       - name: The container runs as 10001, is healthy and the app is enabled
         run: |
-          container=$(docker ps --filter "name=nc_app_${APP_ID}" --format '{{.Names}}' | head -n 1)
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
           test -n "${container}" || { docker ps -a; exit 1; }
           echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
           test "$(docker exec "${container}" id -u)" = "10001"
@@ -175,19 +176,19 @@ jobs:
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' "${container}")" = "healthy"
           timeout 30 ./occ app_api:app:list | tee app-list.txt
-          grep -q "${APP_ID}" app-list.txt
+          grep -q "${BACKEND_APP_ID}" app-list.txt
 
       - name: The settings form is registered and the admin route answers through HaRP
         run: |
           # PUT /enabled registered the form into AppAPI's table ex_settings_forms.
           forms=$(sqlite3 data/owncloud.db "SELECT appid || ':' || formid FROM oc_ex_settings_forms")
           echo "registered forms: ${forms}"
-          grep -qx "${APP_ID}:${APP_ID}_admin" <<<"${forms}"
+          grep -qx "${BACKEND_APP_ID}:${BACKEND_APP_ID}_admin" <<<"${forms}"
           code=$(curl -s -o status.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
-            "http://localhost:8090/exapps/${APP_ID}/status")
+            "http://localhost:8090/exapps/${BACKEND_APP_ID}/status")
           cat status.json; echo
           test "${code}" = "200"
-          jq -e --arg id "${APP_ID}" '.app_id == $id' status.json
+          jq -e --arg id "${BACKEND_APP_ID}" '.app_id == $id' status.json
 
       - name: Collect the logs
         if: always()

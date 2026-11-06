@@ -8,6 +8,9 @@
   is what keeps the signing key and the store token away from forks.
 - store-submit.yml runs by hand only.
 - Only those two files name the signing key or the store token.
+- The ExApp half lives in backend/: python.yml runs its gates there, docker.yml
+  builds the image out of it, deploy-harp.yml builds the same context, and
+  Dependabot watches the Dockerfile and the uv lock file there.
 """
 
 import re
@@ -80,7 +83,8 @@ def test_only_the_signing_workflows_name_the_key_or_the_store_token() -> None:
 
 
 def test_the_signing_workflows_refuse_other_repositories() -> None:
-    repository = f"street1983nk/nextcloud-{APP_ID.replace('_', '-')}"
+    # One repository carries both halves; its name follows the PHP app.
+    repository = "street1983nk/nextcloud-audio-video-search"
     for name in SECRET_HOLDERS:
         assert f'"{repository}"' in (WORKFLOWS / name).read_text(encoding="utf-8"), name
 
@@ -90,6 +94,55 @@ def test_the_store_submission_checks_the_image_before_it_submits() -> None:
 
     assert source.index("imagetools inspect") < source.index("api/v1/apps/releases")
     assert "docker logout ghcr.io" in source
+
+
+def backend_findings(sources: dict[str, str]) -> list[str]:
+    """Every place where a workflow or Dependabot misses the backend/ half."""
+    findings = []
+    python = sources.get("python.yml", "")
+    if not re.search(r"^defaults:\n  run:\n    working-directory: backend$", python, re.MULTILINE):
+        findings.append("python.yml does not run in backend/")
+    docker = sources.get("docker.yml", "")
+    if "context: backend\n" not in docker or "file: backend/Dockerfile\n" not in docker:
+        findings.append("docker.yml does not build out of backend/")
+    if f"IMAGE: ghcr.io/street1983nk/{APP_ID}\n" not in docker:
+        findings.append("docker.yml does not push the backend image")
+    harp = sources.get("deploy-harp.yml", "")
+    if f"BACKEND_APP_ID: {APP_ID}\n" not in harp or "./app-src/backend\n" not in harp:
+        findings.append("deploy-harp.yml does not deploy the backend")
+    dependabot = sources.get("dependabot.yml", "")
+    for ecosystem in ("docker", "uv"):
+        if not re.search(rf'package-ecosystem: {ecosystem}\n(?:    #.*\n)*    directory: "/backend"', dependabot):
+            findings.append(f"dependabot {ecosystem} does not watch /backend")
+    return findings
+
+
+def real_sources() -> dict[str, str]:
+    sources = {path.name: path.read_text(encoding="utf-8") for path in workflow_files()}
+    sources["dependabot.yml"] = (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    return sources
+
+
+def test_workflows_and_dependabot_work_on_the_backend_half() -> None:
+    assert backend_findings(real_sources()) == []
+
+
+def test_the_backend_rule_fires_on_the_old_root_layout() -> None:
+    old = {
+        name: source.replace("working-directory: backend", "working-directory: .")
+        .replace("context: backend", "context: .")
+        .replace("./app-src/backend", "./app-src")
+        .replace('"/backend"', '"/"')
+        for name, source in real_sources().items()
+    }
+
+    assert backend_findings(old) == [
+        "python.yml does not run in backend/",
+        "docker.yml does not build out of backend/",
+        "deploy-harp.yml does not deploy the backend",
+        "dependabot docker does not watch /backend",
+        "dependabot uv does not watch /backend",
+    ]
 
 
 def test_the_tag_pattern_parser_sees_a_stray_pattern() -> None:

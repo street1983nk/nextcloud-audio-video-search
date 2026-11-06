@@ -20,6 +20,12 @@ concurrency:
   group: python-${{ github.ref }}
   cancel-in-progress: true
 
+# The ExApp half lives in backend/; every run step works there. The shared
+# scripts at the repository root are reached as ../scripts.
+defaults:
+  run:
+    working-directory: backend
+
 jobs:
   gates:
     name: ruff, format, pyright, vulture, pytest, shellcheck
@@ -35,7 +41,7 @@ jobs:
           # The uv release that wrote uv.lock, so --frozen resolves the same here and locally.
           version: '0.11.7'
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: backend/uv.lock
 
       - name: Install the locked environment
         run: uv sync --frozen
@@ -46,6 +52,12 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
+      # ruff takes the directory it is given; the shared scripts sit outside backend/.
+      - name: Lint and format check of the shared scripts
+        run: |
+          uv run ruff check ../scripts
+          uv run ruff format --check ../scripts
+
       - name: Type check
         env:
           # The pyright release CI runs, also locally (owner rule).
@@ -53,13 +65,14 @@ jobs:
         run: uv run pyright
 
       - name: Dead code
-        run: uv run vulture src tests scripts --min-confidence 80
+        # Paths and confidence come from [tool.vulture] in pyproject.toml.
+        run: uv run vulture
 
       - name: Shell check of the image and release scripts
         run: |
           command -v shellcheck || sudo apt-get install -y shellcheck
           shellcheck --version
-          shellcheck docker/entrypoint.sh docker/healthcheck.sh scripts/release/store-archive.sh scripts/ci/head_green.sh
+          shellcheck docker/entrypoint.sh docker/healthcheck.sh ../scripts/release/store-archive.sh ../scripts/ci/head_green.sh
 
       # The Dockerfile linter, as a pinned PyPI wheel so it runs without Docker.
       # tests/test_dockerfile.py holds the project rules on top of it.
@@ -69,4 +82,4 @@ jobs:
       # -rs names every skip with its reason; the coverage floor (fail_under in
       # pyproject.toml) rides along, so a feature without tests fails here.
       - name: Tests
-        run: uv run pytest -q -rs --cov=src/audio_video_search --cov-report=term
+        run: uv run pytest -q -rs --cov=src/audio_video_search_backend --cov-report=term

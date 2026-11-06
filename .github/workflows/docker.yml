@@ -3,7 +3,8 @@ name: Multi-arch image
 # Builds the image for amd64 and arm64 on native runners, smoke tests each one
 # out of the registry by digest, and merges both into one manifest. On a release
 # tag the manifest also gets the version tag that <image-tag> in info.xml names.
-# Taken over from Findling's docker.yml, without its app specific probes.
+# Taken over from Findling's docker.yml, without its app specific probes. The
+# image is the ExApp half only, so backend/ is the build context.
 #
 # Release lesson: the store submission (store-submit.yml) refuses to run until
 # ghcr.io/<owner>/<app_id>:<version> exists and can be pulled anonymously, so
@@ -27,7 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/street1983nk/audio_video_search
+  IMAGE: ghcr.io/street1983nk/audio_video_search_backend
 
 jobs:
   build:
@@ -55,8 +56,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
-          image_tag=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' appinfo/info.xml)
-          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml)
+          image_tag=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' backend/appinfo/info.xml)
+          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' backend/appinfo/info.xml)
           echo "git tag ${tag}, image-tag ${image_tag}, version ${version}"
           [ "${image_tag}" = "${tag}" ] && [ "${version}" = "${tag}" ]
 
@@ -74,7 +75,8 @@ jobs:
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: backend
+          file: backend/Dockerfile
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }}
@@ -89,9 +91,9 @@ jobs:
           test -n "${DIGEST}" || { echo "the push step returned no digest"; exit 1; }
           docker pull "${IMAGE}@${DIGEST}"
           docker run -d --name smoke \
-            -e APP_ID=audio_video_search -e APP_SECRET=smoke-secret -e APP_PORT=10035 \
+            -e APP_ID=audio_video_search_backend -e APP_SECRET=smoke-secret -e APP_PORT=10035 \
             -e APP_HOST=0.0.0.0 -e APP_VERSION=0.0.0 -e NEXTCLOUD_URL=http://127.0.0.1:8080 \
-            -e APP_PERSISTENT_STORAGE=/nc_app_audio_video_search_data \
+            -e APP_PERSISTENT_STORAGE=/nc_app_audio_video_search_backend_data \
             -p 10035:10035 "${IMAGE}@${DIGEST}"
           answer=""
           for _ in $(seq 30); do
@@ -179,4 +181,4 @@ jobs:
       - name: Say what still needs a human
         run: |
           echo "After the first push, set the ghcr package to public, otherwise AppAPI cannot pull it:"
-          echo "https://github.com/users/street1983nk/packages/container/audio_video_search/settings"
+          echo "https://github.com/users/street1983nk/packages/container/audio_video_search_backend/settings"
