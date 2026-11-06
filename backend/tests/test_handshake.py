@@ -151,6 +151,48 @@ async def test_missing_is_logged_once_per_change_without_a_path(
         assert "handshake" not in str(record.__dict__.get("reason", ""))
 
 
+async def test_a_412_before_appapi_enabled_the_container_is_unknown_and_never_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # At its start the container asks before AppAPI has enabled it; Nextcloud
+    # answers 412 "ExApp is disabled". That says nothing about the PHP app.
+    _script(monkeypatch, (412, None))
+
+    seen = [(await companion.check_once()).state for _ in range(4)]
+
+    assert seen == ["unknown"] * 4
+
+
+async def test_status_asks_again_while_unknown_even_when_the_answer_is_fresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = _script(monkeypatch, (412, None), (200, "0.1.0"))
+    await companion.check_once()
+
+    state = await companion.refresh_if_stale()
+
+    assert (state.state, state.version, script.calls) == ("ok", "0.1.0", 2)
+
+
+async def test_a_fresh_ok_is_not_asked_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = _script(monkeypatch, (200, "0.1.0"))
+    await companion.check_once()
+
+    await companion.refresh_if_stale()
+
+    assert script.calls == 1
+
+
+async def test_the_periodic_check_retries_soon_while_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = _script(monkeypatch, (412, None), (412, None), (200, "0.1.0"))
+
+    task = asyncio.create_task(companion.run_periodic(interval_s=3600, retry_s=0))
+    await asyncio.wait_for(script.third_call.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert companion.current().state == "ok"
+
+
 async def test_the_periodic_check_repeats_until_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
     script = _script(monkeypatch, (200, "0.1.0"))
 
