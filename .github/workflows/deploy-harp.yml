@@ -1,13 +1,24 @@
 name: Deploy through HaRP
 
-# The integration proof every ExApp needs before a store release: a throwaway
-# Nextcloud with AppAPI, a real HaRP container, the image of this commit pushed
-# into a local registry, and the ExApp installed through the deploy daemon the
-# way an admin installs it. Lean form of Findling's deploy-harp.yml.
+# The integration proof of both halves before a store release: a throwaway
+# Nextcloud with AppAPI, the PHP app audio_video_search, a real HaRP container,
+# the backend image of this commit pushed into a local registry and the ExApp
+# installed through the deploy daemon the way an admin installs it. Lean form
+# of Findling's deploy-harp.yml.
 #
-# What it proves: the container starts behind HaRP with mutual TLS on the FRP
-# tunnel, AppAPI reaches /heartbeat and /init, PUT /enabled registers the
-# declarative settings form, and the ADMIN route answers through the HaRP proxy.
+# What it proves, on six legs (Nextcloud 33, 34 and 35, each on amd64 and on
+# arm64, natively and not emulated):
+#   - the container starts behind HaRP with mutual TLS on the FRP tunnel,
+#     AppAPI reaches /heartbeat and /init, PUT /enabled registers the form,
+#   - a test result seeded over the real path (occ audio_video_search:sample,
+#     the container reads the file through the content gateway) is found by
+#     the owner, by a member of the team folder and by the recipient of a
+#     share, and a user without read access gets no entry at all,
+#   - WebDAV answers a byte range with 206, so the playback page can seek,
+#   - Playwright walks the three UI surfaces (search hit, playback page, admin
+#     section) and leaves screenshots at 375, 768 and 1280 px, light and dark,
+#     plus high contrast at 1280, as an artifact for the owner's review,
+#   - no test file name ends up in the Nextcloud log or the container log.
 on:
   push:
     branches:
@@ -25,28 +36,55 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The ExApp half; the PHP half joins this proof in a later plan.
+  APP_ID: audio_video_search
   BACKEND_APP_ID: audio_video_search_backend
   HARP_IMAGE: ghcr.io/nextcloud/nextcloud-appapi-harp@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39
   LOCAL_REGISTRY: 'localhost:5000'
   LOCAL_IMAGE_TAG: 'citest'
-  ADMIN_PASS: 'skeleton-ci-only'
+  NC_URL: 'http://localhost:8080'
+  # Test-only values of a throwaway instance that dies with the runner. No
+  # repository secret enters this job (T-01-41).
+  ADMIN_PASS: 'avs-ci-admin-2026-11'
+  ALICE_PASS: 'avs-ci-alice-2026-11'
+  BOB_PASS: 'avs-ci-bob-2026-11'
+  CAROL_PASS: 'avs-ci-carol-2026-11'
+  MALLORY_PASS: 'avs-ci-mallory-2026-11'
+  DORA_PASS: 'avs-ci-dora-2026-11'
 
 jobs:
   deploy-harp:
-    name: deploy-harp ${{ matrix.server-version }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    name: deploy-harp ${{ matrix.server-version }} ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # An estimate until the first green run measures it: image build, HaRP,
+    # seed, the browser download and seven Playwright projects.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
+        # Three server versions on two architectures, as an include list
+        # because every server version brings its own PHP floor (8.2 for 33
+        # and 34, 8.3 for 35). arm64 runs the identical step list on the native
+        # runner; HARP_IMAGE is pinned by index digest, so the same line pulls
+        # the arm64 half there.
         include:
           - server-version: stable33
             php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable33
+            php-version: '8.2'
+            runner: ubuntu-24.04-arm
           - server-version: stable34
             php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable34
+            php-version: '8.2'
+            runner: ubuntu-24.04-arm
           - server-version: stable35
             php-version: '8.3'
+            runner: ubuntu-24.04
+          - server-version: stable35
+            php-version: '8.3'
+            runner: ubuntu-24.04-arm
     steps:
       # The server checkout comes first: actions/checkout empties its target.
       - name: Check out nextcloud/server
@@ -75,19 +113,30 @@ jobs:
           extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
           coverage: none
 
-      - name: Install Nextcloud and enable AppAPI
+      - name: Install Nextcloud in debug mode and enable AppAPI
         run: |
           mkdir data
           ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
           ./occ config:system:set trusted_domains 1 --value=127.0.0.1
           ./occ config:system:set trusted_domains 2 --value=localhost
+          # occ audio_video_search:sample and the debug block of the admin
+          # section exist in debug mode only.
+          ./occ config:system:set debug --value=true --type=boolean
           NEXTCLOUD_HOST=0.0.0.0 composer run serve > "${RUNNER_TEMP}/php-server.log" 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf http://localhost:8080/status.php > /dev/null && break
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
             sleep 2
           done
-          curl -sf http://localhost:8080/status.php
+          curl -sf "${NC_URL}/status.php"
           ./occ app:enable -vvv -f app_api
+
+      # Before the ExApp: the container asks the handshake route of the PHP
+      # app at its start, and only a confirmed companion unlocks /sample.
+      - name: Install the PHP app
+        run: |
+          mv app-src/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          ./occ app:list | grep -A1 "${APP_ID}"
 
       - name: Start a local registry and push the image of this commit
         run: |
@@ -103,7 +152,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/certs"
           docker run -d --name appapi-harp --net host \
             -e HP_SHARED_KEY="${harp_key}" \
-            -e NC_INSTANCE_URL="http://localhost:8080" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${RUNNER_TEMP}/certs:/certs" \
             "${HARP_IMAGE}"
@@ -178,7 +227,7 @@ jobs:
           timeout 30 ./occ app_api:app:list | tee app-list.txt
           grep -q "${BACKEND_APP_ID}" app-list.txt
 
-      - name: The settings form is registered and the admin route answers through HaRP
+      - name: The settings form is registered and the status answers through HaRP
         run: |
           # PUT /enabled registered the form into AppAPI's table ex_settings_forms.
           forms=$(sqlite3 data/owncloud.db "SELECT appid || ':' || formid FROM oc_ex_settings_forms")
@@ -189,6 +238,126 @@ jobs:
           cat status.json; echo
           test "${code}" = "200"
           jq -e --arg id "${BACKEND_APP_ID}" '.app_id == $id' status.json
+          # The container found the PHP app at its start.
+          jq -e '.companion == "ok"' status.json
+
+      - name: Make the test media
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Seed users, team folder, shares, media and test results
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          FILEIDS_ENV: ${{ github.workspace }}/app-src/ci/fileids.env
+          SERVER_VERSION: ${{ matrix.server-version }}
+        run: |
+          bash app-src/ci/seed.sh
+          cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
+
+      # The ordinary OCS route, for every kind of reader. Every entry points at
+      # the playback route with the time mark and carries both attributes.
+      - name: The OCS search honours read access
+        run: |
+          search() {
+            curl -sfS -u "$1:$2" -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+              "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche" > "search-$1.json"
+          }
+          shape='.ocs.data.entries | all(
+            (.resourceUrl | contains("/apps/audio_video_search/play/") and contains("t=42.0"))
+            and (.subline | startswith("0:42 · "))
+            and (.attributes.fileId | type == "string")
+            and (.attributes.path | type == "string"))'
+
+          search alice "${ALICE_PASS}"
+          jq -e '.ocs.data.entries | length >= 2' search-alice.json
+          jq -e "${shape}" search-alice.json
+
+          search carol "${CAROL_PASS}"
+          jq -e --arg id "${FILEID_TEAM}" '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-carol.json
+          jq -e "${shape}" search-carol.json
+
+          search bob "${BOB_PASS}"
+          jq -e --arg id "${FILEID_WEBM}" '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-bob.json
+          jq -e "${shape}" search-bob.json
+
+          search mallory "${MALLORY_PASS}"
+          jq -e '.ocs.data.entries | length == 0' search-mallory.json
+
+      # The playback page seeks inside the medium, and that needs a byte range.
+      - name: WebDAV answers a byte range with 206
+        run: |
+          range() {
+            code=$(curl -s -u "$1:$2" -H "Range: bytes=1000-1999" -o /dev/null -w "%{http_code}" \
+              "${NC_URL}/remote.php/dav/files/$1/$3")
+            echo "range request of $1: ${code}"
+            test "${code}" = "206"
+          }
+          range alice "${ALICE_PASS}" tone-90s.webm
+          range carol "${CAROL_PASS}" Team/tone-90s.webm
+          range bob "${BOB_PASS}" tone-90s.webm
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      # --ignore-scripts: npm ci installs exactly the lock file with its
+      # integrity hashes and runs no install script (T-01-SC).
+      - name: Install Playwright and its browser
+        working-directory: app-src/ci/playwright
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Playwright on the running instance
+        working-directory: app-src/ci/playwright
+        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug"
+
+      - name: Playwright with the backend disabled
+        working-directory: app-src/ci/playwright
+        run: |
+          timeout 120 "${GITHUB_WORKSPACE}/occ" app_api:app:disable "${BACKEND_APP_ID}"
+          status=0
+          npx playwright test --grep @disabled || status=$?
+          timeout 300 "${GITHUB_WORKSPACE}/occ" app_api:app:enable "${BACKEND_APP_ID}"
+          exit "${status}"
+
+      - name: Playwright with the backend unreachable
+        working-directory: app-src/ci/playwright
+        run: |
+          docker stop "${EXAPP_CONTAINER}"
+          status=0
+          npx playwright test --grep @unreachable || status=$?
+          docker start "${EXAPP_CONTAINER}"
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+              "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" || true)
+            [ "${code}" = "200" ] && break
+            sleep 2
+          done
+          test "${code}" = "200"
+          exit "${status}"
+
+      - name: Playwright without debug mode
+        working-directory: app-src/ci/playwright
+        run: |
+          "${GITHUB_WORKSPACE}/occ" config:system:set debug --value=false --type=boolean
+          npx playwright test --grep @nodebug
+
+      # Owner rule: no path and no file name in a log. The seed and the
+      # requests above named every test file, so a name in these logs came
+      # out of the code under test.
+      - name: No test file name in the Nextcloud log or the container log
+        run: |
+          docker logs "${EXAPP_CONTAINER}" > exapp-check.log 2>&1
+          touch data/nextcloud.log
+          if grep -nE 'tone-90s|broken\.webm|locked\.webm' data/nextcloud.log exapp-check.log; then
+            echo "a test file name reached a log"
+            exit 1
+          fi
 
       - name: Collect the logs
         if: always()
@@ -198,11 +367,26 @@ jobs:
           [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
+          cp search-*.json logs/ 2>/dev/null || true
 
       - name: Upload the logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: deploy-harp-logs-${{ matrix.server-version }}
+          name: deploy-harp-logs-${{ matrix.server-version }}-${{ matrix.runner }}
           path: logs/
           retention-days: 7
+
+      # Synthetic media, test users of a throwaway instance: nothing in here is
+      # private (T-01-41). The screenshots are what the owner reviews.
+      - name: Upload the Playwright report and the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: |
+            app-src/ci/playwright/playwright-report/
+            app-src/ci/playwright/test-results/
+            app-src/ci/playwright/screenshots/
+          retention-days: 14
+          if-no-files-found: ignore

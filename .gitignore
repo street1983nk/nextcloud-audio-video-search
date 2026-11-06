@@ -34,3 +34,5 @@ testdata/
 ci/playwright/node_modules/
 ci/playwright/test-results/
 ci/playwright/playwright-report/
+ci/playwright/screenshots/
+ci/fileids.env
