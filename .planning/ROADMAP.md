@@ -51,7 +51,7 @@ Plans:
 - [x] 01-07-PLAN.md: (W5) Admin-Sektion mit Gegen-App-Zustand, Erneut prüfen, Debug-Schalter (PLAT-02)
 - [x] 01-08-PLAN.md: (W5) Handshake: Container erkennt fehlende PHP-App, erweiterter /status
 - [x] 01-09-PLAN.md: (W6) CI-Integrationsbeweis auf sechs Beinen mit Playwright und Screenshots
-- [ ] 01-13-PLAN.md: (W6) Doku DE/EN/FR, DESIGN.md, PRODUCT.md, CHANGELOG
+- [x] 01-13-PLAN.md: (W6) Doku DE/EN/FR, DESIGN.md, PRODUCT.md, CHANGELOG
 - [ ] 01-10-PLAN.md: (W7) Upgrade 0.0.1 nach 0.1.0, Drift-Schritte, zwei Store-Archive
 - [ ] 01-11-PLAN.md: (W8) Owner: Push-Freigabe main oder phase-01, CI mit Korrekturschleife, gemeinsame UI-Abnahme
 **UI hint**: yes
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Zwei-App-Gerüst und Integrationsbeweis | 10/13 | In Progress|  |
+| 1. Zwei-App-Gerüst und Integrationsbeweis | 11/13 | In Progress|  |
 | 2. Erfassung aller Dateien | 0/TBD | Not started | - |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
