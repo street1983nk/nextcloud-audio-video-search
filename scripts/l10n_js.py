@@ -6,7 +6,7 @@ the ExApp, php/l10n for the PHP app); the app id of each comes out of the
 appinfo/info.xml beside it, so one root never registers under the other's id.
 
 usage: uv run python scripts/l10n_js.py [--check] [--root DIR]...
-Without --root the backend catalogues are meant (backend/l10n).
+Without --root both catalogue roots are meant (backend/l10n and php/l10n).
 """
 
 import json
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ROOT = REPO_ROOT / "backend" / "l10n"
+DEFAULT_ROOTS = [REPO_ROOT / "backend" / "l10n", REPO_ROOT / "php" / "l10n"]
 
 
 def app_id(root: Path) -> str:
@@ -31,9 +31,9 @@ def render(app: str, catalogue: dict[str, object]) -> str:
 
 
 def roots(argv: list[str]) -> list[Path]:
-    """Every catalogue root named with --root, or the backend default."""
+    """Every catalogue root named with --root, or both roots by default."""
     named = [Path(argv[index + 1]) for index, arg in enumerate(argv[:-1]) if arg == "--root"]
-    return [path if path.is_absolute() else Path.cwd() / path for path in named] or [DEFAULT_ROOT]
+    return [path if path.is_absolute() else Path.cwd() / path for path in named] or DEFAULT_ROOTS
 
 
 def main(argv: list[str]) -> int:
