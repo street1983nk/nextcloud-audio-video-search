@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 01-03 abgeschlossen (Provider, Gateway, ExAppService, occ sample)
-last_updated: "2026-11-06T13:03:58.543Z"
+stopped_at: Plan 01-04 abgeschlossen (Kataloge DE/EN/FR, E2E-Kernweg)
+last_updated: "2026-11-06T13:10:26.679Z"
 last_activity: 2026-11-06
 progress:
   total_phases: 11
   completed_phases: 0
   total_plans: 13
-  completed_plans: 3
-  percent: 23
+  completed_plans: 4
+  percent: 31
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 01 (Zwei-App-Gerüst und Integrationsbeweis) — EXECUTING
-Plan: 4 of 13
+Plan: 5 of 13
 Status: Ready to execute
 Last activity: 2026-11-06
 
-Progress: [██░░░░░░░░] 23%
+Progress: [███░░░░░░░] 31%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [██░░░░░░░░] 23%
 | Phase 01 P01 | 40min | 3 tasks | 50 files |
 | Phase 01 P02 | 9min | 2 tasks | 10 files |
 | Phase 01 P03 | 45 min | 2 tasks | 11 files |
+| Phase 01 P04 | 35 min | 2 tasks | 18 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,7 @@ Recent decisions affecting current work:
 - [Phase 1, 01-02]: 01-02: Epoche je media_id in media.epoch; publish_version weist prov.epoch < media.epoch ab; Plan 05 nimmt Epoche aus store.media_epoch
 - [Phase 01]: 01-03: SAMPLE_TIMEOUT_SECONDS 120 s für /sample und /sample/remove, Suche bleibt bei 1,5 s
 - [Phase 01]: 01-03: occ-Besitzerauflösung über FileAccess::ownerOf, getFirstNodeById nur in FileAccess.php
+- [Phase 01]: 01-04: l10n_js.py prüft ohne --root beide Katalogwurzeln; Gate verlangt jedes t()-Literal der PHP-App in php/l10n
 
 ### Pending Todos
 
@@ -106,6 +108,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-06T13:03:53.569Z
-Stopped at: Plan 01-03 abgeschlossen (Provider, Gateway, ExAppService, occ sample)
+Last session: 2026-11-06T13:10:21.897Z
+Stopped at: Plan 01-04 abgeschlossen (Kataloge DE/EN/FR, E2E-Kernweg)
 Resume file: None
