@@ -164,6 +164,54 @@ def harp_source() -> str:
     return (WORKFLOWS / "deploy-harp.yml").read_text(encoding="utf-8")
 
 
+def matrix_legs(source: str) -> list[tuple[str, str]]:
+    """(server-version, runner) of every include entry, read as text.
+
+    An entry starts with "- server-version:" and ends at the next entry or at
+    the first line indented less than the entry, so a key of one entry never
+    leaks into the next one.
+    """
+    match = re.search(r"^( *)include:\n((?:\1 +.*\n|\s*\n)+)", source, re.MULTILINE)
+    if match is None:
+        return []
+    legs: list[tuple[str, str]] = []
+    for entry in re.split(r"^ *- (?=server-version:)", match.group(2), flags=re.MULTILINE)[1:]:
+        server = re.search(r"server-version:\s*['\"]?([\w.-]+)", entry)
+        runner = re.search(r"runner:\s*['\"]?([\w.-]+)", entry)
+        legs.append((server.group(1) if server else "", runner.group(1) if runner else ""))
+    return legs
+
+
+def steps_of(source: str) -> list[tuple[str, str]]:
+    """(name, text) of every named step of the job."""
+    chunks = re.split(r"^      - name: ", source, flags=re.MULTILINE)[1:]
+    return [(chunk.split("\n", 1)[0].strip(), chunk) for chunk in chunks]
+
+
+def harp_findings(source: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the integration proof."""
+    findings: list[str] = []
+    legs = matrix_legs(source)
+    findings += [
+        f"deploy-harp.yml misses the leg {server} on {runner}" for server, runner in sorted(HARP_LEGS - set(legs))
+    ]
+    findings += [
+        f"deploy-harp.yml runs the unknown leg {server} on {runner}" for server, runner in sorted(set(legs) - HARP_LEGS)
+    ]
+    if not re.search(r"^ {4}runs-on: \$\{\{ matrix\.runner \}\}$", source, re.MULTILINE):
+        findings.append("deploy-harp.yml does not run on the runner of the matrix")
+    if not re.search(r"^ {6}fail-fast: false$", source, re.MULTILINE):
+        findings.append("deploy-harp.yml stops every leg when one fails (fail-fast is not false)")
+    if not re.search(r"app:enable audio_video_search$", source, re.MULTILINE):
+        findings.append("deploy-harp.yml does not enable the PHP app")
+    if "npx playwright test" not in source:
+        findings.append("deploy-harp.yml runs no playwright test")
+    for name, text in steps_of(source):
+        if "actions/upload-artifact@" in text and not re.search(r"^ {8}if: always\(\)$", text, re.MULTILINE):
+            findings.append(f"deploy-harp.yml uploads without if: always() in '{name}'")
+    return findings
+
+
 def test_the_integration_proof_holds_every_rule() -> None:
     assert harp_findings(harp_source()) == []
 
