@@ -16,12 +16,12 @@
 	},
 	"autoload": {
 		"psr-4": {
-			"OCA\AudioVideoSearch\\": "lib/"
+			"OCA\\AudioVideoSearch\\": "lib/"
 		}
 	},
 	"autoload-dev": {
 		"psr-4": {
-			"OCA\AudioVideoSearch\Tests\\": "tests/"
+			"OCA\\AudioVideoSearch\\Tests\\": "tests/"
 		}
 	},
 	"config": {

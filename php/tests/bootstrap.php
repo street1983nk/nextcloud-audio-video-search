@@ -28,7 +28,7 @@ if (!is_string($serverRoot) || $serverRoot === '') {
 	$origin = 'the environment variable NEXTCLOUD_SERVER_ROOT';
 }
 
-$serverBootstrap = rtrim($serverRoot, '/\') . '/tests/bootstrap.php';
+$serverBootstrap = rtrim($serverRoot, '/\\') . '/tests/bootstrap.php';
 
 if (!is_file($serverBootstrap)) {
 	fwrite(STDERR, <<<MESSAGE

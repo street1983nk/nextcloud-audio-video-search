@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The eight rules:
+The nine rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -22,6 +22,7 @@ The eight rules:
    the Nextcloud log is not a private place.
 7. Every ``.php`` file starts with ``<?php`` and ``declare(strict_types=1);``.
 8. No U+2013 or U+2014 anywhere under ``php/``.
+9. ``php/composer.json`` is valid JSON and maps both app namespaces.
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -29,6 +30,7 @@ was deleted cannot stay green. The real tree is additionally held to a floor
 cannot pass on an empty directory.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -263,6 +265,24 @@ def test_rule8_no_dash_characters_under_php() -> None:
     assert {name: found for name, found in findings.items() if found} == {}
 
 
+COMPOSER_NAMESPACES = {"OCA\\AudioVideoSearch\\": "lib/"}
+COMPOSER_TEST_NAMESPACES = {"OCA\\AudioVideoSearch\\Tests\\": "tests/"}
+
+
+def composer_namespaces(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """The psr-4 maps of a composer.json; raises on text that is not JSON."""
+    data = json.loads(text)
+    return data["autoload"]["psr-4"], data["autoload-dev"]["psr-4"]
+
+
+def test_rule9_composer_json_parses_and_maps_the_app_namespaces() -> None:
+    # A copy that lost one backslash ("OCA\AudioVideoSearch") is invalid JSON
+    # and broke every composer step in CI; this catches it before a push.
+    autoload, autoload_dev = composer_namespaces((PHP_ROOT / "composer.json").read_text(encoding="utf-8"))
+    assert autoload == COMPOSER_NAMESPACES
+    assert autoload_dev == COMPOSER_TEST_NAMESPACES
+
+
 # -- the self tests: every rule has to fire on a staged violation ----------------
 
 GUARDED_ROUTE = """
@@ -342,3 +362,13 @@ def test_self_rule7_fires_on_a_missing_or_late_strict_declaration() -> None:
 def test_self_rule8_fires_on_both_dashes() -> None:
     assert dashes_in("a \u2013 b \u2014 c") == ["U+2013", "U+2014"]
     assert dashes_in("a - b \u00b7 c \u2026") == []
+
+
+def test_self_rule9_fires_on_a_lost_backslash() -> None:
+    broken = r'{"autoload": {"psr-4": {"OCA\AudioVideoSearch\\": "lib/"}}, "autoload-dev": {"psr-4": {}}}'
+    try:
+        composer_namespaces(broken)
+    except json.JSONDecodeError:
+        pass
+    else:
+        raise AssertionError("a single backslash before a letter has to be rejected")
