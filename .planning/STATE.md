@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Plan 01-05 abgeschlossen (Tantivy-Index, Container-Routen)
-last_updated: "2026-11-06T13:32:49.675Z"
+stopped_at: Plan 01-06 abgeschlossen (Abspielansicht play/{fileId})
+last_updated: "2026-11-06T13:41:49.831Z"
 last_activity: 2026-11-06
 progress:
   total_phases: 11
   completed_phases: 0
   total_plans: 13
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 01 (Zwei-App-Gerüst und Integrationsbeweis) — EXECUTING
-Plan: 7 of 13
+Plan: 8 of 13
 Status: Ready to execute
 Last activity: 2026-11-06
 
-Progress: [█████░░░░░] 46%
+Progress: [█████░░░░░] 54%
 
 ## Performance Metrics
 
@@ -90,6 +90,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-05: Trefferzeit = erstes passendes Wort im Segment (SearchIndex.first_match_ms), sonst Segmentbeginn
 - [Phase 1]: 01-05: Index-Marken in meta (index_schema_version, index_analyzer mit Wortlisten-Digest, index_tantivy); Abweichung baut neue Generation index/gen-N aus SQLite
 - [Phase 1]: 01-05: Eine Sperre (api.Services.lock) um alle Store- und Indexarbeit; Image braucht noch wngerman für Kompositazerlegung (deferred)
+- [Phase 1]: 01-06: Abspielansicht spielt direkt über WebDAV (rawurlencode je Segment und UID), kein eigener Stream-Controller
+- [Phase 1]: 01-06: Download-Sperre über ISharedStorage-Attribut permissions/download plus core shareapi_allow_view_without_download, sonst HEAD 403 in play.js; PLAY-01/02 erst nach E2E (Plan 09) abhaken
 
 ### Pending Todos
 
@@ -112,6 +114,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-06T13:32:49.656Z
-Stopped at: Plan 01-05 abgeschlossen (Tantivy-Index, Container-Routen)
+Last session: 2026-11-06T13:41:49.813Z
+Stopped at: Plan 01-06 abgeschlossen (Abspielansicht play/{fileId})
 Resume file: None
