@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Nextcloud External App (ExApp, App-ID `audio_video_search`), die alle Audio- und Videodateien einer Instanz automatisch und vollständig lokal transkribiert und den gesprochenen Text über die normale Nextcloud-Suche mit Sprung auf die Zeitstelle findbar macht. Zielgruppe: Selfhoster, kleine Organisationen, Behörden und Schulen, die ihre Aufnahmen (Sitzungen, Interviews, Vorlesungen, Videos) durchsuchen wollen, ohne Inhalte an einen Cloud-Dienst zu geben. Sprachen DE, EN, FR.
+Nextcloud-App aus zwei Teilen (PHP-App `audio_video_search` für Suche, Ereignisse, Rechte und Abspielansicht; ExApp `audio_video_search_backend` für Dekodieren, Erkennung und Index), die alle Audio- und Videodateien einer Instanz automatisch und vollständig lokal transkribiert und den gesprochenen Text über die normale Nextcloud-Suche mit Sprung auf die Zeitstelle findbar macht. Zielgruppe: Selfhoster, kleine Organisationen, Behörden und Schulen, die ihre Aufnahmen (Sitzungen, Interviews, Vorlesungen, Videos) durchsuchen wollen, ohne Inhalte an einen Cloud-Dienst zu geben. Sprachen DE, EN, FR.
 
 ## Core Value
 
@@ -55,7 +55,7 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 - Bekannte Schwächen: Parakeet verschluckt Passagen (Wächter nötig) und wechselt in französischer Spontansprache ins Englische; Whisper lässt ganze Sätze aus und versagt bei Sprachwechsel (70 % WER); Café-Lärm 19 bis 61 % WER bei allen Modellen; Raummikrofon-Meetings 34 bis 38 %.
 - Markt: keine Store-App macht Audio/Video automatisch lokal durchsuchbar (stt_whisper2/Assistant nur auf Anfrage, nur x86; Context Chat indexiert kein Audio/Video). Nächster Konkurrent Cassini (nur Talk-Aufnahmen).
 - Schwester-Apps: Findling (nextcloud-search, Datei-Walk, Rechte-Abgleich, Reconcile, Pause; Muster übernehmen), MCP-Connector, Gameworld. Gemeinsames Skeleton `C:/Users/Student/nextcloud-exapp-skeleton`.
-- Zertifikat erteilt (PR #1410), Repo auf GitHub `street1983nk/nextcloud-audio-video-search`.
+- Zertifikat erteilt (PR #1409, jetzt für die PHP-App); Backend-Zertifikat beantragt (PR #1417, 06.11.), Repo auf GitHub `street1983nk/nextcloud-audio-video-search`.
 - Testrechner hat 15,7 GB RAM, oft nur 4,5 bis 7 GB frei: Messungen seriell, RAM-Wächter.
 
 ## Constraints

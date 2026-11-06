@@ -145,16 +145,83 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ## Traceability
 
-Wird bei der Roadmap-Erstellung gefüllt.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| PLAT-01 | Phase 1 | Pending |
+| PLAT-02 | Phase 1 | Pending |
+| PLAT-03 | Phase 1 | Pending |
+| PLAT-04 | Phase 5 | Pending |
+| DISC-01 | Phase 2 | Pending |
+| DISC-02 | Phase 2 | Pending |
+| DISC-03 | Phase 2 | Pending |
+| DISC-04 | Phase 2 | Pending |
+| DISC-05 | Phase 2 | Pending |
+| DISC-06 | Phase 2 | Pending |
+| MEDIA-01 | Phase 3 | Pending |
+| MEDIA-02 | Phase 3 | Pending |
+| MEDIA-03 | Phase 3 | Pending |
+| MEDIA-04 | Phase 3 | Pending |
+| TRANS-01 | Phase 3 | Pending |
+| TRANS-02 | Phase 3 | Pending |
+| TRANS-03 | Phase 3 | Pending |
+| TRANS-04 | Phase 6 | Pending |
+| TRANS-05 | Phase 6 | Pending |
+| TRANS-06 | Phase 1 | Pending |
+| TRANS-07 | Phase 3 | Pending |
+| TRANS-08 | Phase 3 | Pending |
+| QUAL-01 | Phase 6 | Pending |
+| QUAL-02 | Phase 6 | Pending |
+| QUAL-03 | Phase 6 | Pending |
+| QUAL-04 | Phase 7 | Pending |
+| QUAL-05 | Phase 6 | Pending |
+| QUAL-06 | Phase 6 | Pending |
+| RES-01 | Phase 5 | Pending |
+| RES-02 | Phase 5 | Pending |
+| RES-03 | Phase 5 | Pending |
+| RES-04 | Phase 5 | Pending |
+| RES-05 | Phase 5 | Pending |
+| RES-06 | Phase 5 | Pending |
+| RES-07 | Phase 5 | Pending |
+| SRCH-01 | Phase 3 | Pending |
+| SRCH-02 | Phase 3 | Pending |
+| SRCH-03 | Phase 3 | Pending |
+| SRCH-04 | Phase 4 | Pending |
+| SRCH-05 | Phase 4 | Pending |
+| SRCH-06 | Phase 4 | Pending |
+| PLAY-01 | Phase 1 | Pending |
+| PLAY-02 | Phase 1 | Pending |
+| EXP-01 | Phase 4 | Pending |
+| EXP-02 | Phase 4 | Pending |
+| EXP-03 | Phase 4 | Pending |
+| EXP-04 | Phase 4 | Pending |
+| BITV-01 | Phase 10 | Pending |
+| BITV-02 | Phase 10 | Pending |
+| BITV-03 | Phase 10 | Pending |
+| BITV-04 | Phase 10 | Pending |
+| BITV-05 | Phase 10 | Pending |
+| BITV-06 | Phase 10 | Pending |
+| LIFE-01 | Phase 8 | Pending |
+| LIFE-02 | Phase 8 | Pending |
+| LIFE-03 | Phase 8 | Pending |
+| LIFE-04 | Phase 8 | Pending |
+| ADM-01 | Phase 9 | Pending |
+| ADM-02 | Phase 9 | Pending |
+| ADM-03 | Phase 9 | Pending |
+| ADM-04 | Phase 9 | Pending |
+| ADM-05 | Phase 7 | Pending |
+| I18N-01 | Phase 9 | Pending |
+| I18N-02 | Phase 9 | Pending |
+| REL-01 | Phase 6 | Pending |
+| REL-02 | Phase 11 | Pending |
+| REL-03 | Phase 11 | Pending |
+| REL-04 | Phase 11 | Pending |
+| REL-05 | Phase 11 | Pending |
 
 **Coverage:**
 - v1 requirements: 69 total
-- Mapped to phases: 0
-- Unmapped: 69
+- Mapped to phases: 69
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-11-06*
-*Last updated: 2026-11-06 after initial definition*
+*Last updated: 2026-11-06 after roadmap creation*
