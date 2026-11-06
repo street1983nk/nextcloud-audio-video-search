@@ -149,3 +149,81 @@ def test_the_tag_pattern_parser_sees_a_stray_pattern() -> None:
     sample = "on:\n  push:\n    tags:\n      - 'v[0-9]+.[0-9]+.[0-9]+'\n      - 'source-*'\njobs:\n"
 
     assert tag_patterns(sample) == [RELEASE_TAG, "'source-*'"]
+
+
+# -- the integration proof: six legs, both apps, Playwright --------------------
+
+HARP_LEGS = frozenset(
+    (server, runner)
+    for server in ("stable33", "stable34", "stable35")
+    for runner in ("ubuntu-24.04", "ubuntu-24.04-arm")
+)
+
+
+def harp_source() -> str:
+    return (WORKFLOWS / "deploy-harp.yml").read_text(encoding="utf-8")
+
+
+def test_the_integration_proof_holds_every_rule() -> None:
+    assert harp_findings(harp_source()) == []
+
+
+def test_the_matrix_parser_reads_six_legs() -> None:
+    assert set(matrix_legs(harp_source())) == HARP_LEGS
+
+
+def test_the_rule_fires_on_a_missing_arm64_leg() -> None:
+    source = harp_source()
+    broken = source.replace(
+        "          - server-version: stable35\n            php-version: '8.3'\n            runner: ubuntu-24.04-arm\n",
+        "",
+    )
+    assert broken != source
+
+    assert harp_findings(broken) == ["deploy-harp.yml misses the leg stable35 on ubuntu-24.04-arm"]
+
+
+def test_the_rule_fires_on_a_missing_server_version() -> None:
+    broken = harp_source().replace("server-version: stable34", "server-version: stable32")
+
+    assert harp_findings(broken) == [
+        "deploy-harp.yml misses the leg stable34 on ubuntu-24.04",
+        "deploy-harp.yml misses the leg stable34 on ubuntu-24.04-arm",
+        "deploy-harp.yml runs the unknown leg stable32 on ubuntu-24.04",
+        "deploy-harp.yml runs the unknown leg stable32 on ubuntu-24.04-arm",
+    ]
+
+
+def test_the_rule_fires_when_the_runner_does_not_come_from_the_matrix() -> None:
+    broken = harp_source().replace("runs-on: ${{ matrix.runner }}", "runs-on: ubuntu-24.04")
+
+    assert harp_findings(broken) == ["deploy-harp.yml does not run on the runner of the matrix"]
+
+
+def test_the_rule_fires_without_the_php_app() -> None:
+    broken = harp_source().replace("./occ app:enable audio_video_search\n", "./occ app:list\n")
+
+    assert harp_findings(broken) == ["deploy-harp.yml does not enable the PHP app"]
+
+
+def test_the_rule_fires_without_a_playwright_run() -> None:
+    broken = harp_source().replace("npx playwright test", "npx playwright --version")
+
+    assert harp_findings(broken) == ["deploy-harp.yml runs no playwright test"]
+
+
+def test_the_rule_fires_on_an_upload_without_if_always() -> None:
+    source = harp_source()
+    marker = "      - name: Upload the Playwright report and the screenshots\n        if: always()\n"
+    assert marker in source
+    broken = source.replace(marker, "      - name: Upload the Playwright report and the screenshots\n")
+
+    assert harp_findings(broken) == [
+        "deploy-harp.yml uploads without if: always() in 'Upload the Playwright report and the screenshots'"
+    ]
+
+
+def test_the_rule_fires_when_one_leg_stops_the_others() -> None:
+    broken = harp_source().replace("fail-fast: false", "fail-fast: true")
+
+    assert harp_findings(broken) == ["deploy-harp.yml stops every leg when one fails (fail-fast is not false)"]
