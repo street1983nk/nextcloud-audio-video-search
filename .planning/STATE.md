@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Plan 01-06 abgeschlossen (Abspielansicht play/{fileId})
-last_updated: "2026-11-06T13:52:29.893Z"
+last_updated: "2026-11-06T13:59:22.668Z"
 last_activity: 2026-11-06
 progress:
   total_phases: 11
   completed_phases: 0
   total_plans: 13
-  completed_plans: 8
+  completed_plans: 9
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 01 (Zwei-App-Gerüst und Integrationsbeweis) — EXECUTING
-Plan: 9 of 13
+Plan: 10 of 13
 Status: Ready to execute
 Last activity: 2026-11-06
 
-Progress: [██████░░░░] 62%
+Progress: [███████░░░] 69%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [██████░░░░] 62%
 | Phase 01 P03 | 45 min | 2 tasks | 11 files |
 | Phase 01 P04 | 35 min | 2 tasks | 18 files |
 | Phase 01 P05 | 60 min | 2 tasks | 23 files |
+| Phase 01 P08 | 15 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-05: Eine Sperre (api.Services.lock) um alle Store- und Indexarbeit; Image braucht noch wngerman für Kompositazerlegung (deferred)
 - [Phase 1]: 01-06: Abspielansicht spielt direkt über WebDAV (rawurlencode je Segment und UID), kein eigener Stream-Controller
 - [Phase 1]: 01-06: Download-Sperre über ISharedStorage-Attribut permissions/download plus core shareapi_allow_view_without_download, sonst HEAD 403 in play.js; PLAY-01/02 erst nach E2E (Plan 09) abhaken
+- [Phase 01]: 01-08: /sample sperrt nur bei bestätigtem companion missing; unknown wird einmal geprüft, danach meldet das Gateway
+- [Phase 01]: 01-08: Companion missing nach 404 sofort oder nach drei Netzfehlern in Folge; /status fragt neu, wenn älter als 30 s
 
 ### Pending Todos
 
@@ -115,6 +118,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-06T13:52:29.873Z
+Last session: 2026-11-06T13:59:17.228Z
 Stopped at: Plan 01-06 abgeschlossen (Abspielansicht play/{fileId})
 Resume file: None
