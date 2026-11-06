@@ -9,10 +9,13 @@ states:
 - ``ok``: the PHP app answered with a version that looks like a version.
 - ``missing``: the PHP app answered 404 (not installed or not enabled), or the
   instance could not be reached three times in a row.
-- ``unknown``: nothing asked yet, an answer without a valid version, or fewer
-  than three failures in a row.
+- ``unknown``: nothing asked yet, an answer without a valid version, fewer
+  than three failures in a row, or a 412 because AppAPI has not enabled this
+  container yet (it asks at its start, before the enable call arrives).
 
-/status reports the state, /sample refuses to work while it is ``missing``.
+/status reports the state and asks again at once while it is ``unknown``; the
+periodic check retries after RETRY_SECONDS instead of five minutes then.
+/sample refuses to work while it is ``missing``.
 A change to ``missing`` is logged once as a warning, with the state code and a
 reason code only; no URL, no path, no answer content.
 """
@@ -33,11 +36,16 @@ MISSING: Final = "missing"
 UNKNOWN: Final = "unknown"
 
 CHECK_INTERVAL_SECONDS: Final = 300
+# While the state is unknown (above all right after the start, before AppAPI
+# enabled the container) the periodic check asks again this soon.
+RETRY_SECONDS: Final = 15
 # /status asks again when the last answer is older than this, so a change shows
 # up in the admin section without waiting for the next periodic round.
 STALE_SECONDS: float = 30.0
 FAILURES_UNTIL_MISSING: Final = 3
 _NOT_FOUND: Final = 404
+# AppAPI's answer to a call from an ExApp it has not enabled (yet).
+_EXAPP_DISABLED: Final = 412
 _OK_STATUS: Final = 200
 # The same shape the PHP app accepts for a version (ExAppService VERSION_PATTERN).
 VERSION_PATTERN: Final = re.compile(r"\d{1,5}\.\d{1,5}(?:\.[0-9A-Za-z][0-9A-Za-z.-]{0,19})?")
@@ -85,6 +93,9 @@ def _judge(status: int | None, version: str | None) -> tuple[str, str | None, st
     if status == _NOT_FOUND:
         _failures = 0
         return MISSING, None, "not_found"
+    if status == _EXAPP_DISABLED:
+        # Says nothing about the PHP app, so it does not count as a failure.
+        return UNKNOWN, None, "exapp_disabled"
     _failures += 1
     if _failures >= FAILURES_UNTIL_MISSING:
         return MISSING, None, "unreachable"
@@ -105,18 +116,18 @@ async def check_once() -> CompanionState:
 
 
 async def refresh_if_stale() -> CompanionState:
-    """Ask again when the last answer is older than STALE_SECONDS, else return it."""
+    """Ask again while unknown or when the last answer is older than STALE_SECONDS."""
     checked_at = _current.checked_at
-    if checked_at is None or time.monotonic() - checked_at > STALE_SECONDS:
+    if _current.state == UNKNOWN or checked_at is None or time.monotonic() - checked_at > STALE_SECONDS:
         return await check_once()
     return _current
 
 
-async def run_periodic(interval_s: int = CHECK_INTERVAL_SECONDS) -> None:
-    """Ask at once and then every ``interval_s`` seconds until cancelled."""
+async def run_periodic(interval_s: int = CHECK_INTERVAL_SECONDS, retry_s: int = RETRY_SECONDS) -> None:
+    """Ask at once, then every ``interval_s`` seconds (``retry_s`` while unknown) until cancelled."""
     while True:
         try:
             await check_once()
         except Exception as exc:  # the loop must outlive any single round
             LOGGER.exception("companion check failed", extra={"error_type": type(exc).__name__})
-        await asyncio.sleep(interval_s)
+        await asyncio.sleep(retry_s if _current.state == UNKNOWN else interval_s)
