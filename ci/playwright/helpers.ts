@@ -8,7 +8,9 @@ import { expect, request, test, type APIRequestContext, type Page, type TestInfo
 export const APP_PATH = '/index.php/apps/audio_video_search';
 export const ADMIN_PATH = '/index.php/settings/admin/audio_video_search';
 export const QUERY = 'Audiosuche';
-export const MARK_SECONDS = 42;
+// The test result is seeded at 42 s; the hit points to the word "Audiosuche",
+// the 7th word of the sample text at 400 ms per word: 42 + 6 * 0.4 = 44.4 s.
+export const MARK_SECONDS = 44.4;
 export const TOLERANCE_SECONDS = 0.5;
 /** Every name ci/seed.sh gives a test file; none of them may leak (T-01-44). */
 export const TEST_FILE_NAMES = ['tone-90s', 'broken.webm', 'locked.webm'] as const;
@@ -49,7 +51,7 @@ export function gridOnly(testInfo: TestInfo): void {
 }
 
 export function playPath(fileId: string): string {
-	return `${APP_PATH}/play/${fileId}?t=42.0`;
+	return `${APP_PATH}/play/${fileId}?t=44.4`;
 }
 
 /** Fill the login form the page shows right now and wait until it is gone. */

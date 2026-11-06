@@ -281,8 +281,8 @@ jobs:
               "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche" > "search-$1.json"
           }
           shape='.ocs.data.entries | all(
-            (.resourceUrl | contains("/apps/audio_video_search/play/") and contains("t=42.0"))
-            and (.subline | startswith("0:42 · "))
+            (.resourceUrl | contains("/apps/audio_video_search/play/") and contains("t=44.4"))
+            and (.subline | startswith("0:44 · "))
             and (.attributes.fileId | type == "string")
             and (.attributes.path | type == "string"))'
 

@@ -53,7 +53,7 @@ test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page },
 	const hit = page
 		.getByRole('link')
 		.filter({ hasText: MEDIA_NAME })
-		.filter({ hasText: /(^|\s)0:42 · / })
+		.filter({ hasText: /(^|\s)0:44 · / })
 		.first();
 	await expect(hit).toBeVisible();
 
@@ -63,7 +63,7 @@ test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page },
 	);
 	await hit.click();
 
-	await expect(page).toHaveURL(/\/apps\/audio_video_search\/play\/\d+\?t=42\.0(&|$)/);
+	await expect(page).toHaveURL(/\/apps\/audio_video_search\/play\/\d+\?t=44\.4(&|$)/);
 	await partialContent;
 
 	const media = page.locator('#avs-media');
@@ -106,7 +106,7 @@ test('Abgelaufene Sitzung: nach der Anmeldung steht das Medium an der Zeitstelle
 	await expect(page).toHaveURL(/\/login/);
 	await submitLogin(page, users.alice());
 
-	await expect(page).toHaveURL(/\/apps\/audio_video_search\/play\/\d+\?t=42\.0(&|$)/);
+	await expect(page).toHaveURL(/\/apps\/audio_video_search\/play\/\d+\?t=44\.4(&|$)/);
 	await expect(page.locator('#avs-media')).toBeAttached();
 	await expectAtMark(page);
 });
