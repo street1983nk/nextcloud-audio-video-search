@@ -395,6 +395,7 @@ jobs:
           patch=${BASH_REMATCH[3]}
           {
             echo "OWN_VERSION=${own}"
+            echo "INFO_XML=${RUNNER_TEMP}/info-citest.xml"
             echo "DRIFT_MINOR_VERSION=${major}.$((minor + 1)).0"
             echo "DRIFT_PATCH_VERSION=${major}.${minor}.$((patch + 1))"
           } >> "${GITHUB_ENV}"
@@ -798,6 +799,21 @@ jobs:
       # Exit 0 is success; 3 is accepted as in Findling, but installed_version
       # has to move either way, otherwise "nothing to do" would pass as an
       # update.
+      # A git checkout of stable33 or stable34 ships no apps/viewer, while the
+      # install enables the shipped viewer. Updater::checkAppsRequirements then
+      # stops occ upgrade with "The files of the app viewer were not correctly
+      # replaced"; stable35 skips that check on the git channel. A release
+      # tarball carries every shipped app, so an enabled app without code is a
+      # property of this checkout only: it is switched off before the update.
+      - name: Switch off enabled apps that this server checkout does not carry
+        run: |
+          for app in $(./occ app:list --enabled --output=json | jq -r '.enabled | keys[]'); do
+            if ! ./occ app:getpath "${app}" > /dev/null 2>&1; then
+              echo "${app} is enabled but has no code in this checkout, switching it off"
+              ./occ app:disable "${app}"
+            fi
+          done
+
       - name: Update the PHP app with occ upgrade
         run: |
           rm -rf apps/audio_video_search

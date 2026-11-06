@@ -384,3 +384,31 @@ def test_the_lifecycle_rule_fires_when_the_main_run_takes_the_drift_tests() -> N
         "the main Playwright run does not leave out @patch",
         "the main Playwright run does not leave out @missing",
     ]
+
+
+REDEPLOY = REPO_ROOT / "ci" / "redeploy.sh"
+_REQUIRED_VARIABLE = re.compile(r'^: "\$\{(\w+):\?', re.MULTILINE)
+
+
+def missing_redeploy_variables(script: str, workflow: str) -> list[str]:
+    """Variables ci/redeploy.sh insists on that deploy-harp.yml never provides.
+
+    A variable counts as provided when the workflow writes it into GITHUB_ENV
+    or names it under env. Push 8 ran every drift step into "INFO_XML is
+    required" because nobody exported it.
+    """
+    return [
+        name for name in _REQUIRED_VARIABLE.findall(script) if f"{name}=" not in workflow and f"{name}:" not in workflow
+    ]
+
+
+def test_deploy_harp_provides_what_redeploy_requires() -> None:
+    script = REDEPLOY.read_text(encoding="utf-8")
+    assert _REQUIRED_VARIABLE.findall(script), "ci/redeploy.sh names no required variable"
+    assert missing_redeploy_variables(script, harp_source()) == []
+
+
+def test_the_redeploy_rule_fires_on_a_variable_nobody_exports() -> None:
+    script = ': "${INFO_XML:?INFO_XML is required}"\n: "${ADMIN_PASS:?ADMIN_PASS is required}"\n'
+    assert missing_redeploy_variables(script, "env:\n  ADMIN_PASS: x\n") == ["INFO_XML"]
+    assert missing_redeploy_variables(script, 'env:\n  ADMIN_PASS: x\necho "INFO_XML=/tmp/i.xml"\n') == []
