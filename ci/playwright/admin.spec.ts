@@ -40,6 +40,8 @@ test('Debug-Block: Schalter blendet den Testtreffer ein und aus', async ({ page 
 	await openSection(page, false);
 
 	const toggle = page.locator('#avs-sample-visible');
+	// The Nextcloud checkbox style moves the input out of sight; a user clicks its label.
+	const toggleLabel = page.locator('label[for="avs-sample-visible"]');
 	await expect(toggle).toBeVisible();
 	const alice = users.alice();
 
@@ -52,14 +54,14 @@ test('Debug-Block: Schalter blendet den Testtreffer ein und aus', async ({ page 
 
 	const saved = () => page.waitForResponse((response) => response.url().includes('/apps/audio_video_search/admin/sample'));
 	let answer = saved();
-	await toggle.click();
+	await toggleLabel.click();
 	expect((await answer).ok()).toBe(true);
 	await expect(toggle).not.toBeChecked();
 	await expect.poll(async () => (await ocsSearch(alice)).length).toBe(0);
 
 	// And back on, so the tests after this one find the hits again.
 	answer = saved();
-	await toggle.click();
+	await toggleLabel.click();
 	expect((await answer).ok()).toBe(true);
 	await expect(toggle).toBeChecked();
 	await expect.poll(async () => (await ocsSearch(alice)).length).toBeGreaterThan(0);

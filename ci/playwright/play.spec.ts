@@ -28,16 +28,31 @@ const GROUP_NAME = /^(Audio and video|Audio und Video|Audio et vidéo)$/;
 // The heading of a page that names no file, in the three languages.
 const NEUTRAL_HEADING = /^(Playback|Wiedergabe|Lecture)$/;
 
-/** Open the Unified Search from the header, by its button or by shortcut. */
+/**
+ * Open the Unified Search from the header, the way a user does. Nextcloud 33
+ * has a header button "Unified search"; 34 and 35 put the trigger into a
+ * search landmark: a button on narrow screens and on wide 34, the combobox
+ * itself on wide 35.
+ */
 async function openUnifiedSearch(page: Page): Promise<void> {
-	const button = page
-		.locator('.unified-search-menu button, #unified-search button, header [aria-label="Unified search"]')
+	const landmark = page.getByRole('search');
+	const trigger = landmark
+		.getByRole('button')
+		.or(landmark.getByRole('combobox'))
+		.or(page.locator('#unified-search button, header [aria-label="Unified search"]'))
 		.first();
-	if (await button.isVisible()) {
-		await button.click();
-	} else {
-		await page.keyboard.press('Control+K');
-	}
+	await expect(trigger).toBeVisible();
+	await trigger.click();
+}
+
+/** Where the query goes once the search is open: the dialog field, or on wide 35 the header combobox. */
+function searchField(page: Page) {
+	return page
+		.getByRole('dialog')
+		.locator('input[type="search"], input[type="text"]')
+		.or(page.locator('.unified-search-modal-root input[type="search"]'))
+		.or(page.getByRole('search').getByRole('combobox'))
+		.first();
 }
 
 test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page }, testInfo) => {
@@ -45,13 +60,14 @@ test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page },
 	await login(page, users.alice());
 	await openUnifiedSearch(page);
 
-	const input = page.getByRole('dialog').locator('input[type="search"], input[type="text"]').first();
+	const input = searchField(page);
 	await expect(input).toBeVisible();
 	await input.fill(QUERY);
 
 	await expect(page.getByText(GROUP_NAME)).toBeVisible();
+	// Wide 35 renders the hits as listbox options, which hide the link role inside.
 	const hit = page
-		.getByRole('link')
+		.locator('a[href]')
 		.filter({ hasText: MEDIA_NAME })
 		.filter({ hasText: /(^|\s)0:44 · / })
 		.first();
@@ -100,6 +116,9 @@ test('Freigabe: Empfänger spielt ab der Zeitstelle, WebDAV 206', async ({ page 
 test('Abgelaufene Sitzung: nach der Anmeldung steht das Medium an der Zeitstelle', async ({ page }, testInfo) => {
 	gridOnly(testInfo);
 	await login(page, users.alice());
+	// Leave the page first: its background requests would otherwise start a new
+	// session after the cookies are gone and void the token of the login form.
+	await page.goto('about:blank');
 	await page.context().clearCookies();
 
 	await page.goto(playPath(fileIds.webm()));
