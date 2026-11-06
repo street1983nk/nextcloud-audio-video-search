@@ -143,7 +143,7 @@ ENV HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 OMP_NUM_THREADS=2
 | `RLIMIT_AS` als RAM-Grenze | ORT und CTranslate2 reservieren viel virtuellen Speicher; harte AS-Grenze führt zu Abstürzen trotz freiem RAM [Schätzung] | Vorab-Prüfung über cgroup-Headroom (Findling `memory_guard.py`) + RSS-Beobachtung + Kill des Workers |
 | BtbN `latest` oder tägliche Tags | `latest` wandert, Tagesbuilds verschwinden nach 14 Tagen: Build nicht reproduzierbar, sha256 bricht | Monatsend-Autobuild + sha256 je Architektur |
 | BtbN `gpl`-Varianten | unnötig (nur Dekodieren), widerspricht LGPL-Entscheidung | `lgpl` |
-| Eigene App-Seite mit Player in v1 | Owner: v1 nur Unified Search | Treffer-Link auf die Datei |
+| Eigene App-Seite mit Medienübersicht in v1 | Owner: v1 nur Unified Search plus minimale Abspielansicht für genau einen Treffer (Owner 06.11.) | Treffer-Link auf die Abspielroute `/apps/audio_video_search/play/{fileId}?t=` |
 | `webvtt-py`, `srt`, `pysubs2` | Formate trivial; Bibliothek löst das eigentliche Problem (Zeilenumbruch, Lesedauer) nicht | ca. 100 Zeilen eigener Writer mit Tests |
 | Celery/Redis/RabbitMQ | zweiter Dienst im RAM-knappen Container | SQLite-Stufen + Companion-Queue mit Lease |
 

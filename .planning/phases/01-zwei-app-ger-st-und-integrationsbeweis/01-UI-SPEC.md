@@ -1,7 +1,8 @@
 ---
 phase: 1
 slug: zwei-app-ger-st-und-integrationsbeweis
-status: draft
+status: approved
+reviewed_at: 2026-11-06
 shadcn_initialized: false
 preset: none
 created: 2026-11-06
