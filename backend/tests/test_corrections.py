@@ -27,7 +27,9 @@ V2 = [
 ]
 
 
-def _corr(start: int, end: int, body: str, *, kind: str = "text", words_json: str | None = None, cid: int = 1) -> Correction:
+def _corr(
+    start: int, end: int, body: str, *, kind: str = "text", words_json: str | None = None, cid: int = 1
+) -> Correction:
     return Correction(
         correction_id=cid, media_id=7, start_ms=start, end_ms=end, kind=kind, body=body, words_json=words_json
     )
@@ -120,4 +122,3 @@ def test_two_corrections_in_order() -> None:
     corrections = [_corr(950, 1300, "verabschiedet", cid=2), HAUSHALT]
     out = effective_words(V2, corrections)
     assert _text(out) == "der Haushaltsplan verabschiedet beschlossen"
-

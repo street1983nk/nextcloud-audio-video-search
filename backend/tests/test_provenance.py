@@ -86,10 +86,10 @@ def test_invalid_provenance_names_the_field(changes: dict[str, object], field: s
 
 
 def test_error_message_never_carries_the_value() -> None:
-    secret = "Sitzungsprotokoll-geheim"
+    content = "Sitzungsprotokoll-geheim"
     with pytest.raises(ValueError, match="engine") as info:
-        validate(_prov(engine=secret))
-    assert secret not in str(info.value)
+        validate(_prov(engine=content))
+    assert content not in str(info.value)
 
 
 def test_order_key_is_epoch_level_config() -> None:
