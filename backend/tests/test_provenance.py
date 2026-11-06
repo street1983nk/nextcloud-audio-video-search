@@ -6,10 +6,13 @@ The order is lexicographic over (epoch, level, config_version); a tie is stale.
 """
 
 import hashlib
+import sqlite3
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
+from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import (
     ENGINES,
     PROFILES,
@@ -19,6 +22,7 @@ from audio_video_search_backend.model.provenance import (
     order_key,
     validate,
 )
+from audio_video_search_backend.store.repo import PublishResult, Store
 
 HEX_A = "a" * 64
 HEX_B = "b" * 64
@@ -117,3 +121,107 @@ def test_order_key_reads_rows_too() -> None:
         config_version = 4
 
     assert order_key(Row()) == (1, 150, 4)
+
+
+# Store level: the conditional publish of decision 5.
+
+WORDS = [Word(start_ms=0, end_ms=300, surface="Haushalt", norm="haushalt", conf=0.8, src="machine")]
+ROVER = f"{HEX_A},{HEX_B}"
+
+
+def _version_rows(path: Path) -> tuple[int, int]:
+    with sqlite3.connect(path) as conn:
+        transcripts = conn.execute("SELECT COUNT(*) FROM transcript").fetchone()[0]
+        words = conn.execute("SELECT COUNT(*) FROM word").fetchone()[0]
+    return transcripts, words
+
+
+def test_publish_insert_then_better_level(store: Store) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    first = store.publish_version(media_id, _prov(), WORDS)
+    assert first.published
+    assert first.reason is None
+    assert first.index_rev == 1
+    better = store.publish_version(media_id, _prov(engine="rover", model_sha256=ROVER, level=Level.REFINED), WORDS)
+    assert better.published
+    assert better.index_rev == 2
+    current = store.current(media_id)
+    assert current is not None
+    assert (current.version_id, current.level, current.index_rev) == (better.version_id, 200, 2)
+    assert store.pending_index_work() == [(media_id, 1), (media_id, 2)]
+
+
+def test_older_level_with_higher_config_is_stale(store: Store, tmp_path: Path) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    assert store.publish_version(media_id, _prov(level=Level.REFINED), WORDS).published
+    before = _version_rows(tmp_path / "state.db")
+    result = store.publish_version(media_id, _prov(level=Level.PREVIEW, config_version=9), WORDS)
+    assert result == PublishResult(False, None, None, "stale_rejected")
+    # Rollback: no orphan transcript or word rows.
+    assert _version_rows(tmp_path / "state.db") == before
+    current = store.current(media_id)
+    assert current is not None
+    assert (current.level, current.index_rev) == (200, 1)
+
+
+def test_tie_is_stale(store: Store) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    assert store.publish_version(media_id, _prov(), WORDS).published
+    assert store.publish_version(media_id, _prov(), WORDS).reason == "stale_rejected"
+
+
+def test_higher_config_on_same_level_wins(store: Store) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    assert store.publish_version(media_id, _prov(), WORDS).published
+    assert store.publish_version(media_id, _prov(config_version=2), WORDS).published
+
+
+def test_bump_epoch_lets_a_lower_level_win(store: Store) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    assert store.publish_version(media_id, _prov(level=Level.REFINED_L3), WORDS).published
+    assert store.media_epoch(media_id) == 0
+    assert store.bump_epoch(media_id) == 1
+    assert store.media_epoch(media_id) == 1
+    # An in-flight result of the old epoch is stale, even at a high level.
+    stale = store.publish_version(media_id, _prov(level=Level.REFINED_L3, config_version=5), WORDS)
+    assert stale.reason == "stale_rejected"
+    sample = _prov(engine="sample", model_sha256=SAMPLE_MODEL_SHA256, level=Level.SAMPLE, epoch=1)
+    assert store.publish_version(media_id, sample, WORDS).published
+    current = store.current(media_id)
+    assert current is not None
+    assert (current.epoch, current.level) == (1, 1)
+
+
+def test_input_mismatch(store: Store, tmp_path: Path) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    store.media_for_file_sha256("e" * 64)
+    before = _version_rows(tmp_path / "state.db")
+    result = store.publish_version(media_id, _prov(input_file_sha256="e" * 64), WORDS)
+    assert result == PublishResult(False, None, None, "input_mismatch")
+    assert store.publish_version(media_id, _prov(input_file_sha256="f" * 64), WORDS).reason == "input_mismatch"
+    assert _version_rows(tmp_path / "state.db") == before
+    assert store.current(media_id) is None
+
+
+def test_invalid_provenance_writes_nothing(store: Store, tmp_path: Path) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    with pytest.raises(ValueError, match="engine"):
+        store.publish_version(media_id, _prov(engine="cloud"), WORDS)
+    assert _version_rows(tmp_path / "state.db") == (0, 0)
+
+
+def test_machine_words_roundtrip(store: Store) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    result = store.publish_version(media_id, _prov(), WORDS)
+    assert result.version_id is not None
+    assert store.machine_words(result.version_id) == WORDS
+
+
+def test_mark_indexed_clears_the_outbox(store: Store) -> None:
+    media_id = store.media_for_file_sha256(INPUT)
+    store.publish_version(media_id, _prov(), WORDS)
+    store.publish_version(media_id, _prov(config_version=2), WORDS)
+    store.mark_indexed(media_id, 1)
+    assert store.pending_index_work() == [(media_id, 2)]
+    store.mark_indexed(media_id, 2)
+    assert store.pending_index_work() == []

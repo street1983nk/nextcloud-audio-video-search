@@ -3,11 +3,15 @@
 import base64
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
 
 from audio_video_search_backend import APP_ID
+
+if TYPE_CHECKING:
+    from audio_video_search_backend.store.repo import Store
 
 # backend/ holds the ExApp (package, Dockerfile, appinfo, l10n, pyproject);
 # the repository root holds what both halves share (workflows, docs, READMEs).
@@ -41,3 +45,15 @@ def client() -> Iterator[TestClient]:
 
     with TestClient(APP) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> Iterator["Store"]:
+    """A fresh operating state in a temporary directory."""
+    from audio_video_search_backend.store.repo import Store
+
+    opened = Store.open(tmp_path / "state.db")
+    try:
+        yield opened
+    finally:
+        opened.close()

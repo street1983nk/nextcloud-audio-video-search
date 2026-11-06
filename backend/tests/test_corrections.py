@@ -4,9 +4,16 @@ A correction is anchored at audio time [start_ms, end_ms) of a media_id, never
 at word indices. A machine word whose midpoint falls into the span is replaced.
 """
 
+import itertools
 import json
+import sqlite3
+from pathlib import Path
+
+import pytest
 
 from audio_video_search_backend.model.overlay import Correction, Word, effective_words
+from audio_video_search_backend.model.provenance import Level, Provenance
+from audio_video_search_backend.store.repo import Store
 
 
 def _w(surface: str, start: int, end: int) -> Word:
@@ -122,3 +129,142 @@ def test_two_corrections_in_order() -> None:
     corrections = [_corr(950, 1300, "verabschiedet", cid=2), HAUSHALT]
     out = effective_words(V2, corrections)
     assert _text(out) == "der Haushaltsplan verabschiedet beschlossen"
+
+
+# Store level: the correction layer survives replacement and stale results.
+
+SHA = "a" * 64
+MODEL = "d" * 64
+
+
+def _prov(level: Level, config_version: int = 1) -> Provenance:
+    return Provenance(
+        engine="parakeet",
+        model_sha256=MODEL,
+        config_version=config_version,
+        profile="balanced",
+        level=level,
+        epoch=0,
+        language="de",
+        input_file_sha256=SHA,
+    )
+
+
+def _store_text(store: Store, media_id: int) -> str:
+    return _text(store.effective_words(media_id))
+
+
+def _correct(store: Store, media_id: int, start: int, end: int, body: str, *, kind: str = "text") -> int:
+    return store.add_correction(
+        media_id, start, end, kind, body, author_uid="alice", base_version_id=None, base_text=None
+    )
+
+
+def test_store_correction_survives_v2(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    v1 = store.publish_version(media_id, _prov(Level.PREVIEW), V1)
+    store.add_correction(
+        media_id,
+        250,
+        900,
+        "text",
+        "Haushaltsplan",
+        author_uid="alice",
+        base_version_id=v1.version_id,
+        base_text="haus halts plan",
+    )
+    assert _store_text(store, media_id) == "der Haushaltsplan wurde"
+    assert store.publish_version(media_id, _prov(Level.REFINED), V2).published
+    assert _store_text(store, media_id) == "der Haushaltsplan wurde beschlossen"
+
+
+def test_edge_4_correction_survives_a_stale_rejection(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    store.publish_version(media_id, _prov(Level.REFINED), V2)
+    _correct(store, media_id, 250, 900, "Haushaltsplan")
+    assert store.publish_version(media_id, _prov(Level.PREVIEW, 9), V1).reason == "stale_rejected"
+    assert _store_text(store, media_id) == "der Haushaltsplan wurde beschlossen"
+
+
+def test_store_edge_3_other_media_is_not_corrected(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    other = store.media_for_file_sha256("b" * 64)
+    store.publish_version(media_id, _prov(Level.REFINED), V2)
+    _correct(store, other, 250, 900, "Haushaltsplan")
+    assert _store_text(store, media_id) == "der Haushalts plan wurde beschlossen"
+    assert store.active_corrections(media_id) == []
+
+
+def test_without_current_only_correction_words(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    _correct(store, media_id, 250, 900, "Haushaltsplan")
+    assert _store_text(store, media_id) == "Haushaltsplan"
+
+
+def test_overlapping_correction_supersedes(store: Store, tmp_path: Path) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    store.publish_version(media_id, _prov(Level.REFINED), V2)
+    old = _correct(store, media_id, 250, 900, "Haushaltsplan")
+    speaker = _correct(store, media_id, 0, 2000, "Anna", kind="speaker")
+    new = _correct(store, media_id, 600, 1300, "plan verabschiedet")
+    with sqlite3.connect(tmp_path / "state.db") as conn:
+        superseded = conn.execute("SELECT superseded_by FROM correction WHERE correction_id = ?", (old,)).fetchone()[0]
+    assert superseded == new
+    active = store.active_corrections(media_id)
+    assert {c.correction_id for c in active} == {speaker, new}
+    texts = sorted((c.start_ms, c.end_ms) for c in active if c.kind == "text")
+    assert all(a[1] <= b[0] for a, b in itertools.pairwise(texts))
+    assert _store_text(store, media_id) == "der Haushalts plan verabschiedet beschlossen"
+
+
+def test_adjacent_corrections_do_not_supersede(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    _correct(store, media_id, 0, 250, "Der")
+    _correct(store, media_id, 250, 900, "Haushaltsplan")
+    assert len(store.active_corrections(media_id)) == 2
+
+
+def test_each_correction_raises_index_rev(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    store.publish_version(media_id, _prov(Level.REFINED), V2)
+    store.mark_indexed(media_id, 1)
+    _correct(store, media_id, 250, 900, "Haushaltsplan")
+    current = store.current(media_id)
+    assert current is not None
+    assert current.index_rev == 2
+    assert store.pending_index_work() == [(media_id, 2)]
+    _correct(store, media_id, 950, 1300, "verabschiedet")
+    assert store.pending_index_work() == [(media_id, 2), (media_id, 3)]
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "kind", "field"),
+    [
+        (900, 900, "text", "end_ms"),
+        (900, 250, "text", "end_ms"),
+        (-1, 250, "text", "start_ms"),
+        (0, 250, "note", "kind"),
+    ],
+)
+def test_invalid_corrections_are_refused(store: Store, start: int, end: int, kind: str, field: str) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    with pytest.raises(ValueError, match=field):
+        _correct(store, media_id, start, end, "x", kind=kind)
+    assert store.active_corrections(media_id) == []
+
+
+def test_words_json_outside_span_is_refused(store: Store) -> None:
+    media_id = store.media_for_file_sha256(SHA)
+    bad = json.dumps([{"start_ms": 100, "end_ms": 300, "surface": "Haushaltsplan"}])
+    with pytest.raises(ValueError, match="words_json"):
+        store.add_correction(
+            media_id,
+            250,
+            900,
+            "text",
+            "Haushaltsplan",
+            author_uid="alice",
+            base_version_id=None,
+            base_text=None,
+            words_json=bad,
+        )
