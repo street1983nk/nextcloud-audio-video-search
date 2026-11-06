@@ -10,8 +10,8 @@
 	window below has to match the backend one and the deploy-harp.yml matrix.
 
 	Commands and settings are written on one line each: the schema pattern for
-	a PHP class name allows no surrounding whitespace. The settings block joins
-	in a later plan, together with the classes it names.
+	a PHP class name allows no surrounding whitespace. The settings block came
+	in together with the classes it names (plan 07).
 -->
 <info>
 	<id>audio_video_search</id>
@@ -59,4 +59,5 @@ Prérequis :
 		<nextcloud min-version="33" max-version="35"/>
 	</dependencies>
 	<commands><command>OCA\AudioVideoSearch\Command\SampleCommand</command></commands>
+	<settings><admin>OCA\AudioVideoSearch\Settings\Admin</admin><admin-section>OCA\AudioVideoSearch\Settings\Section</admin-section></settings>
 </info>

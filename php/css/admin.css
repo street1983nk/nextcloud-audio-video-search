@@ -1,0 +1,99 @@
+/*
+ * The admin section (UI-SPEC, surface 3). The banner rules (avs-banner*) live
+ * in play.css only and the template loads both files; this file carries the
+ * admin additions: state area, version and time lines, the button row and the
+ * debug block. Server variables only, flat, spacing in steps of the grid
+ * baseline (4, 8, 16, 24 px).
+ */
+
+.avs-admin__state {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 2);
+	margin-block: calc(var(--default-grid-baseline) * 4) calc(var(--default-grid-baseline) * 2);
+}
+
+/* Label role: 13 px, muted. */
+.avs-admin__line {
+	margin: 0;
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+.avs-admin__time,
+.avs-version-own,
+.avs-version-backend {
+	font-variant-numeric: tabular-nums;
+}
+
+.avs-admin__actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+	margin-block-start: calc(var(--default-grid-baseline) * 2);
+}
+
+/* A secondary server button; the spinner sits before the text. */
+.avs-admin__recheck {
+	display: inline-flex;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+	min-height: var(--default-clickable-area);
+	margin: 0;
+}
+
+.avs-admin__spinner {
+	display: inline-block;
+	width: calc(var(--default-grid-baseline) * 4);
+	height: calc(var(--default-grid-baseline) * 4);
+}
+
+/* -- debug block ------------------------------------------------------------------ */
+
+.avs-admin__debug {
+	margin-block-start: calc(var(--default-grid-baseline) * 6);
+}
+
+.avs-admin__subheading {
+	margin: 0 0 calc(var(--default-grid-baseline) * 2);
+	font-size: var(--default-font-size);
+	font-weight: 700;
+	line-height: var(--default-line-height);
+}
+
+.avs-admin__switch {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+	min-height: var(--default-clickable-area);
+	margin: 0;
+}
+
+.avs-admin__status {
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+}
+
+.avs-admin__command {
+	overflow-wrap: anywhere;
+}
+
+/* -- touch ------------------------------------------------------------------------ */
+
+@media (pointer: coarse) {
+	.avs-admin__recheck,
+	.avs-admin__switch {
+		min-height: calc(var(--default-grid-baseline) * 11);
+	}
+}
+
+/* Last on purpose: the display values above and in play.css must not reveal
+   what the template or admin.js hid with the hidden attribute. */
+.avs-admin [hidden] {
+	display: none;
+}
