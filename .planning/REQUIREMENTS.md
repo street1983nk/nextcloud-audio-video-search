@@ -37,7 +37,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 - [ ] **TRANS-03**: Halluzinations-Abfangregel je Segment: Segmente mit erkannter Sprache außerhalb der Instanz-Sprachen und Sicherheit < 0,5 sowie Segmente in fremder Schrift werden verworfen; echte Aufnahmen in nicht unterstützter Sprache werden als "Sprache nicht unterstützt" übersprungen, nicht still geleert
 - [ ] **TRANS-04**: Ein besseres Transkript ersetzt das vorherige atomar; die Suche bleibt dabei durchgehend verfügbar und zeigt nie einen Mischzustand
 - [ ] **TRANS-05**: Ein Ersatz verliert keinen korrekt erkannten Text der Vorschau (Abdeckungs-Wächter je Fenster)
-- [ ] **TRANS-06**: Jedes Transkript führt seine Herkunft (Engine, Modell-sha256, Konfigurationsversion, Profilstufe); ein veraltetes Ergebnis überschreibt nie ein neueres
+- [x] **TRANS-06**: Jedes Transkript führt seine Herkunft (Engine, Modell-sha256, Konfigurationsversion, Profilstufe); ein veraltetes Ergebnis überschreibt nie ein neueres
 - [ ] **TRANS-07**: Lange Dateien werden in Stücken (ca. 10 min) gerechnet; nach Neustart oder Absturz geht es am letzten fertigen Stück weiter
 - [ ] **TRANS-08**: Zeitstempel je Wort stimmen auf die Audiozeit (Parakeet-Wortzeiten bevorzugt)
 
@@ -166,7 +166,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | TRANS-03 | Phase 3 | Pending |
 | TRANS-04 | Phase 6 | Pending |
 | TRANS-05 | Phase 6 | Pending |
-| TRANS-06 | Phase 1 | Pending |
+| TRANS-06 | Phase 1 | Complete |
 | TRANS-07 | Phase 3 | Pending |
 | TRANS-08 | Phase 3 | Pending |
 | QUAL-01 | Phase 6 | Pending |

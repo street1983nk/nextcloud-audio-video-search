@@ -42,7 +42,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 13 plans (8 Wellen)
 Plans:
 - [x] 01-01-PLAN.md: (W1) Gerüst beider Apps (backend/ + php/), Paket-Freigabe, Workflows, Lockstep-Build-Gate, php.yml
-- [ ] 01-02-PLAN.md: (W2) Datenkern SQLite mit Inhalts-Schlüssel, Provenienz, bedingtem Schreiben, Korrektur-Schicht, remove_sample (TRANS-06)
+- [x] 01-02-PLAN.md: (W2) Datenkern SQLite mit Inhalts-Schlüssel, Provenienz, bedingtem Schreiben, Korrektur-Schicht, remove_sample (TRANS-06)
 - [ ] 01-03-PLAN.md: (W2) PHP-Suchtreffer: ExAppService, Rechte-Recheck, Provider mit Zeitmarke, Gateway, occ-Saat mit --remove
 - [ ] 01-04-PLAN.md: (W2) Kataloge DE/EN/FR mit Gate und fehlschlagender Playwright-Kernweg
 - [ ] 01-12-PLAN.md: (W3) Owner: früher Push auf Branch phase-01, php.yml/phpunit in CI, Korrekturschleife
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Zwei-App-Gerüst und Integrationsbeweis | 1/13 | In Progress|  |
+| 1. Zwei-App-Gerüst und Integrationsbeweis | 2/13 | In Progress|  |
 | 2. Erfassung aller Dateien | 0/TBD | Not started | - |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
