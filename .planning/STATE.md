@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Roadmap und STATE angelegt, Traceability in REQUIREMENTS.md gefüllt
-last_updated: "2026-11-06T12:53:04.567Z"
+stopped_at: Plan 01-03 abgeschlossen (Provider, Gateway, ExAppService, occ sample)
+last_updated: "2026-11-06T13:03:58.543Z"
 last_activity: 2026-11-06
 progress:
   total_phases: 11
   completed_phases: 0
   total_plans: 13
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 23
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 01 (Zwei-App-Gerüst und Integrationsbeweis) — EXECUTING
-Plan: 3 of 13
+Plan: 4 of 13
 Status: Ready to execute
 Last activity: 2026-11-06
 
-Progress: [██░░░░░░░░] 15%
+Progress: [██░░░░░░░░] 23%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [██░░░░░░░░] 15%
 *Updated after each plan completion*
 | Phase 01 P01 | 40min | 3 tasks | 50 files |
 | Phase 01 P02 | 9min | 2 tasks | 10 files |
+| Phase 01 P03 | 45 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,8 @@ Recent decisions affecting current work:
 - [Phase 01-01]: composer.lock wird in php.yml in CI aufgelöst und auditiert, nicht im Repo
 - [Phase 01-01]: Lockstep-Gate prüft php-, backend-, image-tag- und pyproject-Version sowie das Server-Fenster gegen die deploy-harp-Matrix
 - [Phase 1, 01-02]: 01-02: Epoche je media_id in media.epoch; publish_version weist prov.epoch < media.epoch ab; Plan 05 nimmt Epoche aus store.media_epoch
+- [Phase 01]: 01-03: SAMPLE_TIMEOUT_SECONDS 120 s für /sample und /sample/remove, Suche bleibt bei 1,5 s
+- [Phase 01]: 01-03: occ-Besitzerauflösung über FileAccess::ownerOf, getFirstNodeById nur in FileAccess.php
 
 ### Pending Todos
 
@@ -103,6 +106,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-06T12:52:58.311Z
-Stopped at: Roadmap und STATE angelegt, Traceability in REQUIREMENTS.md gefüllt
+Last session: 2026-11-06T13:03:53.569Z
+Stopped at: Plan 01-03 abgeschlossen (Provider, Gateway, ExAppService, occ sample)
 Resume file: None
