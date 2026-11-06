@@ -2,7 +2,7 @@
 
 <!-- impeccable:product-schema 1 -->
 
-> Vorlage aus nextcloud-exapp-skeleton. Jede mit TODO(skeleton) markierte Stelle füllt die App mit Quellenangabe. Aussagen ohne Quelle bestätigt der Owner mit Datum.
+> Hervorgegangen aus der Vorlage von nextcloud-exapp-skeleton. Quelle für Nutzer und Core Value: `.planning/PROJECT.md` (Stand 06.11.2026). Aussagen ohne Quelle bestätigt der Owner mit Datum.
 
 ## Platform
 
@@ -10,32 +10,36 @@ web
 
 ## Users
 
-- **Admins von Nextcloud-Instanzen** (Selfhost, kleine Organisationen, Behörden), die die App installieren und unter Verwaltungseinstellungen, Weitere Einstellungen konfigurieren.
-- TODO(skeleton): die Nutzer, die das Ergebnis der App sehen, und mit welcher Frage sie kommen.
+- **Admins von Nextcloud-Instanzen** (Selfhost, kleine Organisationen, Behörden, Schulen), die beide Apps installieren und den Zustand unter Verwaltungseinstellungen, Audio & Video Search prüfen.
+- **Nutzer der Instanz**, die ihre Aufnahmen (Sitzungen, Interviews, Vorlesungen, Videos) durchsuchen wollen. Ihre Frage: "In welcher Aufnahme und an welcher Stelle wurde das gesagt?" Sie suchen in der normalen Nextcloud-Suche und springen vom Treffer auf die Zeitstelle.
 
 ## Product Purpose
 
-TODO(skeleton): ein Absatz, was nach der Installation ohne weitere Konfiguration funktioniert (Core Value).
+Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lokal transkribiert und sind in der Nextcloud-Suche mit Zeitmarke findbar, mit der bestmöglichen Transkriptqualität, die auf der vorhandenen Hardware sicher läuft. Kein Inhalt verlässt den Server.
 
-Erfolg heißt: TODO(skeleton).
+Erfolg heißt: Ein Nutzer findet einen gesprochenen Satz über die Nextcloud-Suche und landet mit einem Klick an der richtigen Stelle der Aufnahme, ohne dass ein Admin etwas einstellen musste.
+
+Stand Phase 1: zwei Apps im Gleichschritt und ein Testtreffer für Entwickler (`occ audio_video_search:sample`), noch keine Transkription.
 
 ## Positioning
 
 - Läuft komplett in der eigenen Instanz, kein Inhalt verlässt den Server, keine Telemetrie.
-- External App: Python-Container über AppAPI/HaRP, AGPL-3.0-or-later, signiert im App Store.
-- TODO(skeleton): Differenzierer gegenüber vorhandenen Lösungen, mit Quelle.
+- Zwei Apps, beide nötig, immer dieselbe Version: PHP-App `audio_video_search` (Suche, Ereignisse, Rechte, Abspielansicht) und ExApp `audio_video_search_backend` (Python-Container über AppAPI/HaRP: Dekodieren, Erkennung, Index). AGPL-3.0-or-later, signiert im App Store.
+- Treffer erscheinen in der normalen Nextcloud-Suche mit Sprung auf die Zeitstelle; das geht nur über einen Suchprovider einer PHP-App (Quelle: `.planning/research/STACK.md`, Kernbefund).
 
 ## Operating Context
 
 - Store-Eintrag unter External Apps, Nextcloud 33 bis 35, amd64 und arm64.
-- Oberfläche: deklarative Admin-Einstellungen (AppAPI), siehe DESIGN.md.
+- Oberfläche: Suchtreffer, Abspielansicht und Admin-Statusbereich als PHP-Templates der Begleit-App (Stufe 3), die ExApp nur mit deklarativen Einstellungen; siehe DESIGN.md.
 - Texte in Deutsch, Englisch und Französisch, Deutsch zuerst.
 
 ## Capabilities and Constraints
 
-- TODO(skeleton): Fähigkeiten als Liste.
+- Phase 1: Suchprovider, Abspielansicht mit Startzeit, Admin-Statusbereich mit Zustand der Gegen-App, Testtreffer per `occ` nur im Debug-Modus.
+- Geplant: automatische lokale Transkription aller Audio- und Videodateien in Deutsch, Englisch und Französisch, Suche mit Zeitmarke.
+- Mobil-Apps öffnen einen Treffer ab 0:00, ohne Zeitsprung.
 - Out of Scope: Inhalte an externe Dienste schicken (Owner-Regel Datenschutz zuerst).
-- Texte nur über die l10n-Kataloge, drei Sprachen im Gleichstand (tests/test_trilingual.py).
+- Texte nur über die l10n-Kataloge, drei Sprachen im Gleichstand (`backend/tests/test_trilingual.py`).
 
 ## Brand Commitments
 
@@ -45,7 +49,7 @@ Erfolg heißt: TODO(skeleton).
 
 ## Evidence on Hand
 
-- TODO(skeleton): Screenshots unter `store/media/`, Messwerte mit Methode.
+- Screenshots der Abnahme aus den Playwright-Specs unter `ci/playwright/` (drei Breiten, hell und dunkel), Messwerte der Spikes mit Methode in `.planning/research/`.
 - Nicht vorhanden und nicht zu erfinden: Kundenstimmen, Nutzerzahlen, Preise.
 
 ## Product Principles
