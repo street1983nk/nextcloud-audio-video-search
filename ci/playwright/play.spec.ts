@@ -1,35 +1,34 @@
-// The core path of phase 1 as an end-to-end contract: find a spoken word in the
-// Unified Search, click the hit, and the media stands at the time mark.
-//
-// This test fails until the whole chain exists (provider, play route, sample
-// hit, CI instance); plan 11 runs it in CI against a throwaway instance that
-// carries tone-90s.webm (ci/make-testmedia.sh) and a sample hit at 42 s for
-// the word "Audiosuche" (occ audio_video_search:sample). Plan 09 adds the error
-// states, the admin area and the three widths.
+// The core path of phase 1 as an end-to-end contract and the states of the
+// playback page (UI-SPEC, surface 2), against the throwaway instance that
+// ci/seed.sh filled: tone-90s.webm with a test result at 42 s for the word
+// "Audiosuche", reachable for its owner alice, for carol through the team
+// folder and for bob through a share; mallory reads none of it.
 //
 // No fixed waits: only web-first assertions, waitForResponse and expect.poll.
 import { expect, test, type Page } from '@playwright/test';
+import {
+	expectAtMark,
+	expectPartialContent,
+	fileIds,
+	gridOnly,
+	isHighContrast,
+	login,
+	playPath,
+	position,
+	QUERY,
+	screenshot,
+	submitLogin,
+	TEST_FILE_NAMES,
+	users,
+} from './helpers';
 
-const USER = process.env.NC_USER ?? 'admin';
-const PASSWORD = process.env.NC_PASSWORD ?? '';
 const MEDIA_NAME = 'tone-90s.webm';
-const QUERY = 'Audiosuche';
-const MARK_SECONDS = 42;
-const TOLERANCE_SECONDS = 0.5;
 // The provider name in the three catalogue languages (php/l10n).
 const GROUP_NAME = /^(Audio and video|Audio und Video|Audio et vidéo)$/;
+// The heading of a page that names no file, in the three languages.
+const NEUTRAL_HEADING = /^(Playback|Wiedergabe|Lecture)$/;
 
-/** Log in through the regular login form; the session lives in the test's own context. */
-async function login(page: Page): Promise<void> {
-	await page.goto('/login');
-	await page.locator('#user').fill(USER);
-	await page.locator('#password').fill(PASSWORD);
-	await page.locator('form[name="login"] [type="submit"], button[type="submit"]').first().click();
-	await expect(page).not.toHaveURL(/\/login(\?|$)/);
-	await page.context().storageState({ path: test.info().outputPath('storage-state.json') });
-}
-
-/** Open the Unified Search from the header, by shortcut or by its button. */
+/** Open the Unified Search from the header, by its button or by shortcut. */
 async function openUnifiedSearch(page: Page): Promise<void> {
 	const button = page
 		.locator('.unified-search-menu button, #unified-search button, header [aria-label="Unified search"]')
@@ -41,8 +40,9 @@ async function openUnifiedSearch(page: Page): Promise<void> {
 	}
 }
 
-test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page }) => {
-	await login(page);
+test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.alice());
 	await openUnifiedSearch(page);
 
 	const input = page.getByRole('dialog').locator('input[type="search"], input[type="text"]').first();
@@ -73,9 +73,120 @@ test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page })
 	);
 	console.log(`canPlayType video/webm vp9+opus: "${support}"`);
 
-	// After loadedmetadata (readyState >= 1) the media stands at the mark.
-	const position = () =>
-		media.evaluate((element: HTMLMediaElement) => (element.readyState >= 1 ? element.currentTime : -1));
-	await expect.poll(position).toBeGreaterThanOrEqual(MARK_SECONDS - TOLERANCE_SECONDS);
-	expect(await position()).toBeLessThanOrEqual(MARK_SECONDS + TOLERANCE_SECONDS);
+	await expectAtMark(page);
+});
+
+test('Gruppenordner: Mitglied spielt ab der Zeitstelle, WebDAV 206', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.carol());
+	await page.goto(playPath(fileIds.team()));
+
+	await expect(page.locator('#avs-media')).toBeAttached();
+	await expectPartialContent(page);
+	await expectAtMark(page);
+});
+
+test('Freigabe: Empfänger spielt ab der Zeitstelle, WebDAV 206', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.bob());
+	await page.goto(playPath(fileIds.webm()));
+
+	await expect(page.locator('#avs-media')).toBeAttached();
+	await expectPartialContent(page);
+	await expectAtMark(page);
+});
+
+// Pitfall 1: the time mark must survive the detour over the login page.
+test('Abgelaufene Sitzung: nach der Anmeldung steht das Medium an der Zeitstelle', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.alice());
+	await page.context().clearCookies();
+
+	await page.goto(playPath(fileIds.webm()));
+	await expect(page).toHaveURL(/\/login/);
+	await submitLogin(page, users.alice());
+
+	await expect(page).toHaveURL(/\/apps\/audio_video_search\/play\/\d+\?t=42\.0(&|$)/);
+	await expect(page.locator('#avs-media')).toBeAttached();
+	await expectAtMark(page);
+});
+
+test('Fremde Datei: 404 ohne Dateinamen', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.mallory());
+
+	const response = await page.goto(playPath(fileIds.webm()));
+	expect(response?.status()).toBe(404);
+	await expect(page.locator('h2').first()).toHaveText(NEUTRAL_HEADING);
+	await expect(page.locator('#avs-media')).toHaveCount(0);
+
+	const content = await page.content();
+	for (const name of TEST_FILE_NAMES) {
+		expect(content).not.toContain(name);
+	}
+});
+
+test('Download-Sperre: Hinweis-Banner statt Medium', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.bob());
+	await page.goto(playPath(fileIds.locked()));
+
+	await expect(page.locator('#avs-banner-download_blocked')).toBeVisible();
+	await expect(page.locator('#avs-media')).toHaveCount(0);
+});
+
+test('Kaputte Datei: Format-Banner mit role=alert und Fokus', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.alice());
+	await page.goto(playPath(fileIds.broken()));
+
+	const banner = page.locator('#avs-banner-format');
+	await expect(banner).toBeVisible();
+	await expect(banner).toHaveAttribute('role', 'alert');
+	await expect(banner).toBeFocused();
+	await expect(page.locator('#avs-media')).toBeHidden();
+});
+
+test('Sprungknopf: zurück auf die Zeitstelle, Fokus auf dem Medium, bleibt pausiert', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.alice());
+	await page.goto(playPath(fileIds.webm()));
+	await expectAtMark(page);
+
+	const media = page.locator('#avs-media');
+	await media.evaluate((element: HTMLMediaElement) => {
+		element.currentTime = 10;
+	});
+	const at = position(page);
+	await expect.poll(at).toBeLessThan(11);
+
+	const jump = page.locator('#avs-jump');
+	await expect(jump).toBeVisible();
+	await jump.click();
+
+	await expectAtMark(page);
+	expect(await page.evaluate(() => document.activeElement?.id)).toBe('avs-media');
+	expect(await media.evaluate((element: HTMLMediaElement) => element.paused)).toBe(true);
+});
+
+test('Seitentitel nennt die Datei, nichts startet von selbst', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.alice());
+	await page.goto(playPath(fileIds.webm()));
+
+	await expect(page.locator('#avs-media')).toBeAttached();
+	expect(await page.title()).toContain(MEDIA_NAME);
+	await expect(page.locator('[autoplay]')).toHaveCount(0);
+});
+
+// The screenshot of the playback page for every project of the grid. The high
+// contrast project opens the team folder copy as dora, whose theme is high
+// contrast; every other project opens alice's own file.
+test('Abspielansicht für die Abnahme @screenshot', async ({ page }, testInfo) => {
+	const highContrast = isHighContrast(testInfo);
+	await login(page, highContrast ? users.dora() : users.alice());
+	await page.goto(playPath(highContrast ? fileIds.team() : fileIds.webm()));
+
+	await expectAtMark(page);
+	await screenshot(page, 'play', testInfo);
 });
