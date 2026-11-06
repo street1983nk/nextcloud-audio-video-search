@@ -139,7 +139,7 @@ final class BackendStateTest extends TestCase {
 	}
 
 	/** @param array<mixed> $value */
-	private function status(array $value, int $code = 200): IResponse&MockObject {
+	private function statusResponse(array $value, int $code = 200): IResponse&MockObject {
 		$encoded = json_encode($value);
 		self::assertIsString($encoded);
 		$response = $this->createMock(IResponse::class);
@@ -230,7 +230,7 @@ final class BackendStateTest extends TestCase {
 	public function testAnErrorStatusOrNoAnswerIsUnreachable(): void {
 		self::assertSame(
 			ExAppService::STATE_BACKEND_UNREACHABLE,
-			$this->service(self::registered('0.1.0'), $this->status([], 503))->backendState('root')['state'],
+			$this->service(self::registered('0.1.0'), $this->statusResponse([], 503))->backendState('root')['state'],
 		);
 		self::assertSame(
 			ExAppService::STATE_BACKEND_UNREACHABLE,
@@ -241,7 +241,7 @@ final class BackendStateTest extends TestCase {
 	public function testOnlyThePatchDiffersAndTheBackendAnswersIsPatchDiffers(): void {
 		$state = $this->service(
 			self::registered('0.1.3'),
-			$this->status(['appVersion' => '0.1.3', 'companion' => 'ok', 'sampleCount' => 0]),
+			$this->statusResponse(['appVersion' => '0.1.3', 'companion' => 'ok', 'sampleCount' => 0]),
 		)->backendState('root');
 
 		self::assertSame(ExAppService::STATE_VERSION_PATCH_DIFFERS, $state['state']);
@@ -252,7 +252,7 @@ final class BackendStateTest extends TestCase {
 	public function testTheSameVersionIsOkWithTheStatusFields(): void {
 		$state = $this->service(
 			self::registered('0.1.0'),
-			$this->status(['appVersion' => '0.1.0', 'companion' => 'ok', 'sampleCount' => 2]),
+			$this->statusResponse(['appVersion' => '0.1.0', 'companion' => 'ok', 'sampleCount' => 2]),
 		)->backendState('root');
 
 		self::assertSame([
@@ -269,7 +269,7 @@ final class BackendStateTest extends TestCase {
 		// Registered as 0.1.0, but the container that answers runs 0.2.1.
 		$state = $this->service(
 			self::registered('0.1.0'),
-			$this->status(['appVersion' => '0.2.1']),
+			$this->statusResponse(['appVersion' => '0.2.1']),
 		)->backendState('root');
 
 		self::assertSame(ExAppService::STATE_VERSION_DRIFT, $state['state']);
@@ -279,7 +279,7 @@ final class BackendStateTest extends TestCase {
 	public function testMalformedStatusFieldsAreDroppedNotTrusted(): void {
 		$state = $this->service(
 			self::registered('0.1.0'),
-			$this->status(['appVersion' => '<b>9.9</b>', 'companion' => 'great', 'sampleCount' => -1]),
+			$this->statusResponse(['appVersion' => '<b>9.9</b>', 'companion' => 'great', 'sampleCount' => -1]),
 		)->backendState('root');
 
 		self::assertSame(ExAppService::STATE_OK, $state['state']);
@@ -289,14 +289,14 @@ final class BackendStateTest extends TestCase {
 
 		$state = $this->service(
 			self::registered('0.1.0'),
-			$this->status(['companion' => 'missing', 'sampleCount' => '3']),
+			$this->statusResponse(['companion' => 'missing', 'sampleCount' => '3']),
 		)->backendState('root');
 		self::assertSame('missing', $state['companion']);
 		self::assertNull($state['sampleCount']);
 	}
 
 	public function testAMalformedRegisteredVersionIsUnknownAndNeverOk(): void {
-		$state = $this->service(self::registered('../etc/passwd'), $this->status([]))->backendState('root');
+		$state = $this->service(self::registered('../etc/passwd'), $this->statusResponse([]))->backendState('root');
 
 		self::assertSame(ExAppService::STATE_VERSION_PATCH_DIFFERS, $state['state']);
 		self::assertNull($state['backend']);
@@ -334,7 +334,7 @@ final class BackendStateTest extends TestCase {
 	public function testTheResultCarriesCodesVersionsAndNumbersOnly(): void {
 		$state = $this->service(
 			self::registered('0.1.0'),
-			$this->status(['appVersion' => '0.1.0', 'path' => '/files/alice/talk.mp4', 'name' => 'talk.mp4']),
+			$this->statusResponse(['appVersion' => '0.1.0', 'path' => '/files/alice/talk.mp4', 'name' => 'talk.mp4']),
 		)->backendState('root');
 
 		self::assertSame(['state', 'own', 'backend', 'companion', 'sampleCount', 'checkedAt'], array_keys($state));
@@ -376,15 +376,15 @@ final class BackendStateTest extends TestCase {
 	}
 
 	public function testOkAndPatchDiffersKeepTheSearchOpen(): void {
-		self::assertTrue($this->service(self::registered('0.1.0'), $this->status(['appVersion' => '0.1.0']))->searchAllowed());
+		self::assertTrue($this->service(self::registered('0.1.0'), $this->statusResponse(['appVersion' => '0.1.0']))->searchAllowed());
 
 		$this->stored = [];
-		self::assertTrue($this->service(self::registered('0.1.4'), $this->status(['appVersion' => '0.1.4']))->searchAllowed());
+		self::assertTrue($this->service(self::registered('0.1.4'), $this->statusResponse(['appVersion' => '0.1.4']))->searchAllowed());
 	}
 
 	public function testAFreshVerdictIsUsedWithoutAskingAgain(): void {
 		$this->stored[ExAppService::KEY_BACKEND_STATE] = (string)json_encode(['state' => ExAppService::STATE_BACKEND_MISSING, 'checkedAt' => self::NOW - 59]);
-		$service = $this->service(self::registered('0.1.0'), $this->status(['appVersion' => '0.1.0']));
+		$service = $this->service(self::registered('0.1.0'), $this->statusResponse(['appVersion' => '0.1.0']));
 
 		self::assertFalse($service->searchAllowed());
 		self::assertSame(0, $this->infoCalls);
@@ -393,7 +393,7 @@ final class BackendStateTest extends TestCase {
 
 	public function testAVerdictOlderThanSixtySecondsIsDeterminedAgainUnderTheFirstAdmin(): void {
 		$this->stored[ExAppService::KEY_BACKEND_STATE] = (string)json_encode(['state' => ExAppService::STATE_BACKEND_MISSING, 'checkedAt' => self::NOW - 61]);
-		$service = $this->service(self::registered('0.1.0'), $this->status(['appVersion' => '0.1.0']));
+		$service = $this->service(self::registered('0.1.0'), $this->statusResponse(['appVersion' => '0.1.0']));
 
 		self::assertTrue($service->searchAllowed());
 		self::assertSame(1, $this->infoCalls);
@@ -408,7 +408,7 @@ final class BackendStateTest extends TestCase {
 		// Both remembered values would answer differently from the fresh
 		// verdict; a fresh lookup is what proves they were not taken.
 		$this->stored[ExAppService::KEY_BACKEND_STATE] = (string)json_encode(['state' => ExAppService::STATE_BACKEND_MISSING, 'checkedAt' => self::NOW + 600]);
-		self::assertTrue($this->service(self::registered('0.1.0'), $this->status(['appVersion' => '0.1.0']))->searchAllowed());
+		self::assertTrue($this->service(self::registered('0.1.0'), $this->statusResponse(['appVersion' => '0.1.0']))->searchAllowed());
 		self::assertSame(1, $this->infoCalls);
 
 		$this->stored[ExAppService::KEY_BACKEND_STATE] = (string)json_encode(['state' => 'fine', 'checkedAt' => self::NOW]);
@@ -430,7 +430,7 @@ final class BackendStateTest extends TestCase {
 
 	public function testANewVerdictReplacesAnOldDriftOnRecord(): void {
 		$this->stored[ExAppService::KEY_BACKEND_VERSION] = '0.4.0';
-		$service = $this->service(self::registered('0.1.0'), $this->status(['appVersion' => '0.1.0']));
+		$service = $this->service(self::registered('0.1.0'), $this->statusResponse(['appVersion' => '0.1.0']));
 
 		self::assertSame(ExAppService::STATE_OK, $service->backendState('root')['state']);
 		self::assertNull($service->driftOnRecord());

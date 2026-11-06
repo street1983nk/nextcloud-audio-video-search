@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The nine rules:
+The ten rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -23,6 +23,7 @@ The nine rules:
 7. Every ``.php`` file starts with ``<?php`` and ``declare(strict_types=1);``.
 8. No U+2013 or U+2014 anywhere under ``php/``.
 9. ``php/composer.json`` is valid JSON and maps both app namespaces.
+10. No helper in ``php/tests`` is named like a final method of PHPUnit's TestCase.
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -275,6 +276,46 @@ def composer_namespaces(text: str) -> tuple[dict[str, str], dict[str, str]]:
     return data["autoload"]["psr-4"], data["autoload-dev"]["psr-4"]
 
 
+# Final methods of PHPUnit\Framework\TestCase (11.5): a test helper with one of
+# these names is a fatal error the moment phpunit loads the class.
+FINAL_TESTCASE_METHODS = frozenset(
+    {
+        "count",
+        "dataName",
+        "dataSetAsString",
+        "groups",
+        "name",
+        "nameWithDataSet",
+        "numberOfAssertionsPerformed",
+        "providedData",
+        "result",
+        "run",
+        "size",
+        "status",
+        "usesDataProvider",
+        "valueObjectForEvents",
+    }
+)
+
+
+def helpers_shadowing_final_methods(source: str) -> list[str]:
+    """Names of methods in source that PHPUnit's TestCase declares final."""
+    return [
+        match.group(1)
+        for line in source.splitlines()
+        if (match := _FUNCTION.match(line)) and match.group(1) in FINAL_TESTCASE_METHODS
+    ]
+
+
+def test_rule10_no_test_helper_shadows_a_final_testcase_method() -> None:
+    findings = {
+        path.relative_to(REPO_ROOT).as_posix(): found
+        for path in php_files(PHP_ROOT / "tests")
+        if (found := helpers_shadowing_final_methods(path.read_text(encoding="utf-8")))
+    }
+    assert findings == {}
+
+
 def test_rule9_composer_json_parses_and_maps_the_app_namespaces() -> None:
     # A copy that lost one backslash ("OCA\AudioVideoSearch") is invalid JSON
     # and broke every composer step in CI; this catches it before a push.
@@ -372,3 +413,8 @@ def test_self_rule9_fires_on_a_lost_backslash() -> None:
         pass
     else:
         raise AssertionError("a single backslash before a letter has to be rejected")
+
+
+def test_self_rule10_fires_on_a_helper_named_status() -> None:
+    assert helpers_shadowing_final_methods("\tprivate function status(array $value): IResponse {") == ["status"]
+    assert helpers_shadowing_final_methods("\tprivate function statusResponse(array $value): IResponse {") == []
