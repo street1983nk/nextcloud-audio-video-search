@@ -18,7 +18,17 @@ name: Deploy through HaRP
 #   - Playwright walks the three UI surfaces (search hit, playback page, admin
 #     section) and leaves screenshots at 375, 768 and 1280 px, light and dark,
 #     plus high contrast at 1280, as an artifact for the owner's review,
-#   - no test file name ends up in the Nextcloud log or the container log.
+#   - no test file name ends up in the Nextcloud log or the container log,
+#   - lockstep at runtime (plan 10): a backend a minor apart gives
+#     version_drift and an empty search, a patch apart gives
+#     version_patch_differs and the hits, an unregistered backend gives
+#     backend_missing, and a disabled PHP app makes the container refuse
+#     /sample with companion_missing.
+#
+# The second job, upgrade, installs both halves at a synthetic 0.0.1, seeds
+# them and updates them to the version of this commit (occ upgrade and
+# app_api:app:update); state.db, the test results and the schema version
+# have to survive (plan 10, PLAT-01).
 on:
   push:
     branches:
@@ -56,8 +66,9 @@ jobs:
     name: deploy-harp ${{ matrix.server-version }} ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     # An estimate until the first green run measures it: image build, HaRP,
-    # seed, the browser download and seven Playwright projects.
-    timeout-minutes: 60
+    # seed, the browser download, seven Playwright projects and the three
+    # registrations of the drift steps (plan 10).
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -329,7 +340,7 @@ jobs:
 
       - name: Playwright on the running instance
         working-directory: app-src/ci/playwright
-        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug"
+        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug|@drift|@patch|@missing"
 
       - name: Playwright with the backend disabled
         working-directory: app-src/ci/playwright
@@ -362,6 +373,139 @@ jobs:
           "${GITHUB_WORKSPACE}/occ" config:system:set debug --value=false --type=boolean
           npx playwright test --grep @nodebug
 
+      # -- Lockstep in the running instance (plan 10, PLAT-02) -------------------
+      #
+      # Owner rule of 06.11.: a difference in major or minor is an error with an
+      # admin banner and an empty search, a difference in the patch part is a
+      # hint and the search works, an unknown version is never ok. The steps
+      # below register the backend again at a chosen version (ci/redeploy.sh:
+      # same image, AppAPI hands <version> to the container as APP_VERSION) and
+      # read the verdict where the admin reads it (ci/admin-state.sh, the route
+      # behind "Check again"). The versions are derived from the PHP app of this
+      # commit, so the steps keep their meaning after the next version bump.
+      - name: Drift versions next to the version of this commit
+        run: |
+          own=$(sed -n 's|.*<version>\([^<]*\)</version>.*|\1|p' apps/audio_video_search/appinfo/info.xml | head -n 1)
+          if [[ ! "${own}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "apps/audio_video_search/appinfo/info.xml carries no major.minor.patch version ('${own}')"
+            exit 1
+          fi
+          major=${BASH_REMATCH[1]}
+          minor=${BASH_REMATCH[2]}
+          patch=${BASH_REMATCH[3]}
+          {
+            echo "OWN_VERSION=${own}"
+            echo "DRIFT_MINOR_VERSION=${major}.$((minor + 1)).0"
+            echo "DRIFT_PATCH_VERSION=${major}.${minor}.$((patch + 1))"
+          } >> "${GITHUB_ENV}"
+          echo "own ${own}, minor drift ${major}.$((minor + 1)).0, patch drift ${major}.${minor}.$((patch + 1))"
+
+      # The baseline the drift is measured against: the untouched pair is ok.
+      # Debug mode comes back on first: the step before switched it off, and
+      # the test results are only searchable with it.
+      - name: Drift baseline, the untouched pair is ok
+        run: |
+          ./occ config:system:set debug --value=true --type=boolean
+          bash app-src/ci/admin-state.sh state-baseline.json
+          jq -e --arg v "${OWN_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-baseline.json
+
+      # Direction one of the error: the container is a minor ahead. Every
+      # answer of the search has to be HTTP 200 with no entry, never an error
+      # status: the unified search asks every provider in parallel, and a
+      # provider that fails costs the user the other groups as well.
+      - name: Drift 1, backend a minor ahead gives version_drift and an empty search
+        run: |
+          bash app-src/ci/redeploy.sh "${DRIFT_MINOR_VERSION}"
+          bash app-src/ci/admin-state.sh state-drift.json
+          jq -e --arg own "${OWN_VERSION}" --arg b "${DRIFT_MINOR_VERSION}" \
+            '.state == "version_drift" and .own == $own and .backend == $b' state-drift.json
+          code=$(curl -s -o search-drift.json -w '%{http_code}' -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche")
+          test "${code}" = "200"
+          jq -e '.ocs.data.entries | length == 0' search-drift.json
+          cd app-src/ci/playwright
+          AVS_BACKEND_VERSION="${DRIFT_MINOR_VERSION}" npx playwright test --grep @drift
+
+      # Only the patch part differs: a hint, and the search works. The hits
+      # come out of the volume the earlier registrations left behind, so this
+      # step also shows that an unregister without the data flag keeps it.
+      - name: Drift 2, backend a patch apart gives version_patch_differs and the hits
+        run: |
+          bash app-src/ci/redeploy.sh "${DRIFT_PATCH_VERSION}"
+          bash app-src/ci/admin-state.sh state-patch.json
+          jq -e --arg own "${OWN_VERSION}" --arg b "${DRIFT_PATCH_VERSION}" \
+            '.state == "version_patch_differs" and .own == $own and .backend == $b' state-patch.json
+          code=$(curl -s -o search-patch.json -w '%{http_code}' -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche")
+          test "${code}" = "200"
+          jq -e --arg id "${FILEID_WEBM}" \
+            '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-patch.json
+          cd app-src/ci/playwright
+          AVS_BACKEND_VERSION="${DRIFT_PATCH_VERSION}" npx playwright test --grep @patch
+
+      # The other half is gone: unregistered the way an admin removes it, and
+      # without the data flag, so the volume stays for the way back.
+      - name: Drift 3, backend unregistered gives backend_missing and an empty search
+        run: |
+          timeout 300 ./occ app_api:app:unregister "${BACKEND_APP_ID}"
+          bash app-src/ci/admin-state.sh state-missing.json
+          jq -e '.state == "backend_missing"' state-missing.json
+          code=$(curl -s -o search-missing.json -w '%{http_code}' -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche")
+          test "${code}" = "200"
+          jq -e '.ocs.data.entries | length == 0' search-missing.json
+          cd app-src/ci/playwright
+          npx playwright test --grep @missing
+
+      - name: Back to the matching pair, state ok and the hits again
+        run: |
+          bash app-src/ci/redeploy.sh "${OWN_VERSION}"
+          bash app-src/ci/admin-state.sh state-back.json
+          jq -e --arg v "${OWN_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-back.json
+          curl -sfS -o search-back.json -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche"
+          jq -e '.ocs.data.entries | length >= 2' search-back.json
+
+      # Drift 4, the other direction (VALIDATION test_handshake, integration
+      # part): the PHP app goes away and the container notices on its own. It
+      # asks the handshake route again once its answer is older than 30 s
+      # (companion.STALE_SECONDS), so /status turns to missing within a minute,
+      # and a signed /sample through HaRP refuses with companion_missing
+      # before it touches the content gateway.
+      - name: Drift 4, PHP app disabled gives companion missing and companion_missing
+        run: |
+          companion_state() {
+            curl -s -o companion-status.json -u "admin:${ADMIN_PASS}" \
+              "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" || true
+            jq -r '.companion // "none"' companion-status.json 2>/dev/null || echo none
+          }
+          wait_for() {
+            for _ in $(seq 1 45); do
+              [ "$(companion_state)" = "$1" ] && return 0
+              sleep 2
+            done
+            echo "the container did not report companion $1 within 90 s"
+            cat companion-status.json || true
+            return 1
+          }
+          ./occ app:disable audio_video_search
+          wait_for missing
+          jq -n --argjson id "${FILEID_WEBM}" '{fileId: $id, userId: "alice", atMs: 0}' > sample-request.json
+          code=$(curl -s -o sample-refused.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+            -H 'Content-Type: application/json' --data @sample-request.json \
+            "http://localhost:8090/exapps/${BACKEND_APP_ID}/sample")
+          cat sample-refused.json; echo
+          test "${code}" = "200"
+          jq -e '.error == "companion_missing"' sample-refused.json
+          ./occ app:enable audio_video_search
+          wait_for ok
+          bash app-src/ci/admin-state.sh state-companion-back.json
+          jq -e '.state == "ok"' state-companion-back.json
+
       # Owner rule: no path and no file name in a log. The seed and the
       # requests above named every test file, so a name in these logs came
       # out of the code under test.
@@ -382,7 +526,7 @@ jobs:
           [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
-          cp search-*.json logs/ 2>/dev/null || true
+          cp search-*.json state-*.json sample-refused.json logs/ 2>/dev/null || true
 
       - name: Upload the logs
         if: always()
@@ -405,3 +549,322 @@ jobs:
             app-src/ci/playwright/screenshots/
           retention-days: 14
           if-no-files-found: ignore
+
+  # The upgrade proof of both halves (plan 10, PLAT-01). There is no published
+  # release yet to upgrade from, so the previous version is made out of this
+  # commit: a copy whose versions say 0.0.1 (both info.xml, the image tag and
+  # backend/pyproject.toml), installed, seeded and searched, then both halves
+  # moved to the version of this commit the way an update moves them. The PHP
+  # app by swapping its directory and occ upgrade, the ExApp by
+  # app_api:app:update with the new info.xml.
+  #
+  # What has to survive, and is compared before against after: the state.db
+  # in the volume of the container (same inode, so the same file and not a new
+  # one), the test results (same file ids found by the same search, same
+  # sampleCount), the schema version, and at the end the admin state ok.
+  #
+  # Assumption A5 of the research, read in the sources before this job was
+  # written: app_api:app:update (lib/Command/ExApp/Update.php, stable33 to
+  # stable35) calls DockerActions::deployExAppHarp, which removes the old
+  # container with removeExApp(..., ignoreIfNotExists: true), so remove_data
+  # stays false, and HaRP (haproxy_agent.py) deletes the volume only with
+  # remove_data and reuses an existing one at create. This job is the proof
+  # on the running thing.
+  upgrade:
+    name: upgrade ${{ matrix.server-version }} ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # An estimate until the first green run measures it: two image builds
+    # (the second mostly from the layer cache), HaRP, the seed and the update.
+    timeout-minutes: 45
+    env:
+      PREV_VERSION: '0.0.1'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every server version on amd64, and the newest on arm64 as well: the
+        # update path does not differ by architecture, the image build does.
+        include:
+          - server-version: stable33
+            php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable34
+            php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable35
+            php-version: '8.3'
+            runner: ubuntu-24.04
+          - server-version: stable35
+            php-version: '8.3'
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server-version }}
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: ${{ matrix.server-version }}
+          path: apps/app_api
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+
+      # prev/ is this commit with the version 0.0.1 everywhere the lockstep
+      # gate looks, curr/ is this commit as it is. Every rewrite is counted, so
+      # a sed that hit nothing ends the job here and not as a puzzle later.
+      - name: Prepare the previous version 0.0.1 and the current one
+        run: |
+          cp -R app-src prev
+          cp -R app-src curr
+          sed -i "s|<version>[^<]*</version>|<version>${PREV_VERSION}</version>|" prev/php/appinfo/info.xml
+          sed -i -e "s|<version>[^<]*</version>|<version>${PREV_VERSION}</version>|" \
+                 -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${PREV_VERSION}</image-tag>|" \
+                 prev/backend/appinfo/info.xml
+          sed -i "s|^version = \"[^\"]*\"|version = \"${PREV_VERSION}\"|" prev/backend/pyproject.toml
+          # The project entry of the lock file follows, so the image build
+          # sees one version and not two.
+          sed -i "/^name = \"audio-video-search-backend\"$/{n;s|^version = \"[^\"]*\"|version = \"${PREV_VERSION}\"|}" prev/backend/uv.lock
+          test "$(grep -c "<version>${PREV_VERSION}</version>" prev/php/appinfo/info.xml)" = "1"
+          test "$(grep -c "<version>${PREV_VERSION}</version>" prev/backend/appinfo/info.xml)" = "1"
+          test "$(grep -c "<image-tag>${PREV_VERSION}</image-tag>" prev/backend/appinfo/info.xml)" = "1"
+          test "$(grep -c "^version = \"${PREV_VERSION}\"" prev/backend/pyproject.toml)" = "1"
+          grep -A1 '^name = "audio-video-search-backend"$' prev/backend/uv.lock | grep -qx "version = \"${PREV_VERSION}\""
+          curr_version=$(sed -n 's|.*<version>\([^<]*\)</version>.*|\1|p' curr/php/appinfo/info.xml | head -n 1)
+          test -n "${curr_version}"
+          test "${curr_version}" != "${PREV_VERSION}"
+          echo "CURR_VERSION=${curr_version}" >> "${GITHUB_ENV}"
+          echo "previous ${PREV_VERSION}, current ${curr_version}"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Nextcloud in debug mode and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          ./occ config:system:set debug --value=true --type=boolean
+          NEXTCLOUD_HOST=0.0.0.0 composer run serve > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
+            sleep 2
+          done
+          curl -sf "${NC_URL}/status.php"
+          ./occ app:enable -vvv -f app_api
+
+      - name: Install the PHP app at 0.0.1
+        run: |
+          cp -R prev/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          test "$(./occ config:app:get audio_video_search installed_version)" = "${PREV_VERSION}"
+
+      - name: Build both images and push them into a local registry
+        run: |
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${PREV_VERSION}" ./prev/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${PREV_VERSION}"
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${CURR_VERSION}" ./curr/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${CURR_VERSION}"
+
+      - name: Point both info.xml at the local registry
+        run: |
+          for side in prev curr; do
+            sed -e "s|<registry>ghcr.io</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+                -e "s|<image>street1983nk/${BACKEND_APP_ID}</image>|<image>${BACKEND_APP_ID}</image>|" \
+                "${side}/backend/appinfo/info.xml" > "${RUNNER_TEMP}/info-${side}.xml"
+            grep -E '<version>[^<]*</version>|<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-${side}.xml"
+          done
+          grep -q "<image-tag>${PREV_VERSION}</image-tag>" "${RUNNER_TEMP}/info-prev.xml"
+          grep -q "<image-tag>${CURR_VERSION}</image-tag>" "${RUNNER_TEMP}/info-curr.xml"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Register the HaRP daemon and install the ExApp at 0.0.1
+        run: |
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-prev.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      - name: Make the test media
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Seed users, team folder, shares, media and test results at 0.0.1
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          FILEIDS_ENV: ${{ github.workspace }}/app-src/ci/fileids.env
+          SERVER_VERSION: ${{ matrix.server-version }}
+        run: |
+          bash app-src/ci/seed.sh
+          cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
+
+      # Everything the update has to keep, on record before it runs.
+      - name: Before the update, 0.0.1 is ok, seeded and found
+        run: |
+          curl -sfS -o status-before.json -u "admin:${ADMIN_PASS}" \
+            "http://localhost:8090/exapps/${BACKEND_APP_ID}/status"
+          cat status-before.json; echo
+          jq -e --arg v "${PREV_VERSION}" \
+            '.appVersion == $v and .schemaVersion == 1 and .companion == "ok" and .sampleCount >= 1' status-before.json
+          bash app-src/ci/admin-state.sh state-before.json
+          jq -e --arg v "${PREV_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-before.json
+          curl -sfS -o search-before.json -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche"
+          jq -e --arg id "${FILEID_WEBM}" \
+            '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-before.json
+          jq -c '[.ocs.data.entries[].attributes.fileId] | sort' search-before.json > hits-before.json
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          {
+            echo "VOLUME_CREATED=$(docker volume inspect --format '{{.CreatedAt}}' "${volume}")"
+            echo "STATE_DB_INODE=$(docker exec "${EXAPP_CONTAINER}" sh -c 'stat -c %i "${APP_PERSISTENT_STORAGE}/state.db"')"
+            echo "SAMPLE_COUNT=$(jq -r '.sampleCount' status-before.json)"
+          } >> "${GITHUB_ENV}"
+          echo "hits $(cat hits-before.json), volume ${volume}"
+
+      # The PHP half: the directory goes and the new one takes its place, the
+      # way Installer::updateAppstoreApp does it. occ upgrade then runs the app
+      # update, because OC_Util::needUpgrade answers true for an enabled app
+      # whose code is newer than its installed_version (stable33 to stable35).
+      # Exit 0 is success; 3 is accepted as in Findling, but installed_version
+      # has to move either way, otherwise "nothing to do" would pass as an
+      # update.
+      - name: Update the PHP app with occ upgrade
+        run: |
+          rm -rf apps/audio_video_search
+          cp -R curr/php apps/audio_video_search
+          status=0
+          ./occ upgrade || status=$?
+          case "${status}" in
+            0|3) echo "occ upgrade answered ${status}" ;;
+            *) echo "occ upgrade answered ${status}, which is neither success nor up to date"; exit 1 ;;
+          esac
+          installed=$(./occ config:app:get audio_video_search installed_version)
+          echo "installed_version ${installed}"
+          test "${installed}" = "${CURR_VERSION}"
+
+      - name: Update the ExApp with app_api:app:update
+        run: |
+          timeout 600 ./occ app_api:app:update audio_video_search_backend \
+            --info-xml "${RUNNER_TEMP}/info-curr.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          image=$(docker inspect --format '{{.Config.Image}}' "${container}")
+          echo "${container} runs ${image}"
+          case "${image}" in
+            *":${CURR_VERSION}") ;;
+            *) echo "the updated container does not run the image of ${CURR_VERSION}"; exit 1 ;;
+          esac
+
+      - name: After the update, state.db, test results and schema survived
+        run: |
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o status-after.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+              "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" || true)
+            [ "${code}" = "200" ] && break
+            sleep 2
+          done
+          cat status-after.json; echo
+          jq -e --arg v "${CURR_VERSION}" --argjson n "${SAMPLE_COUNT}" \
+            '.appVersion == $v and .schemaVersion == 1 and .sampleCount == $n and .companion == "ok"' status-after.json
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          created=$(docker volume inspect --format '{{.CreatedAt}}' "${volume}")
+          inode=$(docker exec "${EXAPP_CONTAINER}" sh -c 'stat -c %i "${APP_PERSISTENT_STORAGE}/state.db"')
+          echo "volume created ${created} (before ${VOLUME_CREATED}), state.db inode ${inode} (before ${STATE_DB_INODE})"
+          test "${created}" = "${VOLUME_CREATED}"
+          test "${inode}" = "${STATE_DB_INODE}"
+          bash app-src/ci/admin-state.sh state-after.json
+          jq -e --arg v "${CURR_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-after.json
+          curl -sfS -o search-after.json -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche"
+          jq -c '[.ocs.data.entries[].attributes.fileId] | sort' search-after.json > hits-after.json
+          echo "hits before $(cat hits-before.json), after $(cat hits-after.json)"
+          cmp hits-before.json hits-after.json
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
+          cp status-*.json state-*.json search-*.json hits-*.json logs/ 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-logs-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: logs/
+          retention-days: 7

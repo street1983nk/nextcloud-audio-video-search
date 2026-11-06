@@ -275,3 +275,110 @@ def test_the_rule_fires_when_one_leg_stops_the_others() -> None:
     broken = harp_source().replace("fail-fast: false", "fail-fast: true")
 
     assert harp_findings(broken) == ["deploy-harp.yml stops every leg when one fails (fail-fast is not false)"]
+
+
+# -- the lifecycle proof: upgrade 0.0.1 to this commit, drift (plan 10) --------
+
+REDEPLOY = REPO_ROOT / "ci" / "redeploy.sh"
+# The step and the jq assertion it has to carry (the step name alone is no proof).
+DRIFT_STEPS = (
+    ("Drift 1", '.state == "version_drift"'),
+    ("Drift 2", '.state == "version_patch_differs"'),
+    ("Drift 3", '.state == "backend_missing"'),
+    ("Drift 4", '.error == "companion_missing"'),
+)
+ENV_TAGS = ("@disabled", "@unreachable", "@nodebug", "@drift", "@patch", "@missing")
+
+
+def job_text(source: str, job: str) -> str:
+    """The text of one top level job, up to the next job or the end."""
+    match = re.search(rf"^  {job}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source, re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else ""
+
+
+def lifecycle_findings(source: str, redeploy: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the upgrade and drift proof."""
+    findings: list[str] = []
+    upgrade = job_text(source, "upgrade")
+    if not upgrade:
+        return ["deploy-harp.yml has no job upgrade"]
+    if "PREV_VERSION: '0.0.1'" not in upgrade:
+        findings.append("the upgrade job does not start from 0.0.1")
+    if not re.search(r"app_api:app:update audio_video_search_backend \\\n\s+--info-xml ", upgrade):
+        findings.append("the upgrade job does not update the ExApp with app_api:app:update --info-xml")
+    if "./occ upgrade" not in upgrade:
+        findings.append("the upgrade job does not run occ upgrade")
+    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 1"):
+        if proof not in upgrade:
+            findings.append(f"the upgrade job does not compare {proof} before and after")
+    if "rm-data" in source or "rm-data" in redeploy:
+        findings.append("a registration step removes the data volume (rm-data)")
+    steps = steps_of(source)
+    for prefix, state in DRIFT_STEPS:
+        texts = [text for name, text in steps if name.startswith(prefix)]
+        if not texts:
+            findings.append(f"deploy-harp.yml has no step {prefix}")
+        elif state not in texts[0]:
+            findings.append(f"{prefix} does not assert {state}")
+    main_run = re.search(r'npx playwright test --grep-invert "([^"]*)"', source)
+    excluded = main_run.group(1).split("|") if main_run else []
+    findings += [f"the main Playwright run does not leave out {tag}" for tag in ENV_TAGS if tag not in excluded]
+    return findings
+
+
+def test_the_lifecycle_proof_holds_every_rule() -> None:
+    assert lifecycle_findings(harp_source(), REDEPLOY.read_text(encoding="utf-8")) == []
+
+
+def test_the_lifecycle_rule_fires_without_the_upgrade_job() -> None:
+    source = harp_source()
+    broken = source.replace("\n  upgrade:\n", "\n  upgrade-gone:\n")
+    assert broken != source
+
+    assert lifecycle_findings(broken, "") == ["deploy-harp.yml has no job upgrade"]
+
+
+def test_the_lifecycle_rule_fires_on_a_missing_update_and_occ_upgrade() -> None:
+    broken = (
+        harp_source()
+        .replace("app_api:app:update audio_video_search_backend", "app_api:app:list")
+        .replace("./occ upgrade", "./occ status")
+    )
+
+    assert lifecycle_findings(broken, "") == [
+        "the upgrade job does not update the ExApp with app_api:app:update --info-xml",
+        "the upgrade job does not run occ upgrade",
+    ]
+
+
+def test_the_lifecycle_rule_fires_on_a_lost_volume_or_a_lost_comparison() -> None:
+    source = harp_source()
+    broken = source.replace("cmp hits-before.json hits-after.json", "true")
+
+    assert lifecycle_findings(broken, "timeout 300 ./occ app_api:app:unregister x --rm-data") == [
+        "the upgrade job does not compare cmp hits-before.json hits-after.json before and after",
+        "a registration step removes the data volume (rm-data)",
+    ]
+
+
+def test_the_lifecycle_rule_fires_on_a_drift_step_without_its_state() -> None:
+    source = harp_source()
+    broken = source.replace('\'.state == "version_patch_differs"', '\'.state == "ok"').replace(
+        "- name: Drift 3,", "- name: Drift three,"
+    )
+    assert broken != source
+
+    assert lifecycle_findings(broken, "") == [
+        'Drift 2 does not assert .state == "version_patch_differs"',
+        "deploy-harp.yml has no step Drift 3",
+    ]
+
+
+def test_the_lifecycle_rule_fires_when_the_main_run_takes_the_drift_tests() -> None:
+    broken = harp_source().replace("|@drift|@patch|@missing", "")
+
+    assert lifecycle_findings(broken, "") == [
+        "the main Playwright run does not leave out @drift",
+        "the main Playwright run does not leave out @patch",
+        "the main Playwright run does not leave out @missing",
+    ]

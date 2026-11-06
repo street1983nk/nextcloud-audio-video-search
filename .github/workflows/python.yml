@@ -72,7 +72,7 @@ jobs:
         run: |
           command -v shellcheck || sudo apt-get install -y shellcheck
           shellcheck --version
-          shellcheck docker/entrypoint.sh docker/healthcheck.sh ../scripts/release/store-archive.sh ../scripts/ci/head_green.sh
+          shellcheck docker/entrypoint.sh docker/healthcheck.sh ../scripts/release/store-archive.sh ../scripts/ci/head_green.sh ../ci/redeploy.sh ../ci/admin-state.sh
 
       # The Dockerfile linter, as a pinned PyPI wheel so it runs without Docker.
       # tests/test_dockerfile.py holds the project rules on top of it.

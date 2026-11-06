@@ -4,7 +4,10 @@
 // The tests tagged @disabled, @unreachable and @nodebug need an instance the
 // workflow rebuilt beforehand (backend disabled, container stopped, debug mode
 // off); deploy-harp.yml runs each of them in its own step with --grep and
-// leaves them out of the main run.
+// leaves them out of the main run. The same holds for @drift, @patch and
+// @missing (plan 10): the backend registered again a minor apart, a patch
+// apart, and not registered at all; AVS_BACKEND_VERSION names the version the
+// workflow registered.
 import { expect, test, type Page } from '@playwright/test';
 import { ADMIN_PATH, gridOnly, isHighContrast, login, ocsSearch, screenshot, users } from './helpers';
 
@@ -17,6 +20,15 @@ async function openSection(page: Page, highContrast: boolean): Promise<void> {
 	await login(page, highContrast ? users.dora() : users.admin());
 	await page.goto(ADMIN_PATH);
 	await expect(page.locator('#avs-admin')).toBeVisible();
+}
+
+/** The backend version the drift step of the workflow registered. */
+function registeredBackendVersion(): string {
+	const value = process.env.AVS_BACKEND_VERSION;
+	if (value === undefined || value === '') {
+		throw new Error('AVS_BACKEND_VERSION is not set; the drift tests run in the drift steps of deploy-harp.yml only');
+	}
+	return value;
 }
 
 /** "Check again", so the banner shows the state of right now. */
@@ -117,4 +129,37 @@ test('Ohne Debug-Modus wird der Debug-Block nicht gerendert @nodebug', async ({ 
 
 	await expect(page.locator('.avs-admin__debug')).toHaveCount(0);
 	await expect(page.locator('#avs-sample-visible')).toHaveCount(0);
+});
+
+test('Versionen weichen in Major.Minor ab: Fehlerbanner mit beiden Versionen, leere Suche @drift @screenshot', async ({ page }, testInfo) => {
+	await openSection(page, isHighContrast(testInfo));
+	await recheck(page);
+
+	const banner = page.locator('[data-state="version_drift"]');
+	await expect(banner).toBeVisible();
+	await expect(banner.locator('.avs-version-own')).toHaveText(VERSION);
+	await expect(banner.locator('.avs-version-backend')).toHaveText(registeredBackendVersion());
+	expect(await ocsSearch(users.alice())).toHaveLength(0);
+	await screenshot(page, 'admin-version_drift', testInfo);
+});
+
+test('Nur der Patch-Teil weicht ab: Hinweis mit beiden Versionen, Suche liefert Treffer @patch @screenshot', async ({ page }, testInfo) => {
+	await openSection(page, isHighContrast(testInfo));
+	await recheck(page);
+
+	const banner = page.locator('[data-state="version_patch_differs"]');
+	await expect(banner).toBeVisible();
+	await expect(banner.locator('.avs-version-own')).toHaveText(VERSION);
+	await expect(banner.locator('.avs-version-backend')).toHaveText(registeredBackendVersion());
+	await expect.poll(async () => (await ocsSearch(users.alice())).length).toBeGreaterThan(0);
+	await screenshot(page, 'admin-version_patch_differs', testInfo);
+});
+
+test('Backend nicht installiert: Banner und leere Suche @missing @screenshot', async ({ page }, testInfo) => {
+	await openSection(page, isHighContrast(testInfo));
+	await recheck(page);
+
+	await expect(page.locator('[data-state="backend_missing"]')).toBeVisible();
+	expect(await ocsSearch(users.alice())).toHaveLength(0);
+	await screenshot(page, 'admin-backend_missing', testInfo);
 });
