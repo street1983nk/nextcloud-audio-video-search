@@ -7,7 +7,7 @@
   pattern would hit correct words (Quelle, aktuell, Masse), so the gate holds a
   list of transcribed words that never occur in correct German. Code is exempt
   (identifiers stay ASCII), so the scan covers the German texts only: README.md,
-  German docs, backend/l10n/de.json, the German store texts and the project documents.
+  German docs, backend/l10n/de.json, php/l10n/de.json, the German store texts and the project documents.
 
 The forbidden characters are written as escapes, so this file passes itself.
 """
@@ -120,6 +120,8 @@ def german_texts() -> list[tuple[str, str]]:
     ]
     catalogue = json.loads((BACKEND_ROOT / "l10n" / "de.json").read_text(encoding="utf-8"))
     texts.append(("backend/l10n/de.json", "\n".join(catalogue["translations"].values())))
+    catalogue = json.loads((REPO_ROOT / "php" / "l10n" / "de.json").read_text(encoding="utf-8"))
+    texts.append(("php/l10n/de.json", "\n".join(catalogue["translations"].values())))
     info = ElementTree.fromstring((BACKEND_ROOT / "appinfo" / "info.xml").read_text(encoding="utf-8"))  # noqa: S314
     texts += [(f"info.xml {element.tag} de", element.text or "") for element in info if element.get("lang") == "de"]
     return texts

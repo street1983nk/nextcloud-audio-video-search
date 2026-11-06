@@ -38,7 +38,15 @@ async def test_read_fills_in_defaults_and_takes_saved_values() -> None:
 
 def test_the_js_catalogues_match_their_json_source() -> None:
     result = subprocess.run(  # noqa: S603 - fixed arguments
-        [sys.executable, str(REPO_ROOT / "scripts" / "l10n_js.py"), "--check", "--root", str(BACKEND_ROOT / "l10n")],
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "l10n_js.py"),
+            "--check",
+            "--root",
+            str(BACKEND_ROOT / "l10n"),
+            "--root",
+            str(REPO_ROOT / "php" / "l10n"),
+        ],
         capture_output=True,
         text=True,
         check=False,
