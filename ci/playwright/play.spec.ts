@@ -23,8 +23,10 @@ import {
 } from './helpers';
 
 const MEDIA_NAME = 'tone-90s.webm';
-// The provider name in the three catalogue languages (php/l10n).
-const GROUP_NAME = /^(Audio and video|Audio und Video|Audio et vidéo)$/;
+// The provider name in the three catalogue languages (php/l10n). The result
+// list carries it as its name: "Audio and video" on 33 and 34, "More from
+// Audio and video" on 35 (checked in the CI snapshots of all three).
+const GROUP_NAME = /(^|\s)(Audio and video|Audio und Video|Audio et vidéo)$/;
 // The heading of a page that names no file, in the three languages.
 const NEUTRAL_HEADING = /^(Playback|Wiedergabe|Lecture)$/;
 
@@ -64,9 +66,11 @@ test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page },
 	await expect(input).toBeVisible();
 	await input.fill(QUERY);
 
-	await expect(page.getByText(GROUP_NAME)).toBeVisible();
-	// Wide 35 renders the hits as listbox options, which hide the link role inside.
-	const hit = page
+	// A list on 33, 34 and narrow 35, a listbox on wide 35.
+	const group = page.getByRole('list', { name: GROUP_NAME }).or(page.getByRole('listbox', { name: GROUP_NAME }));
+	await expect(group).toBeVisible();
+	// Options hide the role of the link inside them, so the hit is found as an anchor.
+	const hit = group
 		.locator('a[href]')
 		.filter({ hasText: MEDIA_NAME })
 		.filter({ hasText: /(^|\s)0:44 · / })
