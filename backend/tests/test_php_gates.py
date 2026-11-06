@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The ten rules:
+The eleven rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -24,6 +24,10 @@ The ten rules:
 8. No U+2013 or U+2014 anywhere under ``php/``.
 9. ``php/composer.json`` is valid JSON and maps both app namespaces.
 10. No helper in ``php/tests`` is named like a final method of PHPUnit's TestCase.
+11. Every ``[hidden]`` rule under ``php/css`` hangs off an id: the server rule
+    ``button:not(...) > span[class^=icon-] { display: block }`` outranks two
+    classes and showed a hidden spinner (``!important`` is ruled out by the
+    UI-SPEC).
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -53,6 +57,8 @@ LEAKING_LOG_ARGUMENTS = re.compile(r"getPath\(\)|getName\(\)|\$path\b")
 DASHES = ("\u2013", "\u2014")
 PHP_HEADER = re.compile(r"\A<\?php\r?\n(?:\r?\n)*declare\(strict_types=1\);")
 
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_HIDDEN_RULE = re.compile(r"([^{}]*\[hidden\])\s*\{")
 _FUNCTION = re.compile(r"^\s*(?:public|protected|private)\s+(?:static\s+)?function\s+(\w+)\s*\(")
 _LOGGER_CALL = re.compile(r"->logger->(?:debug|info|notice|warning|error|critical|alert|emergency|log)\(")
 _NOT_A_STATEMENT = ("//", "/*", "*", "#")
@@ -316,6 +322,20 @@ def test_rule10_no_test_helper_shadows_a_final_testcase_method() -> None:
     assert findings == {}
 
 
+def weak_hidden_rules(source: str) -> list[str]:
+    """Selectors of ``[hidden]`` rules in source that do not hang off an id."""
+    rules = _CSS_COMMENT.sub("", source)
+    return [selector.strip() for selector in _HIDDEN_RULE.findall(rules) if "#" not in selector]
+
+
+def test_rule11_every_hidden_rule_wins_over_the_server_styles() -> None:
+    sheets = sorted((PHP_ROOT / "css").glob("*.css"))
+    assert sheets, "php/css carries no style sheet"
+    findings = {path.name: found for path in sheets if (found := weak_hidden_rules(path.read_text(encoding="utf-8")))}
+    assert findings == {}
+    assert all(_HIDDEN_RULE.search(path.read_text(encoding="utf-8")) for path in sheets)
+
+
 def test_rule9_composer_json_parses_and_maps_the_app_namespaces() -> None:
     # A copy that lost one backslash ("OCA\AudioVideoSearch") is invalid JSON
     # and broke every composer step in CI; this catches it before a push.
@@ -418,3 +438,8 @@ def test_self_rule9_fires_on_a_lost_backslash() -> None:
 def test_self_rule10_fires_on_a_helper_named_status() -> None:
     assert helpers_shadowing_final_methods("\tprivate function status(array $value): IResponse {") == ["status"]
     assert helpers_shadowing_final_methods("\tprivate function statusResponse(array $value): IResponse {") == []
+
+
+def test_self_rule11_fires_on_a_hidden_rule_without_an_id() -> None:
+    assert weak_hidden_rules(".avs-admin [hidden] {\n\tdisplay: none;\n}") == [".avs-admin [hidden]"]
+    assert weak_hidden_rules("#avs-admin [hidden] {\n\tdisplay: none;\n}") == []

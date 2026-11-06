@@ -229,8 +229,9 @@
 	}
 }
 
-/* Last on purpose: the display values above must not reveal what play.js or
-   the template hid with the hidden attribute. */
-.avs-play [hidden] {
+/* The display values above must not reveal what play.js or the template hid
+   with the hidden attribute, and neither may a server rule that outranks two
+   classes (see admin.css); hence the id. */
+#app-content.avs-play [hidden] {
 	display: none;
 }

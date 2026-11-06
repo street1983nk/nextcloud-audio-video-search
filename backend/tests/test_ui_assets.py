@@ -198,7 +198,7 @@ def test_the_admin_section_keeps_its_contract() -> None:
     assert "\\OCP\\Util::addScript('audio_video_search', 'admin')" in template
     assert "<?php if ($debug) { ?>" in template
     assert ".avs-banner {" not in style
-    assert ".avs-admin [hidden]" in style
+    assert "#avs-admin [hidden]" in style
     assert "pointer: coarse" in style
     # The script asks its own routes with the token of the moment.
     assert "admin/state" in script

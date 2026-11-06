@@ -92,8 +92,10 @@
 	}
 }
 
-/* Last on purpose: the display values above and in play.css must not reveal
-   what the template or admin.js hid with the hidden attribute. */
-.avs-admin [hidden] {
+/* The display values above and in play.css must not reveal what the template
+   or admin.js hid with the hidden attribute, and neither may the server rule
+   "button:not(...) > span[class^=icon-] { display: block }", which outranks
+   two classes; hence the id. */
+#avs-admin [hidden] {
 	display: none;
 }

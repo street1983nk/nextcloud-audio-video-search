@@ -32,6 +32,8 @@ test('Zustand ok mit Version auf beiden Seiten @screenshot', async ({ page }, te
 	await expect(page.locator('[data-state="ok"]')).toBeVisible();
 	await expect(page.locator('.avs-version-own').first()).toHaveText(VERSION);
 	await expect(page.locator('.avs-version-backend').first()).toHaveText(VERSION);
+	// At rest the spinner of "Check again" is hidden, server button styles or not.
+	await expect(page.locator('#avs-recheck-spinner')).toBeHidden();
 	await screenshot(page, 'admin-ok', testInfo);
 });
 
