@@ -59,6 +59,20 @@ LABEL org.opencontainers.image.source="https://github.com/street1983nk/nextcloud
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+# The German word list for the compound splitter (index/wordlist.py), as in
+# Findling on the same base digest: /usr/share/dict/ngerman, Architecture: all,
+# so amd64 and arm64 split compounds byte for byte alike. Pinned, because the
+# list decides how a compound falls apart, and its digest is part of the
+# analyzer mark of the index. Without it "frist" never finds
+# "Kündigungsfrist". GPL-2+: the copyright file travels with the image. Both
+# tests fail closed, an image without the list must not be built.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wngerman=20161207-15 \
+    && rm -rf /var/lib/apt/lists/* \
+    && test -s /usr/share/dict/ngerman \
+    && test -s /usr/share/doc/wngerman/copyright \
+    && install -D -m 0444 /usr/share/doc/wngerman/copyright \
+        /usr/local/share/audio_video_search_backend/COPYING.wngerman
 # A fixed uid without a root moment at run time. start.sh writes /frpc.toml, so
 # that file and the two directories AppAPI and HaRP fill are prepared for it.
 RUN groupadd --gid 10001 exapp \

@@ -227,6 +227,21 @@ jobs:
           timeout 30 ./occ app_api:app:list | tee app-list.txt
           grep -q "${BACKEND_APP_ID}" app-list.txt
 
+      # Owner 06.11.: the German word list is part of the image, and with it the
+      # compound splitter finds "frist" inside "Kündigungsfrist".
+      - name: The image carries the German word list and splits compounds
+        run: |
+          docker exec "${EXAPP_CONTAINER}" python -c '
+          from audio_video_search_backend.index import wordlist
+          from audio_video_search_backend.index.analyzer import cached_german_analyzer
+          entries = wordlist.load_constituents()
+          assert len(entries) > 200000, len(entries)
+          chain = cached_german_analyzer(wordlist.wordlist_hash(entries), entries)
+          tokens = chain.analyze("Kündigungsfrist")
+          assert set(chain.analyze("frist")) <= set(tokens), tokens
+          print(len(entries), "entries, Kündigungsfrist ->", tokens)
+          '
+
       - name: The settings form is registered and the status answers through HaRP
         run: |
           # PUT /enabled registered the form into AppAPI's table ex_settings_forms.
