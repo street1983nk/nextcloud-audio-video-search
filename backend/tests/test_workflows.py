@@ -23,7 +23,7 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 CAP_BYTES = 500 * 1024
 RELEASE_TAG = "'v[0-9]+.[0-9]+.[0-9]+'"
 SECRET_HOLDERS = frozenset({"release.yml", "store-submit.yml"})
-REQUIRED = ("python.yml", "docker.yml", "release.yml", "store-submit.yml", "deploy-harp.yml", "security.yml")
+REQUIRED = ("python.yml", "php.yml", "docker.yml", "release.yml", "store-submit.yml", "deploy-harp.yml", "security.yml")
 
 
 def workflow_files() -> list[Path]:

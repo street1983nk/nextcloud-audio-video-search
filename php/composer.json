@@ -1,0 +1,31 @@
+{
+	"name": "street1983nk/audio_video_search",
+	"description": "Audio & Video Search: the PHP app that registers the search provider and talks to the ExApp backend",
+	"license": "AGPL-3.0-or-later",
+	"type": "project",
+	"_comment": [
+		"phpunit/phpunit is pinned to an exact version: the suite runs inside the autoload space of nextcloud/server (tests/bootstrap.php), and nextcloud/server carries phpunit/phpunit ^11.5 on stable34, the branch the phpunit job of .github/workflows/php.yml checks out. 11 is also the highest major that runs on php 8.2 (12 needs 8.3).",
+		"require-dev only and installed in CI only; neither it nor a vendor directory reaches the release archive. The owner cleared the package before it was fetched (plan 01-01, source sebastianbergmann/phpunit).",
+		"No composer.lock in the repository yet: the development machine has no PHP, so php.yml resolves the lock in CI and audits it there."
+	],
+	"require": {
+		"php": ">=8.2"
+	},
+	"require-dev": {
+		"phpunit/phpunit": "11.5.57"
+	},
+	"autoload": {
+		"psr-4": {
+			"OCA\AudioVideoSearch\\": "lib/"
+		}
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"OCA\AudioVideoSearch\Tests\\": "tests/"
+		}
+	},
+	"config": {
+		"optimize-autoloader": true,
+		"sort-packages": true
+	}
+}

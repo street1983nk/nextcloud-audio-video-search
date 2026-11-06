@@ -23,3 +23,8 @@ dist/
 # Tool state
 .claude-active
 .DS_Store
+
+# PHP half: composer and PHPUnit output, created in CI only
+php/vendor/
+php/.phpunit.cache/
+php/junit.xml

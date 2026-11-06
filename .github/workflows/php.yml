@@ -1,0 +1,193 @@
+name: PHP gates
+
+# The PHP half of the app (php/), taken over from Findling's php.yml: a syntax
+# check of every PHP file, the composer hygiene of the dev dependencies, and the
+# PHPUnit suite inside a checkout of nextcloud/server. Every action is pinned to
+# a commit SHA with an exact version comment (backend/tests/test_workflow_pins.py).
+#
+# Path filtered, so a backend or documentation commit spends no runner minutes
+# here. A push block that names only paths starts on every tag, because GitHub
+# does not evaluate paths for a tag push, so the push side names every branch
+# (the early push of a phase branch starts this workflow) and the release tags.
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+    paths:
+      - 'php/**'
+      - '.github/workflows/php.yml'
+  pull_request:
+    paths:
+      - 'php/**'
+      - '.github/workflows/php.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: php-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: php -l
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          # The lower bound declared in php/appinfo/info.xml: linting against the
+          # oldest supported runtime catches syntax only newer PHP accepts.
+          php-version: '8.2'
+          coverage: none
+
+      # There is no PHP on the development machine, so this is the first place a
+      # syntax error can show. xargs fails as soon as one php -l fails.
+      - name: Syntax check every PHP file
+        run: find php -name '*.php' -not -path 'php/vendor/*' -print0 | xargs -0 -n1 php -l
+
+  composer-hygiene:
+    name: composer validate and audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: composer:v2
+
+      # --strict turns every warning into an error; --no-check-publish because
+      # this package is never published on Packagist.
+      - name: composer.json is valid
+        working-directory: php
+        run: composer validate --strict --no-check-publish
+
+      # The repository carries no composer.lock yet (no PHP on the development
+      # machine), so the lock is resolved here without installing anything and
+      # without running a single package script, then audited. Any advisory
+      # turns the job red.
+      - name: Resolve the lock and check it for known advisories
+        working-directory: php
+        run: |
+          composer update --no-install --no-scripts --no-interaction --no-progress
+          test -s composer.lock
+          composer validate --strict --no-check-publish
+          composer audit --locked --no-interaction
+
+  phpunit:
+    name: PHPUnit over the PHP app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # The branch the suite mocks OCP against. It also decides the PHPUnit
+      # major: nextcloud/server pins phpunit/phpunit ^11.5 on this branch, and
+      # the suite runs in the same process as the server bootstrap. Moving this
+      # value means moving the pin in php/composer.json with it.
+      SERVER_VERSION: stable34
+      # Test-only credentials of a throwaway instance that dies with the runner.
+      ADMIN_PASS: password
+      # The floor under the executed test count. failOnEmptyTestSuite catches an
+      # empty suite; this catches a discovery that silently shrank. A floor and
+      # not the current count, so a plan that adds a case need not edit it.
+      MINIMUM_TESTS: 1
+    steps:
+      # These two checkouts stay in this order: actions/checkout empties its
+      # target, so the server lands at the workspace root first and the app is
+      # moved into apps/audio_video_search afterwards.
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ env.SERVER_VERSION }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: avs-src
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.2'
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+          tools: composer:v2
+
+      # The directory name has to be exactly the app id, otherwise the
+      # autoloader never finds the classes.
+      - name: Move the PHP app to apps/audio_video_search
+        run: mv avs-src/php apps/audio_video_search
+
+      # The server bootstrap loads lib/base.php, which expects an installed
+      # instance. SQLite and a throwaway admin are scaffolding for the bootstrap,
+      # not a fixture: the tests run on mocks.
+      - name: Install a throwaway Nextcloud so the server bootstrap has a config
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite \
+            --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:get version
+
+      # --no-scripts: a package that adds a script gets no shell in this job.
+      - name: Install the dev dependencies of the PHP app
+        working-directory: apps/audio_video_search
+        run: composer install --no-interaction --no-progress --no-scripts
+
+      # The negative probe of the bootstrap, before the suite: a guard nobody
+      # ever triggered is a guard nobody knows the wording of.
+      - name: Prove the bootstrap refuses a path with no server behind it
+        working-directory: apps/audio_video_search
+        run: |
+          if NEXTCLOUD_SERVER_ROOT=/nonexistent-on-purpose \
+             vendor/bin/phpunit --no-progress > probe.log 2>&1; then
+            echo "the bootstrap accepted a path with no nextcloud/server in it"
+            cat probe.log
+            exit 1
+          fi
+          cat probe.log
+          grep -q 'no nextcloud/server checkout at this path' probe.log
+          grep -q 'NEXTCLOUD_SERVER_ROOT' probe.log
+          echo "the bootstrap aborted with its own message, as intended"
+          rm -f probe.log
+
+      - name: Run the unit suite
+        working-directory: apps/audio_video_search
+        run: vendor/bin/phpunit --no-progress --log-junit junit.xml
+
+      # Read out of the JUnit log rather than the summary, whose wording changes
+      # between PHPUnit versions.
+      - name: State how many tests actually ran
+        working-directory: apps/audio_video_search
+        run: |
+          count=$(php -r '
+            $log = simplexml_load_file("junit.xml");
+            if ($log === false) { fwrite(STDERR, "junit.xml is not readable\n"); exit(1); }
+            $total = 0;
+            foreach ($log->testsuite as $suite) { $total += (int)$suite["tests"]; }
+            echo $total;
+          ')
+          echo "the suite executed ${count} tests, the floor is ${MINIMUM_TESTS}"
+          if [ "${count}" -lt "${MINIMUM_TESTS}" ]; then
+            echo "fewer tests ran than this job requires, so the run proves nothing"
+            exit 1
+          fi
+          rm -f junit.xml
