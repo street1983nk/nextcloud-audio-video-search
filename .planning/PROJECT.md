@@ -25,7 +25,10 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 - [ ] Halluzinations-Abfangregel: erkannte Sprache außerhalb der Instanz-Sprachen mit Sicherheit < 0,5 verwerfen, Segmente in fremder Schrift verwerfen
 - [ ] Sprachwechsel in einer Datei erkennen und betroffene Fenster mit eigener Spracherkennung nachrechnen, besseres Ergebnis behalten
 - [ ] Unified-Search-Provider: Treffer im gesprochenen Text mit Zeitmarke, Klick öffnet Datei an der Stelle; Rechte wie die Datei (geteilt/entzogen/gelöscht wirkt sofort)
-- [ ] SRT/VTT-Untertitel-Export je Datei (BITV 2.0 / WCAG 1.2.2)
+- [ ] SRT/VTT/TXT-Export je Datei als "Untertitel-Entwurf", optional als Nebendatei (nie überschreiben); Download-Sperre: Suche ja, Export nein
+- [ ] PHP-Begleit-App `audio_video_search` (Suche, Ereignisse, Rechte, Abspielansicht) + ExApp `audio_video_search_backend`
+- [ ] Minimale Abspielansicht, die an der Zeitstelle startet
+- [ ] BITV-Weg: Korrektur-Editor, Sprecher- und Geräusch-Marken von Hand, Status "geprüft", erst dann Export ohne Entwurf-Kennzeichen
 - [ ] Ehrliche Zustände: Fortschritt, übersprungene und fehlgeschlagene Dateien mit Grund sichtbar (Admin-Status)
 - [ ] Release-Gate aus Spike 3 (Schnell-Gate je Build, Release-Gate vor Store-Release, sha256-geprüft; Gate-Daten per Skript erzeugt, nicht im Repo)
 - [ ] amd64 + arm64, nur CPU; Pi 5 / N100 vor Release echt gemessen
@@ -34,11 +37,10 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 ### Out of Scope
 
 - Inhalte an externe Dienste schicken (Cloud-STT, externe Embeddings): Owner-Regel Datenschutz zuerst
-- Eigene App-Seite mit Medienübersicht und Player: v2, v1 sucht über Unified Search
+- Eigene Medien-Seite mit Übersicht: v2; v1 hat nur die minimale Abspielansicht und den Editor
 - Findling-Anbindung: später (Findling indexiert dann fertige Transkripte, ca. 3-5 PT)
 - STT-Provider für Assistant/Talk (TaskProcessing): v2
-- Sprecher-Trennung (Diarisierung): v2, pyannote gated, nicht gemessen
-- Transkript von Hand korrigieren: v2
+- Automatische Sprecher-Trennung (Diarisierung): v2, erst eigener CPU-Spike; in v1 Sprecher-Marken von Hand
 - GPU (CUDA/OpenVINO): v2
 - Instanz-Vokabular (hotwords) im Standard: Spike 3: nur bei wiederkehrenden Begriffen hilfreich, sonst neutral bis schädlich; höchstens später als Option je Ordner
 - Whisper `condition_on_previous_text=True`, Beam 5, `initial_prompt`, Parakeet-Beam-Search: Spike 3 signifikant schlechter
@@ -83,6 +85,9 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 | v1 mit SRT/VTT-Export | Owner 06.11., BITV-Argument | Offen |
 | Alle Dateien automatisch, Admin schränkt ein; externe Speicher mit Admin-Schalter | Owner 06.11., Null-Konfiguration | Offen |
 | amd64 + arm64, nur CPU | Owner 06.11. | Offen |
+| Zwei Apps: PHP `audio_video_search` + ExApp `audio_video_search_backend` | Reine ExApp kann keinen Suchprovider registrieren (alle 4 Recherchen) | Offen |
+| BITV-Weg (Editor, Marken, geprüft) schon in v1 | Owner 06.11.; automatische Untertitel allein nicht BITV-konform | Offen |
+| Admin-Fehlerstatus ohne Dateinamen | Owner 06.11., Details per occ | Offen |
 
 ## Evolution
 
