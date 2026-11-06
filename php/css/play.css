@@ -1,0 +1,236 @@
+/*
+ * The playback page (UI-SPEC, surface 2). Server variables only: light, dark
+ * and high contrast come from the theme without a line of their own here.
+ * Flat: no depth effects, no card inside a card. Spacing in steps of the
+ * grid baseline (4, 8, 16, 24, 32 px).
+ */
+
+/* -- frame ------------------------------------------------------------------ */
+
+.avs-play {
+	padding: calc(var(--default-grid-baseline) * 4);
+	color: var(--color-main-text);
+	background-color: var(--color-main-background);
+}
+
+@media (min-width: 768px) {
+	.avs-play {
+		padding: calc(var(--default-grid-baseline) * 8) calc(var(--default-grid-baseline) * 6) calc(var(--default-grid-baseline) * 6);
+	}
+}
+
+/* The reading column: 960 px at most, left aligned, no centred hero block. */
+.avs-play__column {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 4);
+	max-width: calc(var(--default-grid-baseline) * 240);
+}
+
+/* -- heading and start line --------------------------------------------------- */
+
+.avs-play__head {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.avs-play__title {
+	margin: 0;
+	/* 20 px from the 15 px body size: the third of the three sizes. */
+	font-size: calc(var(--default-font-size) * 4 / 3);
+	font-weight: 700;
+	line-height: var(--default-line-height);
+	/* A long name without spaces wraps instead of leaving the screen at 375 px. */
+	overflow-wrap: anywhere;
+}
+
+.avs-play__meta {
+	margin: 0;
+	color: var(--color-text-maxcontrast);
+	font-size: var(--default-font-size);
+	line-height: var(--default-line-height);
+}
+
+.avs-play__time {
+	font-variant-numeric: tabular-nums;
+}
+
+/* The state area holds hidden banners on a ready page. It takes no gap of its
+   own; a banner that is shown is a block of the column like any other. */
+.avs-play__state {
+	display: contents;
+}
+
+/* -- banners -------------------------------------------------------------------- */
+
+.avs-banner {
+	display: flex;
+	align-items: flex-start;
+	gap: calc(var(--default-grid-baseline) * 2);
+	padding: calc(var(--default-grid-baseline) * 4);
+	border-radius: var(--border-radius-container);
+}
+
+/* Surface and text always as the pair the theme ships; colour is never the
+   only carrier, every banner has an icon, a title and a sentence. */
+.avs-banner--error {
+	background-color: var(--color-error);
+	color: var(--color-error-text);
+}
+
+.avs-banner--warning {
+	background-color: var(--color-warning);
+	color: var(--color-warning-text);
+}
+
+.avs-banner--info {
+	background-color: var(--color-info);
+	color: var(--color-info-text);
+}
+
+.avs-banner--success {
+	background-color: var(--color-success);
+	color: var(--color-success-text);
+}
+
+/* The icon sits on the first text line: a container as high as one line. */
+.avs-banner__icon {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	height: var(--default-line-height);
+}
+
+.avs-banner--error .avs-banner__icon {
+	color: var(--color-element-error);
+}
+
+.avs-banner--warning .avs-banner__icon {
+	color: var(--color-element-warning);
+}
+
+.avs-banner--info .avs-banner__icon {
+	color: var(--color-element-info);
+}
+
+.avs-banner--success .avs-banner__icon {
+	color: var(--color-element-success);
+}
+
+.avs-banner__body {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--default-grid-baseline);
+	min-width: 0;
+}
+
+.avs-banner__title,
+.avs-banner__text {
+	margin: 0;
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+.avs-banner__title {
+	font-weight: 700;
+}
+
+.avs-banner__text {
+	font-weight: 400;
+}
+
+/* The one action of a banner. Border and text share currentColor, so the pair
+   of the banner surface keeps carrying the contrast in both modes. */
+.avs-banner__action {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--default-clickable-area);
+	margin-block-start: calc(var(--default-grid-baseline) * 2);
+	padding: var(--default-grid-baseline) calc(var(--default-grid-baseline) * 3);
+	border: 2px solid currentColor;
+	border-radius: var(--border-radius-element);
+	background-color: transparent;
+	color: inherit;
+	font-weight: 700;
+	text-decoration: none;
+}
+
+.avs-banner__action:hover,
+.avs-banner__action:focus-visible {
+	text-decoration: underline;
+}
+
+/* -- the medium ----------------------------------------------------------------- */
+
+.avs-media {
+	display: block;
+	width: 100%;
+}
+
+.avs-media--video {
+	max-height: 70vh;
+	object-fit: contain;
+}
+
+/* -- action row ------------------------------------------------------------------- */
+
+.avs-play__actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.avs-play__jump {
+	min-height: var(--default-clickable-area);
+	margin: 0;
+}
+
+.avs-play__files {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--default-clickable-area);
+	color: var(--color-main-text);
+	text-decoration: underline;
+}
+
+/* -- excerpt ---------------------------------------------------------------------- */
+
+.avs-excerpt {
+	padding: calc(var(--default-grid-baseline) * 4);
+	border-radius: var(--border-radius-container);
+	background-color: var(--color-background-hover);
+}
+
+.avs-excerpt__label {
+	margin: 0 0 calc(var(--default-grid-baseline) * 2);
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+}
+
+.avs-excerpt__text,
+.avs-excerpt__hint {
+	margin: 0;
+	font-size: var(--default-font-size);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+/* -- touch ------------------------------------------------------------------------ */
+
+@media (pointer: coarse) {
+	.avs-play__jump,
+	.avs-play__files,
+	.avs-banner__action {
+		min-height: calc(var(--default-grid-baseline) * 11);
+	}
+}
+
+/* Last on purpose: the display values above must not reveal what play.js or
+   the template hid with the hidden attribute. */
+.avs-play [hidden] {
+	display: none;
+}
