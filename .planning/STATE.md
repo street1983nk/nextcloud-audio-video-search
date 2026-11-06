@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Roadmap und STATE angelegt, Traceability in REQUIREMENTS.md gefüllt
-last_updated: "2026-11-06T12:33:33.036Z"
-last_activity: 2026-11-06 -- Phase 01 execution started
+last_updated: "2026-11-06T12:44:23.391Z"
+last_activity: 2026-11-06
 progress:
   total_phases: 11
   completed_phases: 0
   total_plans: 13
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 01 (Zwei-App-Gerüst und Integrationsbeweis) — EXECUTING
-Plan: 1 of 13
-Status: Executing Phase 01
-Last activity: 2026-11-06 -- Phase 01 execution started
+Plan: 2 of 13
+Status: Ready to execute
+Last activity: 2026-11-06
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 8%
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01 P01 | 40min | 3 tasks | 50 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,11 @@ Recent decisions affecting current work:
 - [Phase 1, Owner 06.11.]: UI-SPEC-Fragen 1 bis 8 wie empfohlen (kein Autoplay, eigene Admin-Sektion, Deutsch unpersönlich de = de_DE, Kennzeichen "Testtreffer", Knopf "Zur Zeitstelle springen", Debug aus = ausblenden/Löschen nur per occ, App-Name unübersetzt/Gruppe "Audio und Video", Download-Sperre als Hinweis)
 - [Phase 1, Owner 06.11.]: Früher Branch-Push nach Welle 2 auf phase-01 (nicht main), damit PHP-Tests früh in CI laufen; jeder Push nur nach Owner-Frage
 - [Phase 1, Owner 06.11.]: Keine alte ExApp-Installation mit ID audio_video_search vorhanden, keine Kollision
+- [Phase 01-01]: Env-Präfix der Backend-Variablen ist AVS_ (config.ENV_PREFIX)
+- [Phase 01-01]: Backend-Image ohne LICENSE-Datei: Build-Kontext backend/, Lizenz im OCI-Label (wie Findling)
+- [Phase 01-01]: .planning/ vom Strich-/Emoji-Gate ausgenommen (GSD-Statuszeichen)
+- [Phase 01-01]: composer.lock wird in php.yml in CI aufgelöst und auditiert, nicht im Repo
+- [Phase 01-01]: Lockstep-Gate prüft php-, backend-, image-tag- und pyproject-Version sowie das Server-Fenster gegen die deploy-harp-Matrix
 
 ### Pending Todos
 
@@ -95,6 +101,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-06
+Last session: 2026-11-06T12:44:02.244Z
 Stopped at: Roadmap und STATE angelegt, Traceability in REQUIREMENTS.md gefüllt
 Resume file: None
