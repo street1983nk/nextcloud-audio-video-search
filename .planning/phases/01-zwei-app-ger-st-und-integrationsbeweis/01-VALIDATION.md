@@ -1,8 +1,8 @@
 ---
 phase: 1
 slug: zwei-app-ger-st-und-integrationsbeweis
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-11-06
 ---
@@ -93,4 +93,4 @@ Die Task-IDs trägt der Planer ein. Zuordnung Anforderung zu Test:
 - [ ] Feedback latency < 60s
 - [ ] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-11-06 (Plan-Checker Runde 2)
