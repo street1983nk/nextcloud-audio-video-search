@@ -9,6 +9,7 @@ ADD of a remote URL, apt lists removed, the app id in the entrypoint.
 import re
 
 from audio_video_search_backend import APP_ID
+from audio_video_search_backend.index.wordlist import SYSTEM_WORDLIST
 from tests.conftest import BACKEND_ROOT
 
 DOCKERFILE = (BACKEND_ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -85,3 +86,29 @@ def test_the_digest_rule_fires_on_a_tag() -> None:
     sample = "ARG BASE=python:3.13-slim\nFROM ${BASE} AS build\nCOPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uv\n"
 
     assert unpinned(sample) == ["python:3.13-slim", "ghcr.io/astral-sh/uv:0.11"]
+
+
+def runtime_stage(source: str) -> str:
+    """The text of the last stage, the one that becomes the image."""
+    return source[source.rindex("\nFROM ") :]
+
+
+def test_the_german_word_list_is_installed_pinned_in_the_runtime_stage() -> None:
+    # Owner 06.11.: the compound splitter needs /usr/share/dict/ngerman in the
+    # image, otherwise "frist" never finds "Kündigungsfrist" (index/wordlist.py).
+    runtime = runtime_stage(DOCKERFILE)
+
+    assert "wngerman=20161207-15" in runtime
+    assert "test -s /usr/share/dict/ngerman" in runtime
+    # GPL-2+: the licence text travels with the image.
+    assert f"/usr/local/share/{APP_ID}/COPYING.wngerman" in runtime
+
+
+def test_the_word_list_path_of_the_image_is_the_one_the_code_reads() -> None:
+    assert f"test -s {SYSTEM_WORDLIST.as_posix()}" in DOCKERFILE
+
+
+def test_the_runtime_stage_rule_fires_on_a_list_in_the_build_stage() -> None:
+    moved = "FROM base AS build\nRUN apt-get install wngerman=20161207-15\nFROM base AS runtime\nRUN true\n"
+
+    assert "wngerman" not in runtime_stage(moved)
