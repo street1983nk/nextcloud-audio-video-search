@@ -7,8 +7,10 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCP\App\IAppManager;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Http\Client\IResponse;
 use OCP\IAppConfig;
+use OCP\IGroupManager;
 use OCP\IUserManager;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -68,6 +70,8 @@ final class ExAppServiceTest extends TestCase {
 				$this->createMock(IUserManager::class),
 				$this->appConfig,
 				$logger ?? $this->createMock(LoggerInterface::class),
+				$this->createMock(IGroupManager::class),
+				$this->createMock(ITimeFactory::class),
 			])
 			->onlyMethods(['proxyRequest'])
 			->getMock();

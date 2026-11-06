@@ -6,8 +6,10 @@ namespace OCA\AudioVideoSearch\Service;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCP\App\IAppManager;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Http\Client\IResponse;
 use OCP\IAppConfig;
+use OCP\IGroupManager;
 use OCP\IUserManager;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
@@ -37,6 +39,12 @@ use Psr\Log\LoggerInterface;
  *   POST /excerpt        {fileId, atMs}        -> {known, excerpt}
  *   POST /sample         {fileId, userId, atMs} -> {result, mediaId, indexRev} | {error}
  *   POST /sample/remove  {fileId}              -> {result, mediaId}
+ *   GET  /status                               -> {appVersion, companion, sampleCount, ...}
+ *
+ * The state of the other half (plan 07, research decision 6) is read in two
+ * steps: the registration in AppAPI first, without a network call, then
+ * GET /status. Seven codes come out of it, and only ok and
+ * version_patch_differs let the search ask the container.
  *
  * The lockstep check is NOT an authentication. appVersion comes from the
  * environment AppAPI set, so it is as trustworthy as the registration. What
@@ -68,6 +76,37 @@ class ExAppService {
 	/** The version of the other half, as it was last reported. */
 	public const KEY_BACKEND_VERSION = 'backend_app_version';
 
+	/** The seven states of the other half, in the order they are checked. */
+	public const STATE_NO_APP_API = 'no_app_api';
+	public const STATE_BACKEND_MISSING = 'backend_missing';
+	public const STATE_BACKEND_DISABLED = 'backend_disabled';
+	public const STATE_VERSION_DRIFT = 'version_drift';
+	public const STATE_BACKEND_UNREACHABLE = 'backend_unreachable';
+	public const STATE_VERSION_PATCH_DIFFERS = 'version_patch_differs';
+	public const STATE_OK = 'ok';
+
+	public const STATES = [
+		self::STATE_NO_APP_API,
+		self::STATE_BACKEND_MISSING,
+		self::STATE_BACKEND_DISABLED,
+		self::STATE_VERSION_DRIFT,
+		self::STATE_BACKEND_UNREACHABLE,
+		self::STATE_VERSION_PATCH_DIFFERS,
+		self::STATE_OK,
+	];
+
+	/** The two states in which the search asks the container at all. */
+	private const SEARCHABLE_STATES = [self::STATE_OK, self::STATE_VERSION_PATCH_DIFFERS];
+
+	/** The last verdict, as JSON of codes, versions and numbers only. */
+	public const KEY_BACKEND_STATE = 'backend_state';
+
+	/** How long the search trusts the last verdict before it asks again. */
+	public const STATE_MAX_AGE_SECONDS = 60;
+
+	/** What GET /status may say about the PHP half, seen from the container. */
+	private const COMPANION_VALUES = ['ok', 'missing', 'unknown'];
+
 	/** The closed set of error codes of POST /sample. */
 	public const SAMPLE_ERRORS = ['companion_missing', 'gateway_denied', 'gateway_failed'];
 
@@ -97,6 +136,8 @@ class ExAppService {
 		private IUserManager $userManager,
 		private IAppConfig $appConfig,
 		private LoggerInterface $logger,
+		private IGroupManager $groupManager,
+		private ITimeFactory $timeFactory,
 	) {
 	}
 
@@ -274,12 +315,236 @@ class ExAppService {
 	}
 
 	/**
-	 * Whether the search may ask the container at all. A drift of major or
-	 * minor answers nothing rather than something: neither half can say what
-	 * the other one meant, so a hit would be a guess. Plan 07 extends this.
+	 * Whether the search may ask the container at all.
+	 *
+	 * A drift of major or minor on record answers nothing rather than
+	 * something: neither half can say what the other one meant, so a hit would
+	 * be a guess. Beyond that the last verdict of backendState decides, as long
+	 * as it is at most sixty seconds old; an older or unreadable one is
+	 * determined again under the first enabled admin, because the question
+	 * whether the backend is there has the same answer for every user. An
+	 * instance without any enabled admin keeps the search open: the call
+	 * itself fails silently into an empty group when the backend is missing.
 	 */
 	public function searchAllowed(): bool {
-		return $this->driftOnRecord() === null;
+		if ($this->driftOnRecord() !== null) {
+			return false;
+		}
+
+		$state = $this->rememberedState();
+		if ($state === null) {
+			$admin = $this->firstAdmin();
+			if ($admin === null) {
+				$this->logger->info('Audio & Video Search: no enabled admin to check the backend state with');
+				return true;
+			}
+			$state = $this->backendState($admin)['state'];
+		}
+
+		return in_array($state, self::SEARCHABLE_STATES, true);
+	}
+
+	// -- the state of the other half ------------------------------------------------
+
+	/**
+	 * The state of the other half, for the admin page and for the search.
+	 *
+	 * The order is the one of research pattern 1: AppAPI, registration,
+	 * enabled flag, version of the registration, reachability, version the
+	 * container reports. A drift is decided before the container is asked, so
+	 * a container of the wrong version is never asked anything.
+	 *
+	 * The answer carries codes, versions, a closed word and a count, never a
+	 * path, a file name or a sentence; it is remembered as such.
+	 *
+	 * @return array{state:string,own:string,backend:?string,companion:?string,sampleCount:?int,checkedAt:int}
+	 */
+	public function backendState(string $uid): array {
+		$result = $this->determineState($uid);
+		$this->rememberState($result);
+
+		return $result;
+	}
+
+	/**
+	 * What AppAPI knows about the backend: an array with appid, version, name
+	 * and enabled, null when it is not registered, false when the public
+	 * functions of AppAPI cannot be resolved.
+	 *
+	 * Protected for the same reason as proxyRequest: the AppAPI class is
+	 * absent from the autoload space of the unit suite. The lookup reads the
+	 * database of AppAPI and makes no network call.
+	 *
+	 * @return array<mixed>|false|null
+	 */
+	protected function exAppInfo(string $uid): array|false|null {
+		$appApi = $this->publicFunctions($uid);
+		if ($appApi === null) {
+			return false;
+		}
+
+		$info = $appApi->getExApp(Application::BACKEND_APP_ID);
+
+		return is_array($info) ? $info : null;
+	}
+
+	/** @return array{state:string,own:string,backend:?string,companion:?string,sampleCount:?int,checkedAt:int} */
+	private function determineState(string $uid): array {
+		$own = $this->ownVersion();
+		$result = [
+			'state' => self::STATE_NO_APP_API,
+			'own' => $own,
+			'backend' => null,
+			'companion' => null,
+			'sampleCount' => null,
+			'checkedAt' => $this->timeFactory->getTime(),
+		];
+
+		if (!$this->appApiEnabledFor($uid)) {
+			return $result;
+		}
+
+		try {
+			$info = $this->exAppInfo($uid);
+		} catch (\Throwable $e) {
+			// Class name only: a library message is where a path shows up.
+			$this->logger->warning('Audio & Video Search: the registration of the backend could not be read', [
+				'class' => $e::class,
+			]);
+			$result['state'] = self::STATE_BACKEND_UNREACHABLE;
+
+			return $result;
+		}
+
+		if ($info === false) {
+			return $result;
+		}
+		if ($info === null) {
+			$result['state'] = self::STATE_BACKEND_MISSING;
+
+			return $result;
+		}
+
+		$registered = is_string($info['version'] ?? null) ? $this->versionOrNothing($info['version']) : '';
+		if ($registered !== '') {
+			$result['backend'] = $registered;
+			$this->rememberBackendVersion($registered);
+		}
+
+		if (!self::isEnabledFlag($info['enabled'] ?? null)) {
+			$result['state'] = self::STATE_BACKEND_DISABLED;
+
+			return $result;
+		}
+
+		if ($this->drifts($own, $registered)) {
+			$result['state'] = self::STATE_VERSION_DRIFT;
+
+			return $result;
+		}
+
+		$status = $this->call('/status', $uid, [], self::REQUEST_TIMEOUT_SECONDS, 'GET');
+		if ($status === null) {
+			$result['state'] = self::STATE_BACKEND_UNREACHABLE;
+
+			return $result;
+		}
+
+		// The version the running container reports wins over the registration.
+		$reported = is_string($status['appVersion'] ?? null) ? $this->versionOrNothing($status['appVersion']) : '';
+		if ($reported !== '') {
+			$result['backend'] = $reported;
+			$this->rememberBackendVersion($reported);
+		}
+
+		$companion = $status['companion'] ?? null;
+		if (is_string($companion) && in_array($companion, self::COMPANION_VALUES, true)) {
+			$result['companion'] = $companion;
+		}
+
+		$sampleCount = $status['sampleCount'] ?? null;
+		if (is_int($sampleCount) && $sampleCount >= 0) {
+			$result['sampleCount'] = $sampleCount;
+		}
+
+		$backend = $result['backend'] ?? '';
+		if ($this->drifts($own, $backend)) {
+			$result['state'] = self::STATE_VERSION_DRIFT;
+
+			return $result;
+		}
+
+		// An unknown version on either side is a hint and never ok: the search
+		// works, but nobody can say that the two halves match.
+		$result['state'] = $own !== '' && $own === $backend
+			? self::STATE_OK
+			: self::STATE_VERSION_PATCH_DIFFERS;
+
+		return $result;
+	}
+
+	/** True when both versions are known and differ in major or minor. */
+	private function drifts(string $own, string $other): bool {
+		return $own !== '' && $other !== '' && $this->majorMinor($own) !== $this->majorMinor($other);
+	}
+
+	/** The enabled flag of AppAPI: a boolean, or 0 and 1 out of the database. */
+	private static function isEnabledFlag(mixed $flag): bool {
+		return $flag === true || $flag === 1 || $flag === '1';
+	}
+
+	/** A real user with app_api enabled, without resolving AppAPI itself. */
+	private function appApiEnabledFor(string $uid): bool {
+		$user = $this->userManager->get($uid);
+
+		return $user !== null && $this->appManager->isEnabledForUser('app_api', $user);
+	}
+
+	/** @param array{state:string,own:string,backend:?string,companion:?string,sampleCount:?int,checkedAt:int} $result */
+	private function rememberState(array $result): void {
+		$encoded = json_encode($result);
+		if (is_string($encoded)) {
+			$this->appConfig->setValueString(Application::APP_ID, self::KEY_BACKEND_STATE, $encoded);
+		}
+	}
+
+	/** The remembered state code, or null when it is missing, malformed or too old. */
+	private function rememberedState(): ?string {
+		$raw = $this->appConfig->getValueString(Application::APP_ID, self::KEY_BACKEND_STATE, '');
+		if ($raw === '') {
+			return null;
+		}
+
+		$decoded = json_decode($raw, true);
+		if (!is_array($decoded)) {
+			return null;
+		}
+
+		$state = $decoded['state'] ?? null;
+		$checkedAt = $decoded['checkedAt'] ?? null;
+		if (!is_string($state) || !in_array($state, self::STATES, true) || !is_int($checkedAt)) {
+			return null;
+		}
+
+		$age = $this->timeFactory->getTime() - $checkedAt;
+
+		return $age >= 0 && $age <= self::STATE_MAX_AGE_SECONDS ? $state : null;
+	}
+
+	/** The uid of the first enabled member of the admin group, or null. */
+	private function firstAdmin(): ?string {
+		$group = $this->groupManager->get('admin');
+		if ($group === null) {
+			return null;
+		}
+
+		foreach ($group->getUsers() as $user) {
+			if ($user->isEnabled()) {
+				return $user->getUID();
+			}
+		}
+
+		return null;
 	}
 
 	/** The version of this half, or an empty string when it has no shape. */
@@ -378,9 +643,9 @@ class ExAppService {
 	 * @param array<string,mixed> $body
 	 * @return array<mixed>|null
 	 */
-	private function call(string $route, string $userId, array $body, float $timeout): ?array {
+	private function call(string $route, string $userId, array $body, float $timeout, string $method = 'POST'): ?array {
 		$startedAt = hrtime(true);
-		$response = $this->proxyRequest($route, $userId, 'POST', $body, $timeout);
+		$response = $this->proxyRequest($route, $userId, $method, $body, $timeout);
 		$innerMs = round((hrtime(true) - $startedAt) / 1000000, 1);
 
 		if ($response === null) {
