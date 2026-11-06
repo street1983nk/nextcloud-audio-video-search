@@ -8,6 +8,8 @@ stops the container: a typo in a deploy option must not cost the admin the app.
 """
 
 import os
+import tempfile
+from pathlib import Path
 from typing import Final
 
 KNOWN_LOG_LEVELS: Final = frozenset({"debug", "info", "warning", "error"})
@@ -16,6 +18,10 @@ KNOWN_LOG_LEVELS: Final = frozenset({"debug", "info", "warning", "error"})
 ENV_PREFIX: Final = "AVS_"
 LOG_LEVEL_VARIABLE: Final = f"{ENV_PREFIX}LOG_LEVEL"
 DEFAULT_LOG_LEVEL: Final = "info"
+
+# Our own directory inside the system temp directory when AppAPI set no volume
+# (tests, a bare local run), so a cleanup never reaches beyond what this app made.
+FALLBACK_STORAGE_DIRNAME: Final = "audio_video_search_backend"
 
 # How long uvicorn waits for running requests after SIGTERM before it closes
 # them. Docker sends SIGKILL after 10 seconds by default, so this stays below.
@@ -56,3 +62,11 @@ def unusable_startup_variables() -> list[str]:
     if behind_harp():
         return []
     return [] if os.environ.get("APP_PORT", "").isdigit() else ["APP_PORT"]
+
+
+def storage_root() -> Path:
+    """The persistent volume (APP_PERSISTENT_STORAGE), or a directory of our own in the temp directory."""
+    configured = os.environ.get("APP_PERSISTENT_STORAGE", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(tempfile.gettempdir()) / FALLBACK_STORAGE_DIRNAME

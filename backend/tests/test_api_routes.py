@@ -8,7 +8,7 @@ on a MockTransport, so the streaming, hashing and error mapping run for real.
 import hashlib
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import httpx
@@ -93,9 +93,7 @@ def test_a_second_sample_of_the_same_file_is_stale(api: TestClient) -> None:
 
 
 @pytest.mark.parametrize("error", ["gateway_denied", "gateway_failed"])
-def test_a_gateway_error_is_reported_as_a_code(
-    api: TestClient, monkeypatch: pytest.MonkeyPatch, error: str
-) -> None:
+def test_a_gateway_error_is_reported_as_a_code(api: TestClient, monkeypatch: pytest.MonkeyPatch, error: str) -> None:
     async def failing(file_id: int, user_id: str, *, max_bytes: int) -> nc.FetchResult:
         return nc.FetchResult(sha256=None, size=0, error=error)
 
@@ -175,9 +173,7 @@ def test_search_drops_revisions_older_than_current_minus_one(api: TestClient) ->
     media_id = int(answer["mediaId"])  # type: ignore[arg-type]
     store, index = _services(api)
     for _ in range(2):
-        store.add_correction(
-            media_id, 0, 10, "speaker", "A", author_uid="admin", base_version_id=None, base_text=None
-        )
+        store.add_correction(media_id, 0, 10, "speaker", "A", author_uid="admin", base_version_id=None, base_text=None)
     # current.index_rev is 3 now; revision 1 stays in the index next to nothing else.
     current = store.current(media_id)
     assert current is not None
@@ -213,9 +209,10 @@ def test_the_admissible_filter_is_pure() -> None:
         IndexHit(3, 5, 0, 0, 9.0, "d"),
     ]
 
-    chosen = admissible(hits, {1: 2, 2: 3, 3: None})
+    chosen = admissible(hits, {1: 2, 2: 2, 3: None})
 
-    assert [(h.media_id, h.index_rev) for h in chosen] == [(1, 2), (2, 1)]
+    # Best score first; media 1 keeps revision 2 although revision 1 scored higher.
+    assert [(h.media_id, h.index_rev) for h in chosen] == [(2, 1), (1, 2)]
 
 
 # -- /excerpt ---------------------------------------------------------------
@@ -366,13 +363,18 @@ def _client(handler: httpx.MockTransport) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=handler)
 
 
+async def _chunks(*parts: bytes) -> AsyncIterator[bytes]:
+    for part in parts:
+        yield part
+
+
 async def test_the_gateway_stream_is_hashed_chunk_by_chunk() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         chunks = [CONTENT[:700], CONTENT[700:1500], CONTENT[1500:]]
-        return httpx.Response(200, content=iter(chunks))
+        return httpx.Response(200, content=_chunks(*chunks))
 
     async with _client(httpx.MockTransport(handler)) as client:
         result = await nc.fetch_file_sha256(42, "alice", max_bytes=10_000, client=client)
@@ -388,7 +390,9 @@ async def test_the_gateway_stream_is_hashed_chunk_by_chunk() -> None:
     assert "AA-VERSION" in request.headers
 
 
-@pytest.mark.parametrize(("status", "error"), [(403, "gateway_denied"), (404, "gateway_denied"), (422, "gateway_failed")])
+@pytest.mark.parametrize(
+    ("status", "error"), [(403, "gateway_denied"), (404, "gateway_denied"), (422, "gateway_failed")]
+)
 async def test_a_gateway_status_maps_to_a_code(status: int, error: str) -> None:
     transport = httpx.MockTransport(lambda _request: httpx.Response(status, text="/secret/path.mp4"))
 
@@ -411,7 +415,7 @@ async def test_a_network_error_is_a_failed_gateway() -> None:
 
 async def test_a_short_answer_is_a_failed_gateway() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, headers={"Content-Length": "5000"}, content=iter([b"only a few bytes"]))
+        return httpx.Response(200, headers={"Content-Length": "5000"}, content=_chunks(b"only a few bytes"))
 
     async with _client(httpx.MockTransport(handler)) as client:
         result = await nc.fetch_file_sha256(42, "alice", max_bytes=10_000, client=client)
@@ -421,7 +425,7 @@ async def test_a_short_answer_is_a_failed_gateway() -> None:
 
 async def test_an_endless_stream_stops_at_the_byte_cap() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=iter([b"x" * 600, b"x" * 600]))
+        return httpx.Response(200, content=_chunks(b"x" * 600, b"x" * 600))
 
     async with _client(httpx.MockTransport(handler)) as client:
         result = await nc.fetch_file_sha256(42, "alice", max_bytes=1000, client=client)

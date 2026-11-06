@@ -30,7 +30,10 @@ from typing import Annotated, Any, Final
 from fastapi import Depends, FastAPI
 
 from audio_video_search_backend import APP_ID, config, logs, settings
+from audio_video_search_backend.api import Services, build_router
+from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, nc_app, run_app, set_handlers
+from audio_video_search_backend.store.repo import Store
 
 LOGGER = logging.getLogger(APP_ID)
 
@@ -78,9 +81,42 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
     return ""
 
 
+def open_services() -> Services:
+    """Open the store at <volume>/state.db and the index under <volume>/index.
+
+    A missing index directory or a changed version mark rebuilds the index from
+    SQLite here (index/publish.py ``open_generation``); that is the only slow
+    part, and it runs in a worker thread.
+    """
+    root = config.storage_root()
+    root.mkdir(parents=True, exist_ok=True)
+    store = Store.open(root / "state.db")
+    try:
+        index = SearchIndex.open_generation(root / "index", store)
+    except BaseException:
+        store.close()
+        raise
+    return Services(store=store, index=index)
+
+
+async def reconcile(services: Services) -> None:
+    """Work off the index outbox and delete orphans, under the services lock."""
+
+    def locked() -> int:
+        with services.lock:
+            return services.index.reconcile(services.store)
+
+    try:
+        touched = await asyncio.to_thread(locked)
+    except Exception as exc:
+        LOGGER.exception("reconcile failed", extra={"error_type": type(exc).__name__})
+        return
+    LOGGER.info("reconcile done", extra={"media": touched})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Configure logging, register the AppAPI routes once, stop in order."""
+    """Configure logging, register the AppAPI routes once, open store and index, stop in order."""
     logs.configure(config.log_level())
     # set_handlers adds routes to the application object, which outlives the
     # lifespan; a test suite that enters it twice would otherwise get two copies.
@@ -88,15 +124,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         set_handlers(app, enabled_handler)  # pyright: ignore[reportArgumentType]
         app.state.handlers_registered = True
     LOGGER.info("starting", extra={"version": config.app_version(), "binding": config.binding_mode()})
+    services = await asyncio.to_thread(open_services)
+    app.state.services = services
+    start_background(reconcile(services), "reconcile")
     try:
         yield
     finally:
         cancelled = await stop_background()
+        app.state.services = None
+        await asyncio.to_thread(services.close)
         LOGGER.info("stopped", extra={"cancelled_tasks": cancelled})
 
 
 APP = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 APP.add_middleware(AppAPIAuthMiddleware)
+# /search, /excerpt, /sample, /sample/remove; contract in api/__init__.py.
+APP.include_router(build_router())
 
 
 async def app_client() -> AsyncIterator[AsyncNextcloudApp]:

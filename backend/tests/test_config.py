@@ -41,3 +41,11 @@ def test_the_version_is_the_one_appapi_announced(monkeypatch: pytest.MonkeyPatch
 
 def test_the_shutdown_deadline_stays_under_the_docker_stop_timeout() -> None:
     assert 0 < config.GRACEFUL_SHUTDOWN_SECONDS < 10
+
+
+def test_the_storage_root_is_the_volume_or_our_own_temp_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_PERSISTENT_STORAGE", "/srv/volume")
+    assert config.storage_root().as_posix() == "/srv/volume"
+
+    monkeypatch.setenv("APP_PERSISTENT_STORAGE", "  ")
+    assert config.storage_root().name == config.FALLBACK_STORAGE_DIRNAME

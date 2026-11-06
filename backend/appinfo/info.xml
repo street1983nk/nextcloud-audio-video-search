@@ -76,6 +76,34 @@ Prérequis :
 				<headers_to_exclude>[]</headers_to_exclude>
 				<bruteforce_protection>[401]</bruteforce_protection>
 			</route>
+			<route>
+				<url>^/search$</url>
+				<verb>POST</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401]</bruteforce_protection>
+			</route>
+			<route>
+				<url>^/excerpt$</url>
+				<verb>POST</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401]</bruteforce_protection>
+			</route>
+			<route>
+				<url>^/sample$</url>
+				<verb>POST</verb>
+				<access_level>ADMIN</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401]</bruteforce_protection>
+			</route>
+			<route>
+				<url>^/sample/remove$</url>
+				<verb>POST</verb>
+				<access_level>ADMIN</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401]</bruteforce_protection>
+			</route>
 		</routes>
 		<environment-variables>
 			<variable>
