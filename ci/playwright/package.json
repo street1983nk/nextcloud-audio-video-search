@@ -1,0 +1,12 @@
+{
+  "name": "audio-video-search-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests of Audio & Video Search against a throwaway Nextcloud test instance in CI",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0"
+  }
+}

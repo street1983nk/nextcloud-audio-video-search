@@ -28,3 +28,9 @@ dist/
 php/vendor/
 php/.phpunit.cache/
 php/junit.xml
+
+# End-to-end tests: test media made in CI (ci/make-testmedia.sh), npm and Playwright output
+testdata/
+ci/playwright/node_modules/
+ci/playwright/test-results/
+ci/playwright/playwright-report/
