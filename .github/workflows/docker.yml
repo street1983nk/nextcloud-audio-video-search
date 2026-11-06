@@ -52,14 +52,21 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: The git tag, the info.xml version and the image tag have to agree
+      # Lockstep at build time (owner rule 06.11.): the git tag, the version of
+      # both apps and the image tag are one number. release.yml checks the same.
+      - name: The git tag, both info.xml versions and the image tag have to agree
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
-          image_tag=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' backend/appinfo/info.xml)
-          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' backend/appinfo/info.xml)
-          echo "git tag ${tag}, image-tag ${image_tag}, version ${version}"
-          [ "${image_tag}" = "${tag}" ] && [ "${version}" = "${tag}" ]
+          php_version=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' php/appinfo/info.xml | head -n 1)
+          backend_version=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' backend/appinfo/info.xml | head -n 1)
+          image_tag=$(sed -n 's:.*<image-tag>\([^<]*\)</image-tag>.*:\1:p' backend/appinfo/info.xml | head -n 1)
+          echo "git tag ${tag}, php ${php_version}, backend ${backend_version}, image-tag ${image_tag}"
+          fail=0
+          [ "${php_version}" = "${tag}" ] || { echo "php/appinfo/info.xml does not match the git tag"; fail=1; }
+          [ "${backend_version}" = "${tag}" ] || { echo "backend/appinfo/info.xml does not match the git tag"; fail=1; }
+          [ "${image_tag}" = "${tag}" ] || { echo "the image tag does not match the git tag"; fail=1; }
+          exit "${fail}"
 
       - name: Set up buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

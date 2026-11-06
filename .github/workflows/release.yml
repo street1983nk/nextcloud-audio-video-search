@@ -1,10 +1,16 @@
-name: Release archive for the app store
+name: Release archives for the app store
 
-# One run produces what the store submission needs: the staged app, the store
+# One run produces everything the store submission needs, for both apps of
+# this repository at once (plan 01-10): the staged directory, the store
 # validation path over the info.xml that really ships, both size limits, the
-# tarball and the release signature over it, verified against the certificate.
-# Taken over from Findling's release.yml, reduced to the ExApp half: an ExApp
-# archive carries no PHP, so there is no occ integrity:sign-app step.
+# code signature inside the PHP app archive, the tarballs and the release
+# signature over each of them, verified against the certificate of its app.
+# Taken over from Findling's release.yml.
+#
+#   audio_video_search          php/, code signed and release signed with
+#                               APP_PRIVATE_KEY, certificate pin CERT_PUBKEY_SHA256
+#   audio_video_search_backend  backend/appinfo/info.xml, release signed with
+#                               BACKEND_PRIVATE_KEY, pin BACKEND_CERT_PUBKEY_SHA256
 #
 # Release flow (SKELETON.md): tag only after HEAD is green
 # (scripts/ci/head_green.sh <sha>); this run publishes the GitHub release; the
@@ -12,7 +18,7 @@ name: Release archive for the app store
 # on ghcr.io.
 #
 # There is no pull_request trigger, and that absence is the primary defence of
-# the signing key: a fork workflow can never reach the secret.
+# the signing keys: a fork workflow can never reach the secrets.
 on:
   push:
     tags:
@@ -20,42 +26,75 @@ on:
   workflow_dispatch:
     inputs:
       create_release:
-        description: 'Publish a GitHub release (leave off for a rehearsal)'
+        description: 'Publish a GitHub release with both archives (leave off for a rehearsal)'
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+# No cancel-in-progress: a cancelled run is a run interrupted somewhere between
+# writing a signing key to disk and deleting it again.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  APP_ID: audio_video_search
   # The appstore commit whose pre-info.xslt and info.xsd the store validates with.
   APPSTORE_SHA: eda850ba61407c6e4da3e23316614c6126406652
+  # The branch whose occ code signs the PHP app.
+  SERVER_VERSION: stable34
+  # Test-only password of the throwaway instance that occ needs for signing.
+  ADMIN_PASS: 'avs-release-admin-2026-11'
   ARCHIVE_MAX_BYTES: 20971520
   INFO_XML_MAX_BYTES: 524288
-  # sha256 over the DER public key of the app certificate, recorded when the
-  # certificate request was merged (05.11.2026).
+  # sha256 over the DER public key of each app certificate. The PHP app: recorded
+  # when its certificate request was merged (05.11.2026). The backend: its
+  # certificate request (app-certificate-requests PR 1417) is still open, so the
+  # value stays pending-certificate and the backend half of this run stops with
+  # a sentence until the owner records the pin and the secret.
   CERT_PUBKEY_SHA256: 0ab74bbaa2972f1cac290b8445e71ffe9d450063db32170262448052ab6aa4c8
+  BACKEND_CERT_PUBKEY_SHA256: pending-certificate
 
 jobs:
-  archive:
-    name: Build, validate, sign and size check the archive
+  archives:
+    name: Build, sign and size check both archives
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # An estimate until the first run measures it: the server checkout with
+    # submodules, a throwaway install for occ, two archives.
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
+      # The repository first, the server into a subdirectory afterwards:
+      # actions/checkout empties its target.
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check out nextcloud/server for its occ
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ env.SERVER_VERSION }}
+          submodules: recursive
+          path: server
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.2'
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip, openssl
+          coverage: none
+
+      - name: Install xsltproc and xmllint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
 
       - name: Refuse to sign anything outside a tag or a manual run of this repository
         run: |
           if [ "${GITHUB_REPOSITORY}" != "street1983nk/nextcloud-audio-video-search" ]; then
-            echo "this workflow signs with the release key of street1983nk/nextcloud-audio-video-search only"
+            echo "this workflow signs with the release keys of street1983nk/nextcloud-audio-video-search only"
             exit 1
           fi
           case "${GITHUB_EVENT_NAME}:${GITHUB_REF}" in
@@ -66,25 +105,33 @@ jobs:
 
       - name: No skeleton placeholder may ship
         run: |
-          if grep -rn 'TODO(skeleton)' appinfo l10n README.md README.en.md README.fr.md docs; then
+          if grep -rn 'TODO(skeleton)' php/appinfo php/l10n backend/appinfo README.md README.en.md README.fr.md docs; then
             echo "the lines above still carry a skeleton placeholder"
             exit 1
           fi
           echo "no placeholder in the shipped or public texts"
 
-      - name: On a tag, the tag, the version and the image tag have to agree
+      - name: Read the version
+        run: |
+          version=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' php/appinfo/info.xml | head -n 1)
+          test -n "${version}" || { echo "php/appinfo/info.xml carries no version"; exit 1; }
+          echo "APP_VERSION=${version}" >> "${GITHUB_ENV}"
+
+      # Lockstep (owner rule 06.11.): exact at build time. docker.yml checks the
+      # same on its side; this workflow builds the files the store downloads,
+      # so it checks again instead of trusting another workflow.
+      - name: On a tag, the tag, both info.xml versions and the image tag have to agree
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
-          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml)
-          image_tag=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' appinfo/info.xml)
-          echo "git tag ${tag}, version ${version}, image-tag ${image_tag}"
-          [ "${version}" = "${tag}" ] && [ "${image_tag}" = "${tag}" ]
-
-      - name: Install xsltproc and xmllint
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
+          backend_version=$(sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' backend/appinfo/info.xml | head -n 1)
+          image_tag=$(sed -n 's:.*<image-tag>\([^<]*\)</image-tag>.*:\1:p' backend/appinfo/info.xml | head -n 1)
+          echo "git tag ${tag}, php ${APP_VERSION}, backend ${backend_version}, image-tag ${image_tag}"
+          fail=0
+          [ "${APP_VERSION}" = "${tag}" ] || { echo "php/appinfo/info.xml does not match the git tag"; fail=1; }
+          [ "${backend_version}" = "${tag}" ] || { echo "backend/appinfo/info.xml does not match the git tag"; fail=1; }
+          [ "${image_tag}" = "${tag}" ] || { echo "the image tag does not match the git tag"; fail=1; }
+          exit "${fail}"
 
       - name: Fetch the pinned store transform and schema
         run: |
@@ -92,72 +139,182 @@ jobs:
           curl -fsSL "${base}/pre-info.xslt" -o "${RUNNER_TEMP}/pre-info.xslt"
           curl -fsSL "${base}/info.xsd" -o "${RUNNER_TEMP}/info.xsd"
 
-      - name: Fetch the certificate and prove it belongs to our key
+      # occ integrity:sign-app needs an installed instance (Checker, app config,
+      # database). Nothing of either archive passes through it.
+      - name: Install a throwaway Nextcloud so occ can sign
+        working-directory: server
         run: |
-          curl -fsSL "https://github.com/nextcloud/app-certificate-requests/raw/master/${APP_ID}/${APP_ID}.crt" \
-            -o "${RUNNER_TEMP}/${APP_ID}.crt"
-          subject=$(openssl x509 -in "${RUNNER_TEMP}/${APP_ID}.crt" -noout -subject -nameopt RFC2253)
-          actual=$(openssl x509 -in "${RUNNER_TEMP}/${APP_ID}.crt" -noout -pubkey \
-            | openssl pkey -pubin -outform DER | openssl sha256 -r | cut -d' ' -f1)
-          echo "subject     ${subject}"
-          echo "fingerprint ${actual}"
-          [ "${subject}" = "subject=CN=${APP_ID}" ] || { echo "the certificate subject is not the app id"; exit 1; }
-          [ "${actual}" = "${CERT_PUBKEY_SHA256}" ] || { echo "the certificate does not belong to the recorded key"; exit 1; }
+          mkdir -p data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
 
-      - name: Stage the app
-        run: scripts/release/store-archive.sh stage "${RUNNER_TEMP}/build"
+      # ---------------------------------------------------------------------
+      # The PHP app: audio_video_search
+      # ---------------------------------------------------------------------
 
-      - name: Validate the staged info.xml the way the store does
+      # The certificate is public and fetched; the pin is the sha256 over the
+      # DER of its public key (the PEM text differs between OpenSSL versions,
+      # the DER does not) and -nameopt RFC2253 pins the spelling of the subject.
+      - name: Fetch the PHP app certificate and prove it belongs to our key
         run: |
-          xsltproc "${RUNNER_TEMP}/pre-info.xslt" "${RUNNER_TEMP}/build/${APP_ID}/appinfo/info.xml" \
+          check() {
+            curl -fsSL "https://github.com/nextcloud/app-certificate-requests/raw/master/$1/$1.crt" \
+              -o "${RUNNER_TEMP}/$1.crt"
+            subject=$(openssl x509 -in "${RUNNER_TEMP}/$1.crt" -noout -subject -nameopt RFC2253)
+            actual=$(openssl x509 -in "${RUNNER_TEMP}/$1.crt" -noout -pubkey \
+              | openssl pkey -pubin -outform DER | openssl sha256 -r | cut -d' ' -f1)
+            echo "$1 subject     ${subject}"
+            echo "$1 fingerprint ${actual}"
+            [ "${subject}" = "subject=CN=$1" ] || { echo "$1: the certificate subject is not the app id"; exit 1; }
+            [ "${actual}" = "$2" ] || { echo "$1: the certificate does not belong to the recorded key"; exit 1; }
+          }
+          check audio_video_search "${CERT_PUBKEY_SHA256}"
+
+      - name: Stage the PHP app
+        run: scripts/release/store-archive.sh stage-companion "${RUNNER_TEMP}/build-php"
+
+      - name: Validate the staged PHP app info.xml the way the store does
+        run: |
+          xsltproc "${RUNNER_TEMP}/pre-info.xslt" "${RUNNER_TEMP}/build-php/audio_video_search/appinfo/info.xml" \
             | xmllint --noout --schema "${RUNNER_TEMP}/info.xsd" -
-
-      - name: The info.xml has to stay under 512 KB
-        run: |
-          bytes=$(stat -c%s "${RUNNER_TEMP}/build/${APP_ID}/appinfo/info.xml")
+          bytes=$(stat -c%s "${RUNNER_TEMP}/build-php/audio_video_search/appinfo/info.xml")
           echo "info.xml is ${bytes} bytes, the store limit is ${INFO_XML_MAX_BYTES}"
           [ "${bytes}" -lt "${INFO_XML_MAX_BYTES}" ]
 
-      - name: Pack the archive
-        run: scripts/release/store-archive.sh pack "${RUNNER_TEMP}/build" "dist/${APP_ID}.tar.gz"
-
-      - name: The archive has to stay under 20 MB
-        run: |
-          bytes=$(stat -c%s "dist/${APP_ID}.tar.gz")
-          echo "the archive is ${bytes} bytes, the store limit is ${ARCHIVE_MAX_BYTES}"
-          [ "${bytes}" -lt "${ARCHIVE_MAX_BYTES}" ]
-
-      - name: Prove what the archive contains and what it does not
-        run: scripts/release/store-archive.sh assert-contents "dist/${APP_ID}.tar.gz"
-
-      - name: Sign the archive for the store and verify the signature
+      # The key goes to a file under RUNNER_TEMP with umask 077, arrives through
+      # the environment and never through the command line, and the last step
+      # of the job deletes it. tr -d '\r': a secret stored from Windows carries
+      # CRLF, and PHP's openssl cannot read such a key.
+      - name: Sign the PHP app code
         env:
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
         run: |
           if [ -z "${APP_PRIVATE_KEY}" ]; then
-            echo "APP_PRIVATE_KEY is empty; the secret is missing and an unsigned upload must not be prepared"
+            echo "APP_PRIVATE_KEY is not set; an unsigned archive must not be built"
             exit 1
           fi
-          ( umask 077; printf '%s\n' "${APP_PRIVATE_KEY}" | tr -d '\r' > "${RUNNER_TEMP}/app.key" )
-          openssl dgst -sha512 -sign "${RUNNER_TEMP}/app.key" "dist/${APP_ID}.tar.gz" \
-            | openssl base64 -A > "dist/${APP_ID}.tar.gz.sig"
-          test -s "dist/${APP_ID}.tar.gz.sig"
-          openssl x509 -in "${RUNNER_TEMP}/${APP_ID}.crt" -noout -pubkey > "${RUNNER_TEMP}/app.pub"
-          openssl base64 -d -A -in "dist/${APP_ID}.tar.gz.sig" -out "${RUNNER_TEMP}/app.sig.bin"
-          openssl dgst -sha512 -verify "${RUNNER_TEMP}/app.pub" \
-            -signature "${RUNNER_TEMP}/app.sig.bin" "dist/${APP_ID}.tar.gz"
+          ( umask 077; printf '%s\n' "${APP_PRIVATE_KEY}" | tr -d '\r' > "${RUNNER_TEMP}/audio_video_search.key" )
+          php server/occ integrity:sign-app \
+            --privateKey="${RUNNER_TEMP}/audio_video_search.key" \
+            --certificate="${RUNNER_TEMP}/audio_video_search.crt" \
+            --path="${RUNNER_TEMP}/build-php/audio_video_search"
+          test -s "${RUNNER_TEMP}/build-php/audio_video_search/appinfo/signature.json"
 
-      - name: Upload the archive and its signature
+      # Stage, code sign, pack, release sign: the code signature has to be
+      # inside the tarball, the release signature is over it.
+      - name: Pack the PHP app archive
+        run: |
+          scripts/release/store-archive.sh pack "${RUNNER_TEMP}/build-php" audio_video_search dist/audio_video_search.tar.gz
+          bytes=$(stat -c%s dist/audio_video_search.tar.gz)
+          echo "the archive is ${bytes} bytes, the store limit is ${ARCHIVE_MAX_BYTES}"
+          [ "${bytes}" -lt "${ARCHIVE_MAX_BYTES}" ]
+
+      - name: Sign the PHP app archive for the store and verify the signature
+        run: |
+          openssl dgst -sha512 -sign "${RUNNER_TEMP}/audio_video_search.key" dist/audio_video_search.tar.gz \
+            | openssl base64 -A > dist/audio_video_search.tar.gz.sig
+          test -s dist/audio_video_search.tar.gz.sig
+          openssl x509 -in "${RUNNER_TEMP}/audio_video_search.crt" -noout -pubkey > "${RUNNER_TEMP}/audio_video_search.pub"
+          openssl base64 -d -A -in dist/audio_video_search.tar.gz.sig -out "${RUNNER_TEMP}/audio_video_search.sig.bin"
+          openssl dgst -sha512 -verify "${RUNNER_TEMP}/audio_video_search.pub" \
+            -signature "${RUNNER_TEMP}/audio_video_search.sig.bin" dist/audio_video_search.tar.gz
+
+      # ---------------------------------------------------------------------
+      # The External App: audio_video_search_backend
+      # ---------------------------------------------------------------------
+
+      # Until the certificate request is merged there is no certificate to
+      # fetch and no pin to compare with; the run stops here with a sentence,
+      # after the PHP app was built and checked.
+      - name: Fetch the backend certificate and prove it belongs to our key
+        run: |
+          if [ "${BACKEND_CERT_PUBKEY_SHA256}" = "pending-certificate" ]; then
+            echo "BACKEND_PRIVATE_KEY is not set; the backend certificate request (app-certificate-requests PR 1417) must be merged first."
+            exit 1
+          fi
+          check() {
+            curl -fsSL "https://github.com/nextcloud/app-certificate-requests/raw/master/$1/$1.crt" \
+              -o "${RUNNER_TEMP}/$1.crt"
+            subject=$(openssl x509 -in "${RUNNER_TEMP}/$1.crt" -noout -subject -nameopt RFC2253)
+            actual=$(openssl x509 -in "${RUNNER_TEMP}/$1.crt" -noout -pubkey \
+              | openssl pkey -pubin -outform DER | openssl sha256 -r | cut -d' ' -f1)
+            echo "$1 subject     ${subject}"
+            echo "$1 fingerprint ${actual}"
+            [ "${subject}" = "subject=CN=$1" ] || { echo "$1: the certificate subject is not the app id"; exit 1; }
+            [ "${actual}" = "$2" ] || { echo "$1: the certificate does not belong to the recorded key"; exit 1; }
+          }
+          check audio_video_search_backend "${BACKEND_CERT_PUBKEY_SHA256}"
+
+      # info.xml byte for byte, the reason is at stage_backend in
+      # scripts/release/store-archive.sh. No code signature on this half: it
+      # delivers no PHP into the instance.
+      - name: Stage the backend app
+        run: scripts/release/store-archive.sh stage-backend "${RUNNER_TEMP}/build-backend"
+
+      - name: Validate the staged backend info.xml the way the store does
+        run: |
+          xsltproc "${RUNNER_TEMP}/pre-info.xslt" "${RUNNER_TEMP}/build-backend/audio_video_search_backend/appinfo/info.xml" \
+            | xmllint --noout --schema "${RUNNER_TEMP}/info.xsd" -
+          bytes=$(stat -c%s "${RUNNER_TEMP}/build-backend/audio_video_search_backend/appinfo/info.xml")
+          echo "info.xml is ${bytes} bytes, the store limit is ${INFO_XML_MAX_BYTES}"
+          [ "${bytes}" -lt "${INFO_XML_MAX_BYTES}" ]
+
+      - name: Pack the backend archive
+        run: |
+          scripts/release/store-archive.sh pack "${RUNNER_TEMP}/build-backend" audio_video_search_backend dist/audio_video_search_backend.tar.gz
+          bytes=$(stat -c%s dist/audio_video_search_backend.tar.gz)
+          echo "the archive is ${bytes} bytes, the store limit is ${ARCHIVE_MAX_BYTES}"
+          [ "${bytes}" -lt "${ARCHIVE_MAX_BYTES}" ]
+
+      - name: Sign the backend archive for the store and verify the signature
+        env:
+          BACKEND_PRIVATE_KEY: ${{ secrets.BACKEND_PRIVATE_KEY }}
+        run: |
+          if [ -z "${BACKEND_PRIVATE_KEY}" ]; then
+            echo "BACKEND_PRIVATE_KEY is not set; the backend certificate request (app-certificate-requests PR 1417) must be merged first."
+            exit 1
+          fi
+          ( umask 077; printf '%s\n' "${BACKEND_PRIVATE_KEY}" | tr -d '\r' > "${RUNNER_TEMP}/audio_video_search_backend.key" )
+          openssl dgst -sha512 -sign "${RUNNER_TEMP}/audio_video_search_backend.key" dist/audio_video_search_backend.tar.gz \
+            | openssl base64 -A > dist/audio_video_search_backend.tar.gz.sig
+          test -s dist/audio_video_search_backend.tar.gz.sig
+          openssl x509 -in "${RUNNER_TEMP}/audio_video_search_backend.crt" -noout -pubkey > "${RUNNER_TEMP}/audio_video_search_backend.pub"
+          openssl base64 -d -A -in dist/audio_video_search_backend.tar.gz.sig -out "${RUNNER_TEMP}/audio_video_search_backend.sig.bin"
+          openssl dgst -sha512 -verify "${RUNNER_TEMP}/audio_video_search_backend.pub" \
+            -signature "${RUNNER_TEMP}/audio_video_search_backend.sig.bin" dist/audio_video_search_backend.tar.gz
+
+      # ---------------------------------------------------------------------
+      # What is in the two files, asserted rather than described
+      # ---------------------------------------------------------------------
+
+      - name: Prove what the archives contain and what they do not
+        run: |
+          fail=0
+          for pair in "audio_video_search:1" "audio_video_search_backend:0"; do
+            app="${pair%:*}"
+            wants_signature="${pair#*:}"
+            archive="dist/${app}.tar.gz"
+            echo "::group::${archive}"
+            scripts/release/store-archive.sh assert-contents "${archive}" "${app}" "${wants_signature}" || fail=1
+            echo "::endgroup::"
+            test -s "${archive}.sig" || { echo "${archive}.sig is missing or empty"; fail=1; }
+          done
+          exit "${fail}"
+
+      - name: Upload both archives and their signatures
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: store-release
           path: |
-            dist/*.tar.gz
-            dist/*.tar.gz.sig
+            dist/audio_video_search.tar.gz
+            dist/audio_video_search.tar.gz.sig
+            dist/audio_video_search_backend.tar.gz
+            dist/audio_video_search_backend.tar.gz.sig
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish a GitHub release
+      # The two .sig files travel along: a signature reveals nothing about the
+      # key, and store-submit.yml reads it next to the archive it belongs to.
+      - name: Publish a GitHub release with both archives
         if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.create_release)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -166,11 +323,20 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF#refs/tags/}" \
             --notes-file <(awk -v v="## ${GITHUB_REF#refs/tags/v}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md) \
-            "dist/${APP_ID}.tar.gz" "dist/${APP_ID}.tar.gz.sig"
+            dist/audio_video_search.tar.gz \
+            dist/audio_video_search.tar.gz.sig \
+            dist/audio_video_search_backend.tar.gz \
+            dist/audio_video_search_backend.tar.gz.sig
 
-      - name: Remove the key file
+      - name: Remove both key files
         if: always()
         run: |
-          shred -u "${RUNNER_TEMP}/app.key" 2>/dev/null || true
-          rm -f "${RUNNER_TEMP}/app.key"
-          test ! -e "${RUNNER_TEMP}/app.key"
+          for f in "${RUNNER_TEMP}/audio_video_search.key" "${RUNNER_TEMP}/audio_video_search_backend.key"; do
+            shred -u "${f}" 2>/dev/null || true
+            rm -f "${f}"
+            if [ -e "${f}" ]; then
+              echo "${f} still exists after the deletion step"
+              exit 1
+            fi
+          done
+          echo "neither key file exists any more"

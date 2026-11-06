@@ -7,7 +7,8 @@
 - release.yml and store-submit.yml have no pull_request trigger: that absence
   is what keeps the signing key and the store token away from forks.
 - store-submit.yml runs by hand only.
-- Only those two files name the signing key or the store token.
+- Only those two files name the signing keys (APP_PRIVATE_KEY,
+  BACKEND_PRIVATE_KEY) or the store token.
 - The ExApp half lives in backend/: python.yml runs its gates there, docker.yml
   builds the image out of it, deploy-harp.yml builds the same context, and
   Dependabot watches the Dockerfile and the uv lock file there.
@@ -79,6 +80,7 @@ def test_only_the_signing_workflows_name_the_key_or_the_store_token() -> None:
         source = path.read_text(encoding="utf-8")
         if path.name not in SECRET_HOLDERS:
             assert "APP_PRIVATE_KEY" not in source, path.name
+            assert "BACKEND_PRIVATE_KEY" not in source, path.name
             assert "APPSTORE_TOKEN" not in source, path.name
 
 

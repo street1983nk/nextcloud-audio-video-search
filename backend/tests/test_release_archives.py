@@ -62,7 +62,7 @@ def script_findings(script: str) -> list[str]:
     if not companion:
         findings.append("store-archive.sh has no stage_companion")
     else:
-        loop = re.search(r"for d in ([a-z ]+); do", companion)
+        loop = re.search(r"for d in ([a-z0-9 ]+); do", companion)
         if loop is None or tuple(loop.group(1).split()) != COMPANION_DIRS:
             findings.append("stage_companion does not copy exactly the include list of php/")
         if '"php/${d}"' not in companion:
