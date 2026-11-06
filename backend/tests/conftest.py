@@ -37,6 +37,24 @@ def appapi_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("HP_SHARED_KEY", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def companion_present(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The PHP app answers its handshake, and every test starts with a fresh companion state.
+
+    No test reaches a real instance: without this the periodic check of the
+    lifespan would try NEXTCLOUD_URL. tests/test_handshake.py plays other answers.
+    """
+    from audio_video_search_backend import companion, nc
+
+    async def answered() -> tuple[int | None, str | None]:
+        return 200, VERSION
+
+    monkeypatch.setattr(nc, "fetch_handshake", answered)
+    companion.reset()
+    yield
+    companion.reset()
+
+
 def signed_headers(user: str = "admin", secret: str = SECRET, app_id: str = APP_ID) -> dict[str, str]:
     """The three headers AppAPIAuthMiddleware checks."""
     token = base64.b64encode(f"{user}:{secret}".encode()).decode()

@@ -23,6 +23,8 @@ from tests.conftest import signed_headers
 
 CONTENT = b"RIFF fake media bytes " * 100
 SHA = hashlib.sha256(CONTENT).hexdigest()
+# The real function, taken before the autouse fixture of conftest replaces it.
+REAL_FETCH_HANDSHAKE = nc.fetch_handshake
 
 
 class Handshakes:
@@ -31,20 +33,15 @@ class Handshakes:
     def __init__(self, *answers: tuple[int | None, str | None]) -> None:
         self.answers = list(answers)
         self.calls = 0
+        self.third_call = asyncio.Event()
 
     async def __call__(self) -> tuple[int | None, str | None]:
         self.calls += 1
+        if self.calls >= 3:
+            self.third_call.set()
         if len(self.answers) > 1:
             return self.answers.pop(0)
         return self.answers[0]
-
-
-@pytest.fixture
-def handshakes(monkeypatch: pytest.MonkeyPatch) -> Handshakes:
-    """The PHP app answers ok until a test hands in another script."""
-    script = Handshakes((200, "0.1.0"))
-    monkeypatch.setattr(nc, "fetch_handshake", script)
-    return script
 
 
 def _script(monkeypatch: pytest.MonkeyPatch, *answers: tuple[int | None, str | None]) -> Handshakes:
@@ -67,8 +64,11 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 
 @pytest.fixture
-def api(handshakes: Handshakes, gateway: list[int], monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """The application without its periodic check, so every test decides when the PHP app is asked."""
+def api(gateway: list[int], monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """The application without its periodic check, so every test decides when the PHP app is asked.
+
+    Until a test hands in another script, the PHP app answers ok (conftest).
+    """
 
     async def saved(_nc: object) -> dict[str, str]:
         return {"processing_enabled": "0"}
@@ -155,8 +155,7 @@ async def test_the_periodic_check_repeats_until_cancelled(monkeypatch: pytest.Mo
     script = _script(monkeypatch, (200, "0.1.0"))
 
     task = asyncio.create_task(companion.run_periodic(interval_s=0))
-    while script.calls < 3:
-        await asyncio.sleep(0)
+    await asyncio.wait_for(script.third_call.wait(), timeout=5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -197,6 +196,7 @@ class _FakeSession:
 
 def _fake_client(monkeypatch: pytest.MonkeyPatch, outcome: Any) -> _FakeSession:
     session = _FakeSession(outcome)
+    monkeypatch.setattr(nc, "fetch_handshake", REAL_FETCH_HANDSHAKE)
     monkeypatch.setattr(nc, "AsyncNextcloudApp", lambda: SimpleNamespace(_session=session))
     return session
 

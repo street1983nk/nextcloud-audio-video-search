@@ -25,14 +25,14 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, Final
+from typing import Any, Final
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 
-from audio_video_search_backend import APP_ID, config, logs, settings
+from audio_video_search_backend import APP_ID, companion, config, logs, settings
 from audio_video_search_backend.api import Services, build_router
 from audio_video_search_backend.index.publish import SearchIndex
-from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, nc_app, run_app, set_handlers
+from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, run_app, set_handlers
 from audio_video_search_backend.store.repo import Store
 
 LOGGER = logging.getLogger(APP_ID)
@@ -127,9 +127,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     services = await asyncio.to_thread(open_services)
     app.state.services = services
     start_background(reconcile(services), "reconcile")
+    # Is the PHP app there? Asked now and every five minutes (companion.py).
+    checker = start_background(companion.run_periodic(), "companion")
     try:
         yield
     finally:
+        # The check never ends on its own; it is cancelled instead of waited for.
+        checker.cancel()
         cancelled = await stop_background()
         app.state.services = None
         await asyncio.to_thread(services.close)
@@ -138,20 +142,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 APP = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 APP.add_middleware(AppAPIAuthMiddleware)
-# /search, /excerpt, /sample, /sample/remove; contract in api/__init__.py.
+# /search, /excerpt, /sample, /sample/remove, /status; contract in api/__init__.py.
 APP.include_router(build_router())
-
-
-async def app_client() -> AsyncIterator[AsyncNextcloudApp]:
-    """A request scoped client in the app context, closed after the response."""
-    async with nc_app() as nc:
-        yield nc
-
-
-@APP.get("/status")
-async def status(nc: Annotated[AsyncNextcloudApp, Depends(app_client)]) -> dict[str, object]:
-    """Version and saved settings, for the admin (route access level ADMIN in info.xml)."""
-    return {"app_id": APP_ID, "version": config.app_version(), "settings": await settings.read(nc)}
 
 
 def main() -> None:

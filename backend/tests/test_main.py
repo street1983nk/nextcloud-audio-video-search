@@ -55,7 +55,7 @@ def test_a_badly_signed_request_is_refused(client: TestClient, headers: dict[str
     assert client.get("/status", headers=headers).status_code == 401
 
 
-def test_a_signed_status_request_answers_with_version_and_settings(
+def test_a_signed_status_request_answers_with_versions_state_and_settings(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def saved(_nc: object) -> dict[str, str]:
@@ -66,9 +66,16 @@ def test_a_signed_status_request_answers_with_version_and_settings(
     response = client.get("/status", headers=signed_headers())
 
     assert response.status_code == 200
+    # The fields of plan 01-08 sit next to the ones of the walking skeleton;
+    # tests/test_handshake.py holds how each of them is made.
     assert response.json() == {
         "app_id": "audio_video_search_backend",
         "version": "0.1.0",
+        "appVersion": "0.1.0",
+        "companion": "ok",
+        "companionVersion": "0.1.0",
+        "schemaVersion": 1,
+        "sampleCount": 0,
         "settings": {"processing_enabled": "0", "max_file_size_mb": "100"},
     }
 

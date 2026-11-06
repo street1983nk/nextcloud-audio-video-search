@@ -42,6 +42,7 @@ __all__ = [
     "SettingsForm",
     "close_nc",
     "fetch_file_sha256",
+    "fetch_handshake",
     "nc_app",
     "run_app",
     "set_handlers",
@@ -181,3 +182,27 @@ async def fetch_file_sha256(
             return await _hash_stream(owned, file_id, user_id, max_bytes)
     except httpx.HTTPError as error:
         return _failed(file_id, type(error).__name__)
+
+
+# The handshake route of the PHP app; it answers only this backend.
+HANDSHAKE_PATH: Final = "/ocs/v2.php/apps/audio_video_search/api/v1/handshake"
+
+
+async def fetch_handshake() -> tuple[int | None, str | None]:
+    """Ask the PHP app whether it is there; returns (status, companionVersion).
+
+    200 with the version string as the PHP app sent it (unchecked, the caller
+    validates it), a Nextcloud error as its status code (404: not installed or
+    not enabled), and ``(None, None)`` when the instance could not be reached.
+    Never raises; logs carry the error type only, never the URL.
+    """
+    try:
+        async with nc_app() as nc:
+            answer = await nc._session.ocs("GET", HANDSHAKE_PATH)
+    except NextcloudException as error:
+        return error.status_code, None
+    except Exception as error:  # a network error must never stop the caller
+        LOGGER.debug("handshake not answered", extra={"error_type": type(error).__name__})
+        return None, None
+    version = answer.get("companionVersion") if isinstance(answer, dict) else None
+    return 200, version if isinstance(version, str) else None

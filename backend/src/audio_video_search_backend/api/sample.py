@@ -11,6 +11,11 @@ The remove route takes a sample out of SQLite (Store.remove_sample) and every
 index document of its media item; a real transcript is answered with
 ``not_sample`` and left alone.
 
+Without the PHP app there is no gateway and no search to seed for, so /sample
+answers ``companion_missing`` before it touches the gateway (companion.py). An
+unknown state is asked once first; only a confirmed absence refuses, an
+unreachable instance is left to the gateway to report.
+
 Both routes are ADMIN in appinfo/info.xml and only reached through occ.
 """
 
@@ -20,7 +25,7 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
-from audio_video_search_backend import nc
+from audio_video_search_backend import companion, nc
 from audio_video_search_backend.api import MAX_AT_MS, MAX_UID_LENGTH, Services, run_locked, services
 from audio_video_search_backend.index.publish import segments_from_words
 from audio_video_search_backend.model.overlay import Word, normalize
@@ -32,6 +37,8 @@ _LOG: Final = logging.getLogger(__name__)
 SAMPLE_TEXT: Final = "Dies ist ein Testtreffer für die Audiosuche in Audio und Video"
 SAMPLE_WORD_STEP_MS: Final = 400
 SAMPLE_WORD_LENGTH_MS: Final = 350
+# The answer while the PHP app is not there: nothing to work for, no gateway.
+COMPANION_MISSING: Final = "companion_missing"
 # Upper bound of one streamed read; stops an endless answer of the gateway.
 MAX_SAMPLE_BYTES: Final = 8 * 1024**3
 
@@ -100,6 +107,12 @@ def _seed(opened: Services, file_id: int, sha256: str, size: int, at_ms: int) ->
 
 @router.post("/sample")
 async def sample(body: SampleRequest, opened: Annotated[Services, Depends(services)]) -> dict[str, object]:
+    state = companion.current()
+    if state.state == companion.UNKNOWN:
+        state = await companion.check_once()
+    if state.state == companion.MISSING:
+        _LOG.info("sample refused", extra={"file_id": body.fileId, "error": COMPANION_MISSING})
+        return {"error": COMPANION_MISSING}
     fetched = await nc.fetch_file_sha256(body.fileId, body.userId, max_bytes=MAX_SAMPLE_BYTES)
     if fetched.error is not None or fetched.sha256 is None:
         error = fetched.error or nc.GATEWAY_FAILED
