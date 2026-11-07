@@ -23,8 +23,10 @@ name: Discovery acceptance
 #                 image, no artifact of it and no cache export.
 #
 # The job stays red until the discovery exists (MVP: the failing acceptance
-# test comes first, plan 02-01). The truth, the comparison and the controls are
-# plan 02-04.
+# test comes first, plan 02-01). The truth, the ledger, the comparison and the
+# controls (plan 02-04) live in ci/discovery: truth.sh never runs code of this
+# app, compare.sh tests itself before it judges, and every statement about the
+# access log or Samba has a positive control.
 on:
   push:
     branches:
@@ -282,19 +284,92 @@ jobs:
           bash app-src/ci/discovery/topology.sh part-b
           cat "${IDS_ENV}" >> "${GITHUB_ENV}"
 
-      # Plan 02-04 turns these two steps into the self tests, the access log
-      # control and one block per phase (operation, wait, truth, compare).
+      # The checks have to be able to fail: three shifted expectations and an
+      # access log line injected for a never fetched file, each on its own.
+      - name: Self tests of the comparison
+        env:
+          OCC: ./occ
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
+        run: bash app-src/ci/discovery/compare.sh --self-test
+
       - name: Wait until the work stock is complete
         env:
           OCC: ./occ
         run: bash app-src/ci/discovery/compare.sh wait
 
-      - name: Compare the initial work stock with the independent truth
+      # Without a line for a file the backend certainly fetched, every "never
+      # fetched" and "no new download" of the phases is worthless.
+      - name: Access log positive control
+        env:
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
+        run: bash app-src/ci/discovery/controls.sh access-log
+
+      # One phase after the other: test results and controls, snapshot,
+      # operation, wait, truth, comparison. A FAIL stops nothing: every phase
+      # judges only its own checks against the truth of the current file
+      # system, and the last step turns the list into the verdict.
+      - name: Run the phases
+        if: ${{ !cancelled() }}
         env:
           OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
         run: |
-          bash app-src/ci/discovery/truth.sh initial
-          bash app-src/ci/discovery/compare.sh initial
+          set +e
+          d=app-src/ci/discovery
+          : > results.txt
+          id_of() { sed -n "s/^$1=//p" "${IDS_ENV}" | tail -n 1; }
+          ./occ config:app:set audio_video_search sample_visible --value=true --type=boolean
+          for phase in initial read-proof shares access-control upload overwrite copy rename tag move-cross             trash restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user             reattach foreign-change; do
+            echo "::group::phase ${phase}"
+            ok=1
+            bash "${d}/compare.sh" prepare "${phase}" | tee "prepare-${phase}.txt" || ok=0
+            grep '^FAIL ' "prepare-${phase}.txt" >> results.txt
+            bash "${d}/compare.sh" mark "${phase}" || ok=0
+            case "${phase}" in
+              initial | read-proof | shares) true ;;
+              access-control) bash "${d}/topology.sh" access_control ;;
+              upload)
+                bash "${d}/topology.sh" upload_new                   && bash "${d}/compare.sh" appear "$(id_of UPLOAD_ID)" "$(id_of UPLOAD_AT)" 300 ;;
+              overwrite) bash "${d}/topology.sh" overwrite ;;
+              copy) bash "${d}/topology.sh" copy_in_home ;;
+              rename) bash "${d}/topology.sh" rename_in_home ;;
+              tag) bash "${d}/topology.sh" tag_file ;;
+              move-cross) bash "${d}/topology.sh" move_home_to_team ;;
+              trash) bash "${d}/topology.sh" trash_file ;;
+              restore) bash "${d}/topology.sh" restore_file ;;
+              exclude-user-after) bash "${d}/topology.sh" exclude_user_after ;;
+              exclude-storage-after) bash "${d}/topology.sh" exclude_storage_after ;;
+              exclude-after) bash "${d}/topology.sh" exclude_after ;;
+              reprove) bash "${d}/topology.sh" revoke_cem && ./occ audio_video_search:reconcile --reprove ;;
+              vanish) bash "${d}/topology.sh" vanish_cem ;;
+              delete-user) bash "${d}/topology.sh" delete_dan ;;
+              reattach) bash "${d}/topology.sh" reattach ;;
+              foreign-change)
+                bash "${d}/topology.sh" foreign_change                   && ./occ audio_video_search:rescan --storage="$(id_of STORAGE_SMB_ANA)" ;;
+            esac
+            [ $? = 0 ] || { echo "FAIL ${phase}:operation" >> results.txt; ok=0; }
+            bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
+            bash "${d}/truth.sh" "${phase}" || { echo "FAIL ${phase}:truth" >> results.txt; ok=0; }
+            bash "${d}/compare.sh" "${phase}" | tee "compare-${phase}.txt"
+            grep '^FAIL ' "compare-${phase}.txt" >> results.txt
+            if [ "${ok}" = 1 ] && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
+              echo "PHASE PASS ${phase}" >> results.txt
+            else
+              echo "PHASE FAIL ${phase}" >> results.txt
+            fi
+            echo "::endgroup::"
+          done
+          exit 0
+
+      - name: The verdict of all phases
+        if: always()
+        run: |
+          test -f results.txt || { echo "no results, the phases did not run"; exit 1; }
+          cat results.txt
+          passed=$(grep -c '^PHASE PASS ' results.txt || true)
+          echo "${passed} of 20 phases passed"
+          ! grep -q '^PHASE FAIL ' results.txt && [ "${passed}" = 20 ]
 
       - name: Collect the logs
         if: always()
@@ -311,7 +386,8 @@ jobs:
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
           cp app-src/ci/discovery/ids.env logs/ 2>/dev/null || true
-          cp occ-*.txt occ-*.json truth-*.json results.txt logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/avs-discovery/ledger.tsv" logs/ 2>/dev/null || true
           sudo tail -n 300 /var/log/samba/log.smbd > logs/smbd.log 2>/dev/null || true
 
       - name: Upload the logs
@@ -483,6 +559,8 @@ jobs:
       - name: The control leg shows the leak
         env:
           OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
         run: bash app-src/ci/discovery/controls.sh leak
 
       - name: Collect the logs

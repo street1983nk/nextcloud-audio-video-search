@@ -364,3 +364,196 @@ def test_the_topology_rule_fires_on_a_missing_exclusion_and_dispatch() -> None:
         "topology.sh does not dispatch vanish_cem",
         "topology.sh does not exclude --group=extern before the first run",
     ]
+
+
+# -- the verdict: truth, ledger, comparison and controls (plan 02-04) -------------
+
+DISCOVERY = REPO_ROOT / "ci" / "discovery"
+VERDICT_SCRIPTS = ("common.sh", "truth.sh", "ledger.sh", "compare.sh", "controls.sh")
+PHASES = (
+    "initial",
+    "read-proof",
+    "shares",
+    "access-control",
+    "upload",
+    "overwrite",
+    "copy",
+    "rename",
+    "tag",
+    "move-cross",
+    "trash",
+    "restore",
+    "exclude-user-after",
+    "exclude-storage-after",
+    "exclude-after",
+    "reprove",
+    "vanish",
+    "delete-user",
+    "reattach",
+    "foreign-change",
+)
+# (shift in the expectation, the one check it has to make fail on its own)
+SELF_TEST_SHIFTS = (
+    ("'.N_active += 1'", "files_count"),
+    ("'.Y += 1'", "contents"),
+    ('"$((transcribed + 1))"', "transcribed"),
+    ('>> "${log}"', "never_in_log"),
+)
+# The order of the verdict in the job discovery, as plain substrings.
+VERDICT_ORDER = (
+    "controls.sh samba",
+    "topology.sh part-a",
+    "app_api:app:register",
+    "topology.sh part-b",
+    "compare.sh --self-test",
+    "compare.sh wait",
+    "controls.sh access-log",
+    "- name: Run the phases",
+    "- name: The verdict of all phases",
+)
+
+
+def code_lines(script: str) -> list[str]:
+    """The lines of a bash script that are not comments."""
+    return [line for line in script.splitlines() if not line.lstrip().startswith("#")]
+
+
+def script_findings(scripts: dict[str, str]) -> list[str]:
+    """The truth stays free of app code, the comparison and the controls can fail."""
+    findings: list[str] = []
+    for name in ("common.sh", "truth.sh", "ledger.sh", "controls.sh"):
+        code = "\n".join(code_lines(scripts[name]))
+        findings += [f"{name} contains {word}" for word in ("audio_video_search_backend", "php -r") if word in code]
+    # truth.sh sources common.sh, so both stay free of the app.
+    for name in ("common.sh", "truth.sh"):
+        code = "\n".join(code_lines(scripts[name]))
+        findings += [f"{name} contains {word}" for word in ("audio_video_search:", "docker exec") if word in code]
+    phases = re.search(r"^PHASES=\((.*?)\)$", scripts["common.sh"], re.MULTILINE | re.DOTALL)
+    if phases is None or tuple(phases.group(1).split()) != PHASES:
+        findings.append("common.sh does not list the phases of plan 02-04 in order")
+
+    compare = scripts["compare.sh"]
+    if "--self-test) cmd_self_test ;;" not in compare:
+        findings.append("compare.sh has no --self-test")
+    for shift, check in SELF_TEST_SHIFTS:
+        if shift not in compare:
+            findings.append(f"the self test of compare.sh does not shift {check}")
+        if not re.search(rf"^\s*shift_one \S+ {check} ", compare, re.MULTILINE):
+            findings.append(f"the self test of compare.sh does not expect {check} to fail on its own")
+    if "GET /ocs/v2.php/apps/audio_video_search/files/${never}" not in compare:
+        findings.append("the self test of compare.sh does not inject a gateway line for a never fetched file")
+    if 'fail "compare self-test did not fail"' not in compare:
+        findings.append("the self test of compare.sh does not stop the run")
+    if 'check transcribed "${expected}"' not in compare:
+        findings.append("compare.sh does not check transcribed for equality with the ledger")
+    if ".dueWork == 0" not in compare:
+        findings.append("compare.sh wait does not wait for dueWork")
+    if 'echo "PHASE PASS ${PHASE}"' not in compare:
+        findings.append("compare.sh does not write PHASE PASS")
+
+    controls = scripts["controls.sh"]
+    if 'echo "LEAK CONTROL SHOWED THE LEAK"' not in controls:
+        findings.append("controls.sh does not write LEAK CONTROL SHOWED THE LEAK")
+    for command, function in (("samba", "cmd_samba"), ("access-log", "cmd_access_log"), ("leak", "cmd_leak")):
+        if f"\t{command}) {function} ;;" not in controls:
+            findings.append(f"controls.sh has no subcommand {command}")
+    for message in ("samba positive control failed, run invalid", "access log positive control failed, run invalid"):
+        if message not in controls:
+            findings.append(f"controls.sh does not say '{message}'")
+    return findings
+
+
+def flow_findings(workflow: str) -> list[str]:
+    """The workflow runs the controls, the self tests and every phase in order."""
+    findings: list[str] = []
+    discovery = job_text(workflow, "discovery")
+    loop = re.search(r"for phase in (.*?); do", discovery, re.DOTALL)
+    listed = tuple(loop.group(1).replace("\\", " ").split()) if loop else ()
+    if listed != PHASES:
+        findings.append("the job discovery does not run the phases of plan 02-04 in order")
+    places = [discovery.find(part) for part in VERDICT_ORDER]
+    if any(place < 0 for place in places) or places != sorted(places):
+        findings.append("the job discovery does not run the verdict in the order of plan 02-04")
+    verdict = dict(steps_of(discovery)).get("The verdict of all phases", "")
+    if not re.search(r"^ {8}if: always\(\)$", verdict, re.MULTILINE) or "PHASE FAIL" not in verdict:
+        findings.append("the verdict step does not run with if: always() over the phase results")
+    if "bash app-src/ci/discovery/controls.sh leak" not in job_text(workflow, "leak-control"):
+        findings.append("the job leak-control does not run controls.sh leak")
+    return findings
+
+
+def verdict_scripts() -> dict[str, str]:
+    return {name: (DISCOVERY / name).read_text(encoding="utf-8") for name in VERDICT_SCRIPTS}
+
+
+def test_the_verdict_is_independent_and_able_to_fail() -> None:
+    assert script_findings(verdict_scripts()) == []
+
+
+def test_the_workflow_runs_the_verdict_in_order() -> None:
+    assert flow_findings(source()) == []
+
+
+def test_the_script_rule_fires_on_app_code_in_the_truth() -> None:
+    scripts = verdict_scripts()
+    scripts["truth.sh"] += '\nocc audio_video_search:files --json --all\ndocker exec "${C}" true\n'
+
+    assert script_findings(scripts) == [
+        "truth.sh contains audio_video_search:",
+        "truth.sh contains docker exec",
+    ]
+
+
+def test_the_script_rule_ignores_comments_but_not_the_backend_module() -> None:
+    scripts = verdict_scripts()
+    scripts["truth.sh"] += "\n# occ audio_video_search:files is what compare.sh reads\n"
+    scripts["ledger.sh"] += "\npython3 -m audio_video_search_backend.store\n"
+
+    assert script_findings(scripts) == ["ledger.sh contains audio_video_search_backend"]
+
+
+def test_the_script_rule_fires_on_a_missing_self_test_shift() -> None:
+    scripts = verdict_scripts()
+    assert "'.Y += 1'" in scripts["compare.sh"]
+    compare = scripts["compare.sh"].replace("'.Y += 1'", "'.Y += 0'")
+    scripts["compare.sh"] = re.sub(
+        r"^(\s*)shift_one (\S+) transcribed ", r"\1shift_one \2 contents ", compare, flags=re.MULTILINE
+    )
+
+    assert script_findings(scripts) == [
+        "the self test of compare.sh does not shift contents",
+        "the self test of compare.sh does not expect transcribed to fail on its own",
+    ]
+
+
+def test_the_script_rule_fires_on_a_weak_transcribed_check_and_no_leak_line() -> None:
+    scripts = verdict_scripts()
+    scripts["compare.sh"] = scripts["compare.sh"].replace(
+        'check transcribed "${expected}"', 'check_le transcribed "${expected}"'
+    )
+    scripts["controls.sh"] = scripts["controls.sh"].replace('echo "LEAK CONTROL SHOWED THE LEAK"', 'echo "leak shown"')
+
+    assert script_findings(scripts) == [
+        "compare.sh does not check transcribed for equality with the ledger",
+        "controls.sh does not write LEAK CONTROL SHOWED THE LEAK",
+    ]
+
+
+def test_the_flow_rule_fires_on_a_missing_phase() -> None:
+    text = source()
+    assert " reattach foreign-change; do" in text
+    broken = text.replace(" reattach foreign-change; do", " foreign-change; do")
+
+    assert flow_findings(broken) == ["the job discovery does not run the phases of plan 02-04 in order"]
+
+
+def test_the_flow_rule_fires_when_the_access_log_control_comes_first() -> None:
+    text = source()
+    marker = "run: bash app-src/ci/discovery/controls.sh access-log"
+    assert text.count(marker) == 1
+    broken = text.replace(marker, "run: true").replace(
+        "run: bash app-src/ci/discovery/compare.sh --self-test",
+        "run: bash app-src/ci/discovery/controls.sh access-log && bash app-src/ci/discovery/compare.sh --self-test",
+    )
+
+    assert flow_findings(broken) == ["the job discovery does not run the verdict in the order of plan 02-04"]

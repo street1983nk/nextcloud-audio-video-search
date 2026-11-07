@@ -7,8 +7,18 @@ the whole discovery path on a real Samba server and compares the result with a
 count that never runs code of this app.
 
 - `topology.sh` builds the instance and runs the operations of the phases.
-- `truth.sh`, `ledger.sh`, `compare.sh` and `controls.sh` (plan 02-04) build the
-  independent truth, compare it per phase and hold the positive controls.
+- `truth.sh` (plan 02-04) writes `truth-<phase>.json` out of find, smbclient,
+  the S3 API, sqlite3 on `data/owncloud.db` and sha256sum, never out of code of
+  this app.
+- `ledger.sh` notes every test result the test seeds itself, so the expected
+  `transcribed` is known without asking the app.
+- `compare.sh` waits for the work stock, compares each phase exactly and tests
+  itself first (`--self-test`: N_active+1, Y+1, transcribed+1 and an injected
+  access log line each have to fail on their own).
+- `controls.sh` holds the positive controls: `samba`, `access-log` and, in the
+  job `leak-control`, `leak`.
+- `common.sh` carries the order of the phases and the shared helpers; it is
+  sourced by the four scripts and stays free of app code like `truth.sh`.
 - `ids.env` is written in CI only; it is the one place that pairs a test file
   with its file id.
 
