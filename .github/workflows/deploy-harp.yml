@@ -612,6 +612,19 @@ jobs:
           ref: ${{ matrix.server-version }}
           path: apps/app_api
 
+      # The server repository no longer carries apps/viewer, but core/shipped.json
+      # lists viewer as always enabled, so app:disable refuses it and app:list
+      # does not show it. Updater::checkAppsRequirements then stops occ upgrade
+      # on stable33 and stable34 with "The files of the app viewer were not
+      # correctly replaced". A release tarball carries viewer; this checkout
+      # does the same with the viewer branch of the same server version.
+      - name: Check out nextcloud/viewer like a release tarball carries it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/viewer
+          ref: ${{ matrix.server-version }}
+          path: apps/viewer
+
       - name: Check out this app
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -799,21 +812,6 @@ jobs:
       # Exit 0 is success; 3 is accepted as in Findling, but installed_version
       # has to move either way, otherwise "nothing to do" would pass as an
       # update.
-      # A git checkout of stable33 or stable34 ships no apps/viewer, while the
-      # install enables the shipped viewer. Updater::checkAppsRequirements then
-      # stops occ upgrade with "The files of the app viewer were not correctly
-      # replaced"; stable35 skips that check on the git channel. A release
-      # tarball carries every shipped app, so an enabled app without code is a
-      # property of this checkout only: it is switched off before the update.
-      - name: Switch off enabled apps that this server checkout does not carry
-        run: |
-          for app in $(./occ app:list --enabled --output=json | jq -r '.enabled | keys[]'); do
-            if ! ./occ app:getpath "${app}" > /dev/null 2>&1; then
-              echo "${app} is enabled but has no code in this checkout, switching it off"
-              ./occ app:disable "${app}"
-            fi
-          done
-
       - name: Update the PHP app with occ upgrade
         run: |
           rm -rf apps/audio_video_search
