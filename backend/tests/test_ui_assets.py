@@ -75,6 +75,24 @@ def foreign_classes(template: str) -> list[str]:
     return found
 
 
+_FORMAT_BANNER = re.compile(
+    r"'format' => \[[^\]]*?"
+    r"'text' => \$downloadAllowed\s*\?\s*\$l->t\('([^']*)'\)\s*:\s*\$l->t\('([^']*)'\),[^\]]*?"
+    r"'action' => \$downloadAllowed \? 'download' : 'none',",
+)
+
+
+def format_banner_texts(template: str) -> tuple[str, str] | None:
+    """The two texts of the format banner: with and without a download.
+
+    None when the text does not depend on $downloadAllowed the same way the
+    download button does, so a banner without a button could still tell the
+    reader to download.
+    """
+    match = _FORMAT_BANNER.search(template)
+    return (match.group(1), match.group(2)) if match else None
+
+
 def _read(paths: list[Path]) -> dict[str, str]:
     return {path.relative_to(REPO_ROOT).as_posix(): path.read_text(encoding="utf-8") for path in paths}
 
@@ -172,6 +190,17 @@ def test_the_playback_page_keeps_its_contract() -> None:
     assert "pointer: coarse" in style
 
 
+def test_the_format_banner_offers_a_download_only_with_the_button() -> None:
+    template = (TEMPLATES / "play.php").read_text(encoding="utf-8")
+    texts = format_banner_texts(template)
+    assert texts is not None
+    with_download, without_download = texts
+    assert with_download == "Download it and open it in another program."
+    assert without_download == "This share does not allow downloads. The person who shared the file can allow them."
+    assert "open it" not in without_download
+    assert not without_download.startswith("Download")
+
+
 def test_the_admin_section_keeps_its_contract() -> None:
     template = (TEMPLATES / "admin.php").read_text(encoding="utf-8")
     script = (SCRIPTS / "admin.js").read_text(encoding="utf-8")
@@ -258,3 +287,16 @@ def test_self_force_remove_and_flat_rules_fire() -> None:
     assert findings(NO_OUTLINE, "outline: 2px solid currentColor;") == []
     assert findings(SHADOW, "box-shadow: 0 2px 8px") == ["box-shadow"]
     assert findings(GRADIENT, "background: linear-gradient(red, blue)") == ["gradient"]
+
+
+def test_self_format_banner_rule_fires_on_an_unconditional_text() -> None:
+    staged = (
+        "'format' => [\n\t\t'title' => $l->t('T'),\n"
+        "\t\t'text' => $l->t('Download it and open it in another program.'),\n"
+        "\t\t'action' => $downloadAllowed ? 'download' : 'none',\n"
+    )
+    assert format_banner_texts(staged) is None
+    passing = staged.replace(
+        "$l->t('Download it and open it in another program.')", "$downloadAllowed ? $l->t('A') : $l->t('B')"
+    )
+    assert format_banner_texts(passing) == ("A", "B")

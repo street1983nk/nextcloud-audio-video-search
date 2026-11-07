@@ -101,7 +101,11 @@ $banners = [
 	'format' => [
 		'kind' => 'error',
 		'title' => $l->t('The file cannot be played here'),
-		'text' => $l->t('Download it and open it in another program.'),
+		// Without a download there is no button, so the text must not send
+		// anybody to download; it names who can lift the block instead.
+		'text' => $downloadAllowed
+			? $l->t('Download it and open it in another program.')
+			: $l->t('This share does not allow downloads. The person who shared the file can allow them.'),
 		'action' => $downloadAllowed ? 'download' : 'none',
 		'actionText' => $l->t('Download file'),
 		'server' => false,

@@ -270,7 +270,8 @@ Regeln: Deutsch zuerst; `de` und `de_DE` erhalten **denselben** Text in unpersö
 | Verschoben, Titel | Die Datei wurde inzwischen verschoben oder umbenannt | The file was moved or renamed in the meantime | Le fichier a été déplacé ou renommé entre-temps |
 | Verschoben, Satz | Seite neu laden, um sie an ihrem neuen Ort zu finden. | Reload to find it at its new location. | Rechargez la page pour le retrouver à son nouvel emplacement. |
 | Format/defekt, Titel | Die Datei lässt sich hier nicht abspielen | The file cannot be played here | Le fichier ne peut pas être lu ici |
-| Format/defekt, Satz | Herunterladen und in einem anderen Programm öffnen. | Download it and open it in another program. | Téléchargez-le et ouvrez-le dans un autre programme. |
+| Format/defekt, Satz (Download erlaubt) | Herunterladen und in einem anderen Programm öffnen. | Download it and open it in another program. | Téléchargez-le et ouvrez-le dans un autre programme. |
+| Format/defekt, Satz (Download gesperrt, ohne Knopf) | Die Freigabe erlaubt keinen Download. Wer die Datei geteilt hat, kann ihn erlauben. | This share does not allow downloads. The person who shared the file can allow them. | Ce partage n'autorise pas le téléchargement. La personne qui a partagé le fichier peut l'autoriser. |
 | Format/defekt, Aktion | Datei herunterladen | Download file | Télécharger le fichier |
 | Netz, Titel | Die Verbindung zum Server ist abgebrochen | The connection to the server was lost | La connexion au serveur a été interrompue |
 | Netz, Satz | Die Verbindung prüfen und die Seite neu laden. | Check the connection and reload the page. | Vérifiez la connexion et rechargez la page. |
