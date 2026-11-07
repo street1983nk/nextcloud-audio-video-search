@@ -106,3 +106,70 @@ Das Workflow-Gate aus 02-01 (`leak_findings`) verlangte genau diesen Text (`"LEA
 ## Self-Check: PASSED
 
 - Commits a412bb6, 6e02526 vorhanden; Freigabe-, main- und ghcr-Dateien unter approvals/ vorhanden (nicht committet).
+
+## Push 2 (Korrektur), 434a350
+
+- Owner-Freigabe 07.11. (Claude-Code-Terminal, Antwort auf "Darf ich einen Korrektur-Push auf phase-02 machen (3 Commits)?"): "Ja, Korrektur pushen". Genau ein Push von 434a350.
+- HEAD vor dem Push = 434a3509e7c22f8846ceae82ae5cab7875ccf808; Autoren-, Committer- und Textprüfung über origin/phase-01..HEAD (46 Commits) grün; lokale Gates grün (pytest 608); Freigabedatei `approvals/push-434a350…`; Fast-Forward ad6a32c..434a350 um 13:01:12Z.
+- PHP gates startete per Push nicht (keine Änderung unter php/); nach fünf Minuten wie im Plan `gh workflow run php.yml --ref phase-02`.
+
+| Workflow | Lauf | Ergebnis |
+|---|---|---|
+| Python gates | 42375022210 | success |
+| PHP gates (workflow_dispatch) | 42375439100 | success |
+| Deploy through HaRP | 42375022170 | **failure**: deploy-harp stable34 arm64 und stable35 arm64 im Schritt "The OCS search honours read access"; die übrigen 8 Jobs success |
+| Discovery acceptance | 42375022218 | failure: discovery stable33 amd64 cancelled (Job-Zeitgrenze 120 min), leak-control failure |
+
+Der Produktcode ist zwischen ad6a32c (Push 1, Deploy 10/10 grün) und 434a350 gleich (Diff außerhalb .planning nur discovery-e2e.yml und test_discovery_workflow.py).
+
+### Befund 1: Deploy arm64, Probe gegen Erfassung (zeitabhängig)
+
+- stable35 arm64: `intake written new 4` um 13:03:30 VOR den Proben; danach `sample answered file_id 52 published`, aber search-alice.json enthält nur 51, nicht 52 -> `jq` false.
+- stable34 arm64: Proben zuerst (51, 52, 54 published; 53 und 55 `stale_rejected` auf media 1), danach `intake written ... changed 4, orphaned 2` um 13:03:31; search-carol.json `entries: []` (Gruppenordner-Datei 53 fehlt), danach bob false.
+- Deutung: Erst-Crawl/Intake (02-03 bis 02-06) und der Probe-Weg aus Phase 1 laufen auf denselben file_ids; je nach Reihenfolge überschreibt das Intake die Probe-Verweise (und verwaist media) oder die Probe greift nicht, weil schon ein echter Verweis da ist (02-02: Probe lässt echte Verweise unberührt). Auf amd64 und in Push 1 kam das Intake offenbar erst nach der Suche. Kein Fix in diesem Plan; Owner-Entscheid.
+
+### Befund 2: Discovery, S3-Server kollidiert mit Nextcloud auf Port 8080
+
+```
+Start Seaweed volume server 30GB 4.52 984eac6a7 at 10.1.0.134:8080
+F1107 13:02:38.726514 volume.go:705 Volume server listener error:listen tcp 10.1.0.134:8080: bind: address already in use
+```
+
+`weed server` mit `--net host` startet den Volume-Server auf seinem Standardport 8080, auf dem schon `php -S` von Nextcloud läuft (02-01). Dadurch übersprungen: Testmedien, Samba, Samba-Kontrolle, Topologie, Registry, HaRP, ExApp, Selbsttests, Warten, access-log-Kontrolle.
+
+### Befund 3: "Run the phases" läuft nach gescheitertem Aufbau zwei Stunden
+
+`if: ${{ !cancelled() }}` startet die Phasen auch ohne Aufbau; jede Phase wartet 15 min (`compare.sh wait`), nach 7 Phasen und dem Anfang von rename bricht die Job-Grenze 120 min ab. Zeilen (results.txt):
+
+```
+FAIL initial:wait / FAIL initial:truth / PHASE FAIL initial
+FAIL read-proof:wait / FAIL read-proof:truth / PHASE FAIL read-proof
+FAIL shares:wait / FAIL shares:truth / PHASE FAIL shares
+FAIL access-control:operation / :wait / :truth / PHASE FAIL access-control
+FAIL upload:operation / :wait / :truth / PHASE FAIL upload
+FAIL overwrite:operation / :wait / :truth / PHASE FAIL overwrite
+FAIL copy:operation / :wait / :truth / PHASE FAIL copy
+FAIL rename:operation (danach Abbruch)
+```
+
+Alle Zeilen sind Folge von Befund 2 (`truth.sh <phase> has not run`, `ledger sample takes a numeric file id`, `occ audio_video_search:files failed`), keine ist einem späteren Plan zuzuordnen. Samba-, Selbsttest- und access-log-Kontrolle liefen nicht.
+
+### Befund 4: leak-control
+
+```
+error: can't open patch '.../app-src/ci/leak-control/read-proof-off.patch': No such file or directory
+```
+
+Erwartet: der Patch kommt mit Plan 13.
+
+### Befund 5: Name des Discovery-Laufs in gh run list
+
+Auch der gültige Lauf trägt in `gh run list` den workflowName `.github/workflows/discovery-e2e.yml` (`gh run view` nennt "Discovery acceptance"). Die verify-Zeile von Plan 22 (`unique|length == 4` und `select(.workflowName=="Discovery acceptance" ...)`) würde daran scheitern; offen für den Owner.
+
+### main und ghcr nach Push 2
+
+main unverändert (`cmp` grün); audio_video_search_backend vorher und nachher `STATE 404 Package not found`, gleich, kein leak-control; Positivkontrolle findling_backend 1.6.2 grün; Paket audio_video_search unverändert.
+
+## Stand
+
+Plan 11 bleibt offen: Deploy through HaRP rot (Befund 1), Discovery ohne Kontrollen (Befund 2, 3). Jeder weitere Push braucht eine neue Owner-Freigabe.
