@@ -41,6 +41,9 @@ Ohne Konfiguration kennt das System alle Audio- und Videodateien der Instanz (al
 - **D-02-06:** Die Fortschrittszahl zählt Inhalte: "X von Y Inhalten transkribiert", Zähler und Nenner beide nach Inhalts-Schlüssel (vor dem Hash nach Vorfilter-Schlüssel), klein daneben die Zahl der Dateien. Quote nie über 100 %. Owner 07.11.: In Phase 2 nur per occ und Abnahmetest, die Admin-Oberfläche kommt in Phase 9 (ehrliche Admin-Zustände). Kein UI-Vertrag für Phase 2.
 - **D-02-07:** Pflicht-Abnahmetest gegen eine UNABHÄNGIGE Zählung (nicht mit dem Code der Umsetzung): SMB-Freigabe mehrfach pro Nutzer mit unterschiedlicher Sicht, Gruppenordner, Kopie/Verschieben/Umbenennen/Taggen, verschwundener Speicher, gelöschter Nutzer, Ausschluss vor und nach dem ersten Durchlauf. Dazu eine Positivkontrolle. Findling #25 ging dreimal durch, weil nur Einzelteile getestet wurden.
 
+### Testwerkzeug der Abnahme (Owner 07.11.)
+- **D-02-14 (Owner 07.11.):** S3-Bein der Abnahme mit SeaweedFS 4.52 statt MinIO (MinIO-Image nicht mehr frei erhältlich), nur CI, nicht Produkt.
+
 ### Claude's Discretion
 - Ereignisweg (AppAPI node_event) und periodischer Abgleich nach Findling-Muster (reconcile, Quiet-Gate, Sweep), inklusive der 1.6.3-Lehre: der Sweep verschwundener Speicher darf nicht hinter dem Quiet-Gate hängen.
 - Sperrfrist für lange Vorschauen, SMB/S3-Timeouts, files_accesscontrol, Crawl-Flag-Tor: Recherche.
