@@ -185,3 +185,20 @@ def test_main_hands_uvicorn_the_graceful_shutdown_deadline(monkeypatch: pytest.M
     assert seen["target"] == "audio_video_search_backend.main:APP"
     assert seen["timeout_graceful_shutdown"] < 10
     assert seen["log_config"] is None
+
+
+def test_the_lifespan_starts_the_intake_with_the_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    from audio_video_search_backend.api import Services
+    from audio_video_search_backend.worker import intake
+
+    started: list[object] = []
+
+    async def record(services: object) -> None:
+        started.append(services)
+
+    monkeypatch.setattr(intake, "run_forever", record)
+    with TestClient(main.APP):
+        pass
+
+    assert len(started) == 1
+    assert isinstance(started[0], Services)

@@ -6,18 +6,22 @@ again once the 900 s lock of PHP ran out, and writing it again ends in the
 same state. Kinds this plan does not handle yet go back unlocked, never lost.
 """
 
-from collections.abc import Iterator
+import sqlite3
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
-from audio_video_search_backend import nc, nc_queue
+from audio_video_search_backend import companion, nc, nc_queue
+from audio_video_search_backend.api import Services
+from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.nc_queue import ClaimAnswer, ClaimItem, QueueClient
 from audio_video_search_backend.store.repo import IntakeItem, Store
+from audio_video_search_backend.worker.intake import Intake
 
 TOKEN = "0123456789abcdef0123456789abcdef"  # noqa: S105 - a claim token of the test, not a secret
 PREFILTER = "a" * 64
@@ -301,3 +305,177 @@ async def test_an_unreachable_queue_is_a_result_not_an_exception() -> None:
 
     assert (outcome.answer, outcome.reachable, outcome.malformed) == (None, False, 0)
     assert acked is False
+
+
+# -- the intake round: commit first, ack second -------------------------------------
+
+
+class FakeQueue(QueueClient):
+    """Hands out prepared bands and records every ack and unlock."""
+
+    def __init__(self, *bands: dict[str, Any] | None) -> None:
+        self.bands = list(bands)
+        self.claims = 0
+        self.acks: list[list[int]] = []
+        self.unlocks: list[list[int]] = []
+        self.ack_crashes = 0
+
+    async def claim(self, limit: int) -> nc_queue.ClaimOutcome:
+        self.claims += 1
+        data = self.bands.pop(0) if self.bands else answer()
+        if data is None:
+            return nc_queue.ClaimOutcome(answer=None, reachable=False, malformed=0)
+        return nc_queue.ClaimOutcome(answer=ClaimAnswer.model_validate(data), reachable=True, malformed=0)
+
+    async def ack(self, token: str, queue_ids: Sequence[int]) -> bool:
+        if self.ack_crashes:
+            self.ack_crashes -= 1
+            raise RuntimeError("the container died before the ack")
+        self.acks.append(list(queue_ids))
+        return True
+
+    async def unlock(self, token: str, queue_ids: Sequence[int]) -> bool:
+        self.unlocks.append(list(queue_ids))
+        return True
+
+
+@pytest.fixture
+def companion_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(companion, "current", lambda: companion.CompanionState(companion.OK, "0.2.0", 0.0))
+
+
+def services_of(store: Store) -> Services:
+    return Services(store=store, index=cast("SearchIndex", None))
+
+
+async def test_the_ack_carries_only_written_rows_and_other_kinds_are_unlocked(store: Store) -> None:
+    queue = FakeQueue(answer(wire(), wire(queue_id=2, kind="delete", etag=None, size=None, mtime=None)))
+
+    result = await Intake(services_of(store), queue).run_once()
+
+    assert queue.acks == [[1]]
+    assert queue.unlocks == [[2]]
+    assert (result.claimed, result.applied, result.acked, result.unlocked) == (2, 1, 1, 1)
+    assert store.file_ref(10) is not None
+
+
+async def test_a_failed_commit_acknowledges_nothing_and_unlocks_the_band(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(_items: object) -> list[int]:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(store, "apply_intake", broken)
+    queue = FakeQueue(answer(wire(), wire(queue_id=2, file_id=11)))
+
+    result = await Intake(services_of(store), queue).run_once()
+
+    assert queue.acks == []
+    assert queue.unlocks == [[1, 2]]
+    assert (result.applied, result.acked, result.unlocked) == (0, 0, 2)
+
+
+async def test_a_crash_between_commit_and_ack_ends_in_the_same_state(store: Store) -> None:
+    band = answer(wire(prefilterKey=PREFILTER), wire(queue_id=2, file_id=11))
+    queue = FakeQueue(band, band)
+    queue.ack_crashes = 1
+    intake = Intake(services_of(store), queue)
+
+    with pytest.raises(RuntimeError):
+        await intake.run_once()
+    first = [store.file_ref(10), store.file_ref(11)]
+    await intake.run_once()
+    second = [store.file_ref(10), store.file_ref(11)]
+
+    assert queue.acks == [[1, 2]]
+    assert None not in first + second
+    assert [replace(ref, updated_at=0) for ref in first if ref] == [replace(ref, updated_at=0) for ref in second if ref]
+
+
+async def test_an_unreadable_queue_writes_nothing(store: Store) -> None:
+    queue = FakeQueue(answer(wire(), ok=False))
+
+    result = await Intake(services_of(store), queue).run_once()
+
+    assert result.queue_ok is False
+    assert result.applied == 0
+    assert queue.acks == []
+    assert queue.unlocks == [[1]]
+    assert store.file_ref(10) is None
+
+
+async def test_a_band_outside_the_contract_is_neither_written_nor_acknowledged(store: Store) -> None:
+    class Malformed(FakeQueue):
+        async def claim(self, limit: int) -> nc_queue.ClaimOutcome:
+            return nc_queue.ClaimOutcome(answer=None, reachable=True, malformed=3)
+
+    queue = Malformed()
+
+    result = await Intake(services_of(store), queue).run_once()
+
+    assert (result.malformed, result.applied, result.queue_ok) == (3, 0, False)
+    assert queue.acks == []
+    assert queue.unlocks == []
+
+
+@pytest.mark.usefixtures("companion_ok")
+async def test_a_full_written_band_is_followed_by_the_next_claim_at_once(store: Store) -> None:
+    queue = FakeQueue(answer(wire(), wire(queue_id=2, file_id=11)), answer())
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    await Intake(services_of(store), queue, batch=2).run_forever(sleep=sleep, rounds=2)
+
+    assert queue.claims == 2
+    assert sleeps == [30.0]
+
+
+@pytest.mark.usefixtures("companion_ok")
+async def test_a_full_band_of_only_unlocked_kinds_waits_for_the_interval(store: Store) -> None:
+    deletes = answer(*(wire(queue_id=i, kind="delete", etag=None, size=None, mtime=None) for i in (1, 2)))
+    queue = FakeQueue(deletes, deletes, deletes)
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    await Intake(services_of(store), queue, batch=2).run_forever(sleep=sleep, rounds=3)
+
+    assert queue.claims == 3
+    assert sleeps == [30.0, 30.0, 30.0]
+    assert queue.acks == []
+
+
+async def test_no_claim_before_the_php_app_answered(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(companion, "current", lambda: companion.CompanionState(companion.UNKNOWN, None, None))
+    queue = FakeQueue(answer(wire()))
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    await Intake(services_of(store), queue).run_forever(sleep=sleep, rounds=2)
+
+    assert queue.claims == 0
+    assert sleeps == [30.0, 30.0]
+
+
+@pytest.mark.usefixtures("companion_ok")
+async def test_a_failing_round_does_not_end_the_loop(store: Store) -> None:
+    class Exploding(FakeQueue):
+        async def claim(self, limit: int) -> nc_queue.ClaimOutcome:
+            self.claims += 1
+            raise RuntimeError("boom")
+
+    queue = Exploding()
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    await Intake(services_of(store), queue).run_forever(sleep=sleep, rounds=2)
+
+    assert queue.claims == 2
+    assert sleeps == [30.0, 30.0]

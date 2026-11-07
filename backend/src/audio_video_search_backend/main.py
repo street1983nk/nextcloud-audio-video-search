@@ -34,6 +34,7 @@ from audio_video_search_backend.api import Services, build_router
 from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, run_app, set_handlers
 from audio_video_search_backend.store.repo import Store
+from audio_video_search_backend.worker import intake
 
 LOGGER = logging.getLogger(APP_ID)
 
@@ -129,11 +130,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     start_background(reconcile(services), "reconcile")
     # Is the PHP app there? Asked now and every five minutes (companion.py).
     checker = start_background(companion.run_periodic(), "companion")
+    # The PHP work stock: claimed only while the companion state is ok, so not
+    # before AppAPI enabled this container (worker/intake.py).
+    intake_task = start_background(intake.run_forever(services), "intake")
     try:
         yield
     finally:
-        # The check never ends on its own; it is cancelled instead of waited for.
+        # Both loops never end on their own; they are cancelled instead of waited for.
         checker.cancel()
+        intake_task.cancel()
         cancelled = await stop_background()
         app.state.services = None
         await asyncio.to_thread(services.close)

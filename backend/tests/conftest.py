@@ -55,6 +55,20 @@ def companion_present(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     companion.reset()
 
 
+@pytest.fixture(autouse=True)
+def no_intake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lifespan starts the intake of the PHP work stock; in tests it never claims.
+
+    tests/test_intake.py runs the intake itself against a fake queue.
+    """
+    from audio_video_search_backend.worker import intake
+
+    async def idle(_services: object) -> None:
+        return None
+
+    monkeypatch.setattr(intake, "run_forever", idle)
+
+
 def signed_headers(user: str = "admin", secret: str = SECRET, app_id: str = APP_ID) -> dict[str, str]:
     """The three headers AppAPIAuthMiddleware checks."""
     token = base64.b64encode(f"{user}:{secret}".encode()).decode()
