@@ -456,6 +456,10 @@ class Store:
     def close(self) -> None:
         self._conn.close()
 
+    def reading_connection(self) -> sqlite3.Connection:
+        """The connection for the read only queries of store/coverage.py; nothing else writes through it."""
+        return self._conn
+
     @contextmanager
     def _transaction(self) -> Iterator[None]:
         """One explicit transaction. Validation belongs before it, never inside."""

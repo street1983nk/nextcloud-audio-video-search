@@ -82,6 +82,8 @@ asyncio_default_fixture_loop_scope = "function"
 # A synchronous enabled_handler only warns in nc-py-api 0.30.x and breaks in
 # 0.31.0; turning the warning into an error surfaces the mistake now.
 # The second entry silences the starlette.testclient hint about httpx2, tests only.
+# timing: a hint test that measures the laptop, run serially with the suite (plan 02-09).
+markers = ["timing: measures elapsed time, a hint on the laptop"]
 filterwarnings = [
     "error::DeprecationWarning",
     "ignore:Using .httpx. with .starlette.testclient. is deprecated:starlette.exceptions.StarletteDeprecationWarning",
