@@ -532,7 +532,7 @@ class ExAppService {
 	}
 
 	/** The uid of the first enabled member of the admin group, or null. */
-	private function firstAdmin(): ?string {
+	public function firstAdmin(): ?string {
 		$group = $this->groupManager->get('admin');
 		if ($group === null) {
 			return null;
