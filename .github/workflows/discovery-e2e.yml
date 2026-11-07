@@ -1,0 +1,504 @@
+name: Discovery acceptance
+
+# The acceptance test of phase 2 (D-02-07): the whole discovery path on a real
+# Samba server, compared against a count that never runs code of this app.
+# Findling #25 passed three times because only the single parts were tested;
+# this job tests how they play together.
+#
+# Two jobs:
+#   discovery     a throwaway Nextcloud with AppAPI, HaRP, the PHP app and the
+#                 backend image of this commit, Samba on the runner, an S3
+#                 server, a team folder with ACL, shares and reshares,
+#                 files_accesscontrol, exclusions set before the first run, and
+#                 then one phase after the other (ci/discovery/topology.sh for
+#                 the operations, truth/compare/controls for the verdict).
+#                 One leg per push, the six legs of deploy-harp.yml by hand
+#                 with legs=all.
+#   leak-control  the positive control of the read proof (D-02-01a, D-02-10):
+#                 an image built out of a copy of backend/ with
+#                 ci/leak-control/read-proof-off.patch applied, pushed into the
+#                 local registry of the runner only. It has to show the leak
+#                 the main legs must never show. The image never leaves the
+#                 runner: no registry login, no package permission, no saved
+#                 image, no artifact of it and no cache export.
+#
+# The job stays red until the discovery exists (MVP: the failing acceptance
+# test comes first, plan 02-01). The truth, the comparison and the controls are
+# plan 02-04.
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: 'one leg (stable33 on amd64) or all six legs'
+        required: false
+        default: 'one'
+        type: choice
+        options:
+          - one
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discovery-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ID: audio_video_search
+  BACKEND_APP_ID: audio_video_search_backend
+  HARP_IMAGE: ghcr.io/nextcloud/nextcloud-appapi-harp@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39
+  # MinIO publishes no community image any more (Docker Hub and quay.io refuse
+  # an anonymous pull, checked 2026-11-07), so the S3 mount runs against
+  # SeaweedFS 4.52 and its S3 gateway, pinned by index digest (amd64 and arm64).
+  S3_IMAGE: chrislusf/seaweedfs@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
+  S3_PORT: '8333'
+  LOCAL_REGISTRY: 'localhost:5000'
+  LOCAL_IMAGE_TAG: 'citest'
+  NC_URL: 'http://localhost:8080'
+  # Test-only values of a throwaway instance that dies with the runner. No
+  # repository secret enters this workflow (T-02-04).
+  ADMIN_PASS: 'avs-ci-admin-2026-11'
+  ANA_PASS: 'avs-ci-ana-2026-11'
+  BEN_PASS: 'avs-ci-ben-2026-11'
+  CEM_PASS: 'avs-ci-cem-2026-11'
+  DAN_PASS: 'avs-ci-dan-2026-11'
+  EVA_PASS: 'avs-ci-eva-2026-11'
+  FRITZ_PASS: 'avs-ci-fritz-2026-11'
+  S3_ACCESS_KEY: 'avsciaccess202611'
+  S3_SECRET_KEY: 'avs-ci-s3-secret-2026-11'
+
+jobs:
+  discovery:
+    name: discovery ${{ matrix.server-version }} ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # An estimate until the first green run measures it: image build, HaRP,
+    # Samba, the topology and one wait per phase (each up to 900 s).
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # legs=all: the six legs of deploy-harp.yml; otherwise one leg.
+        include: ${{ fromJSON(inputs.legs == 'all' && '[{"server-version":"stable33","php-version":"8.2","runner":"ubuntu-24.04"},{"server-version":"stable33","php-version":"8.2","runner":"ubuntu-24.04-arm"},{"server-version":"stable34","php-version":"8.2","runner":"ubuntu-24.04"},{"server-version":"stable34","php-version":"8.2","runner":"ubuntu-24.04-arm"},{"server-version":"stable35","php-version":"8.3","runner":"ubuntu-24.04"},{"server-version":"stable35","php-version":"8.3","runner":"ubuntu-24.04-arm"}]' || '[{"server-version":"stable33","php-version":"8.2","runner":"ubuntu-24.04"}]') }}
+    env:
+      SERVER_VERSION: ${{ matrix.server-version }}
+      IDS_ENV: ${{ github.workspace }}/app-src/ci/discovery/ids.env
+    steps:
+      # The server checkout comes first: actions/checkout empties its target.
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server-version }}
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: ${{ matrix.server-version }}
+          path: apps/app_api
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Samba, smbclient, sqlite3, jq and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y samba smbclient sqlite3 jq ffmpeg
+
+      # The built-in server directly, not through the serve script of composer: it
+      # sets PHP_CLI_SERVER_WORKERS itself and passes no ini option. A
+      # download of a file Samba denies can hang without an answer (Findling
+      # A6); eight workers and a 120 s limit keep the server answering
+      # (T-02-03). The server log is the access log the comparison counts.
+      - name: Install Nextcloud in debug mode and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          ./occ config:system:set overwrite.cli.url --value="${NC_URL}"
+          ./occ config:system:set debug --value=true --type=boolean
+          ./occ config:system:set skeletondirectory --value=''
+          PHP_CLI_SERVER_WORKERS=8 php -d max_execution_time=120 -S 0.0.0.0:8080 -t ./ \
+            > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
+            sleep 2
+          done
+          curl -sf "${NC_URL}/status.php"
+          ./occ app:enable -vvv -f app_api
+
+      # Background jobs every 15 s instead of the web cron of a quiet instance:
+      # the first crawl, the rescan and the exclusion jobs run in cron.
+      - name: Run cron every 15 seconds
+        run: |
+          ./occ background:cron
+          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
+
+      - name: Enable files_external, files_accesscontrol and the PHP app
+        run: |
+          ./occ app:enable files_external
+          ./occ app:install files_accesscontrol || ./occ app:enable files_accesscontrol
+          ./occ app:list | grep -q 'files_accesscontrol'
+          mv app-src/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          ./occ app:list | grep -A1 "${APP_ID}"
+
+      # A red step when the S3 server does not start, never a skipped one.
+      - name: Start the S3 server
+        run: |
+          mkdir -p "${RUNNER_TEMP}/s3"
+          jq -n --arg k "${S3_ACCESS_KEY}" --arg s "${S3_SECRET_KEY}" \
+            '{identities: [{name: "avs", credentials: [{accessKey: $k, secretKey: $s}],
+              actions: ["Admin", "Read", "Write", "List", "Tagging"]}]}' > "${RUNNER_TEMP}/s3/s3.json"
+          docker run -d --name avs-s3 --net host \
+            -v "${RUNNER_TEMP}/s3:/etc/avs-s3:ro" \
+            "${S3_IMAGE}" server -dir=/data -s3 -s3.port="${S3_PORT}" -s3.config=/etc/avs-s3/s3.json
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${S3_PORT}/" || true)
+            case "${code}" in 200|403) exit 0 ;; esac
+            sleep 2
+          done
+          docker logs avs-s3 || true
+          exit 1
+
+      - name: Make the test media
+        run: bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Samba share with per user views
+        env:
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: bash app-src/ci/discovery/topology.sh samba
+
+      # Without it the run is invalid: ana reads gesperrt.webm, ben is refused
+      # at the Samba server itself (plan 02-04).
+      - name: Samba positive control
+        run: bash app-src/ci/discovery/controls.sh samba
+
+      # Users, mounts, team folder, shares, the access control rule and the
+      # exclusions, all before the backend exists (D-02-05).
+      - name: Topology part A, before the backend is registered
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: bash app-src/ci/discovery/topology.sh part-a
+
+      # The main legs build the code as checked out: a patched backend/ here
+      # would hide the leak the control leg has to show (T-02-02).
+      - name: Start a local registry and push the image of this commit
+        run: |
+          git -C app-src diff --quiet -- backend/
+          test -z "$(git -C app-src status --porcelain -- backend/)"
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Register the HaRP daemon and install the ExApp through it
+        run: |
+          sed -e "s|<registry>[^<]*</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+              -e "s|<image>[^<]*</image>|<image>${BACKEND_APP_ID}</image>|" \
+              -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${LOCAL_IMAGE_TAG}</image-tag>|" \
+              app-src/backend/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
+          grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-citest.xml"
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-citest.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      - name: Topology part B, after the backend is registered
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: |
+          bash app-src/ci/discovery/topology.sh part-b
+          cat "${IDS_ENV}" >> "${GITHUB_ENV}"
+
+      # Plan 02-04 turns these two steps into the self tests, the access log
+      # control and one block per phase (operation, wait, truth, compare).
+      - name: Wait until the work stock is complete
+        env:
+          OCC: ./occ
+        run: bash app-src/ci/discovery/compare.sh wait
+
+      - name: Compare the initial work stock with the independent truth
+        env:
+          OCC: ./occ
+        run: |
+          bash app-src/ci/discovery/truth.sh initial
+          bash app-src/ci/discovery/compare.sh initial
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          docker logs avs-s3 > logs/s3.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          # A copy of state.db of the throwaway instance, for the review of a red run.
+          if [ -n "${EXAPP_CONTAINER:-}" ]; then
+            db=$(docker exec "${EXAPP_CONTAINER}" sh -c 'printf %s "${APP_PERSISTENT_STORAGE}/state.db"' || true)
+            [ -n "${db}" ] && docker cp "${EXAPP_CONTAINER}:${db}" logs/state.db || true
+          fi
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
+          cp app-src/ci/discovery/ids.env logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json truth-*.json results.txt logs/ 2>/dev/null || true
+          sudo tail -n 300 /var/log/samba/log.smbd > logs/smbd.log 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: discovery-logs-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: logs/
+          retention-days: 7
+
+  leak-control:
+    name: leak-control
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      SERVER_VERSION: stable33
+      IDS_ENV: ${{ github.workspace }}/app-src/ci/discovery/ids.env
+      LEAK_ROOT: ${{ runner.temp }}/leak-backend
+      LEAK_IMAGE: localhost:5000/audio_video_search_backend:leak-control
+    steps:
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: stable33
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: stable33
+          path: apps/app_api
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.2'
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Samba, smbclient, sqlite3, jq and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y samba smbclient sqlite3 jq ffmpeg
+
+      - name: Install Nextcloud in debug mode and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          ./occ config:system:set overwrite.cli.url --value="${NC_URL}"
+          ./occ config:system:set debug --value=true --type=boolean
+          ./occ config:system:set skeletondirectory --value=''
+          PHP_CLI_SERVER_WORKERS=8 php -d max_execution_time=120 -S 0.0.0.0:8080 -t ./ \
+            > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
+            sleep 2
+          done
+          curl -sf "${NC_URL}/status.php"
+          ./occ app:enable -vvv -f app_api
+          ./occ background:cron
+          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
+          ./occ app:enable files_external
+          mv app-src/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+
+      # The patch goes onto a copy under RUNNER_TEMP, never onto the checkout;
+      # the checkout has to be clean afterwards (D-02-10).
+      - name: Build the control image out of a patched copy
+        run: |
+          mkdir -p "${LEAK_ROOT}"
+          cp -a app-src/backend "${LEAK_ROOT}/backend"
+          git -C "${LEAK_ROOT}" apply --check "${GITHUB_WORKSPACE}/app-src/ci/leak-control/read-proof-off.patch"
+          git -C "${LEAK_ROOT}" apply "${GITHUB_WORKSPACE}/app-src/ci/leak-control/read-proof-off.patch"
+          git -C app-src diff --quiet
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LEAK_IMAGE}" "${LEAK_ROOT}/backend"
+          docker push "${LEAK_IMAGE}"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Make the test media
+        run: bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Samba share and the control topology
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: |
+          bash app-src/ci/discovery/topology.sh samba
+          bash app-src/ci/discovery/controls.sh samba
+          bash app-src/ci/discovery/topology.sh control
+
+      - name: Register the HaRP daemon and install the control image
+        run: |
+          sed -e "s|<registry>[^<]*</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+              -e "s|<image>[^<]*</image>|<image>${BACKEND_APP_ID}</image>|" \
+              -e "s|<image-tag>[^<]*</image-tag>|<image-tag>leak-control</image-tag>|" \
+              app-src/backend/appinfo/info.xml > "${RUNNER_TEMP}/info-leak.xml"
+          grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-leak.xml"
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-leak.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      - name: The control leg shows the leak
+        env:
+          OCC: ./occ
+        run: bash app-src/ci/discovery/controls.sh leak
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json logs/ 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: leak-control-logs
+          path: logs/
+          retention-days: 7
