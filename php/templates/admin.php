@@ -89,19 +89,19 @@ $pieces = static function (string $sentence) use ($markOwn, $markBackend, $markT
 // One banner per state; 'action' names the link to the app management.
 $banners = [
 	'ok' => ['kind' => 'success', 'action' => false,
-		'text' => $l->t('Both apps are connected and run version %s.', [$markOwn])],
+		'text' => $l->t('Both apps are connected.')],
 	'version_patch_differs' => ['kind' => 'info', 'action' => false,
-		'text' => $l->t('Both apps are connected. Their versions differ only in the last part: this app %1$s, backend %2$s. Search works normally. Bring both apps to the same version at the next update.', [$markOwn, $markBackend])],
+		'text' => $l->t('Minor version difference. Search works; align both apps at the next update.')],
 	'version_drift' => ['kind' => 'error', 'action' => true,
-		'text' => $l->t('The two apps run different versions: this app %1$s, backend %2$s. As long as they do not match, search returns no results from audio and video. Bring both apps to the same version.', [$markOwn, $markBackend])],
+		'text' => $l->t('The versions do not match. Search finds nothing in audio and video until both are the same.')],
 	'backend_missing' => ['kind' => 'error', 'action' => true,
-		'text' => $l->t('The app "Audio & Video Search Backend" is not installed. Without it, search finds nothing in audio and video. Install the app under Apps.')],
+		'text' => $l->t('The backend is not installed. Without it, search finds nothing in audio and video.')],
 	'backend_disabled' => ['kind' => 'error', 'action' => true,
-		'text' => $l->t('The app "Audio & Video Search Backend" is installed but disabled. Until it is enabled, search returns no results from audio and video. Enable the app under Apps.')],
+		'text' => $l->t('The backend is disabled. Search finds nothing in audio and video until it is enabled again.')],
 	'backend_unreachable' => ['kind' => 'error', 'action' => true,
-		'text' => $l->t('The backend does not answer. Until it does, search returns no results from audio and video. Check under Apps that "Audio & Video Search Backend" is running, and in the AppAPI settings that the deploy daemon can be reached.')],
+		'text' => $l->t('The backend does not respond. Check that it is running and that the deploy daemon can be reached.')],
 	'no_app_api' => ['kind' => 'error', 'action' => true,
-		'text' => $l->t('The AppAPI app is not enabled. The backend of this app only runs through AppAPI. Enable AppAPI under Apps and set up a deploy daemon.')],
+		'text' => $l->t('AppAPI is not enabled. The backend only runs through AppAPI.')],
 ];
 ?>
 <div id="avs-admin" class="section avs-admin" data-unknown="<?php p($unknown); ?>">
@@ -112,15 +112,7 @@ $banners = [
 			<div class="avs-banner avs-banner--<?php p($banner['kind']); ?>" data-state="<?php p($name); ?>"<?php if ($name !== $state) { ?> hidden<?php } ?>>
 				<span class="avs-banner__icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="<?php p($icons[$banner['kind']]); ?>"/></svg></span>
 				<div class="avs-banner__body">
-					<p class="avs-banner__text"><?php foreach ($pieces($banner['text']) as [$kind, $text]) {
-						if ($kind === 'own') {
-							?><span class="avs-version-own"><?php p($own); ?></span><?php
-						} elseif ($kind === 'backend') {
-							?><span class="avs-version-backend"><?php p($backend); ?></span><?php
-						} else {
-							p($text);
-						}
-					} ?></p>
+					<p class="avs-banner__text"><?php p($banner['text']); ?></p>
 					<?php if ($banner['action'] && $appsUrl !== '') { ?>
 						<a class="avs-banner__action" href="<?php p($appsUrl); ?>"><?php p($l->t('Open Apps')); ?></a>
 					<?php } ?>

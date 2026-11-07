@@ -37,6 +37,16 @@ async function expectAppsLink(page: Page, state: string): Promise<void> {
 }
 
 /**
+ * The banners carry no versions; the version line below them shows both, and
+ * "Check again" refreshes it.
+ */
+async function expectVersionLine(page: Page, state: string, own: string, backend: string): Promise<void> {
+	await expect(page.locator(`[data-state="${state}"] .avs-version-own, [data-state="${state}"] .avs-version-backend`)).toHaveCount(0);
+	await expect(page.locator('.avs-admin__line .avs-version-own')).toHaveText(own);
+	await expect(page.locator('.avs-admin__line .avs-version-backend')).toHaveText(backend);
+}
+
+/**
  * The seed created test results, so the empty hint of the debug block never
  * shows: not with a count above zero, and not while the backend cannot report
  * its count at all.
@@ -150,27 +160,25 @@ test('Ohne Debug-Modus wird der Debug-Block nicht gerendert @nodebug @screenshot
 	await screenshot(page, 'admin-nodebug', testInfo);
 });
 
-test('Versionen weichen in Major.Minor ab: Fehlerbanner mit beiden Versionen, leere Suche @drift @screenshot', async ({ page }, testInfo) => {
+test('Versionen weichen in Major.Minor ab: Fehlerbanner, beide Versionen in der Versionszeile, leere Suche @drift @screenshot', async ({ page }, testInfo) => {
 	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	const banner = page.locator('[data-state="version_drift"]');
 	await expect(banner).toBeVisible();
-	await expect(banner.locator('.avs-version-own')).toHaveText(VERSION);
+	await expectVersionLine(page, 'version_drift', VERSION, registeredBackendVersion());
 	await expectAppsLink(page, 'version_drift');
-	await expect(banner.locator('.avs-version-backend')).toHaveText(registeredBackendVersion());
 	expect(await ocsSearch(users.alice())).toHaveLength(0);
 	await screenshot(page, 'admin-version_drift', testInfo);
 });
 
-test('Nur der Patch-Teil weicht ab: Hinweis mit beiden Versionen, Suche liefert Treffer @patch @screenshot', async ({ page }, testInfo) => {
+test('Nur der Patch-Teil weicht ab: Hinweis, beide Versionen in der Versionszeile, Suche liefert Treffer @patch @screenshot', async ({ page }, testInfo) => {
 	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	const banner = page.locator('[data-state="version_patch_differs"]');
 	await expect(banner).toBeVisible();
-	await expect(banner.locator('.avs-version-own')).toHaveText(VERSION);
-	await expect(banner.locator('.avs-version-backend')).toHaveText(registeredBackendVersion());
+	await expectVersionLine(page, 'version_patch_differs', VERSION, registeredBackendVersion());
 	await expect.poll(async () => (await ocsSearch(users.alice())).length).toBeGreaterThan(0);
 	await screenshot(page, 'admin-version_patch_differs', testInfo);
 });
