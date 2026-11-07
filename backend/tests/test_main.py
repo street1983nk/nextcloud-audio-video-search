@@ -202,3 +202,20 @@ def test_the_lifespan_starts_the_intake_with_the_services(monkeypatch: pytest.Mo
 
     assert len(started) == 1
     assert isinstance(started[0], Services)
+
+
+def test_the_lifespan_starts_the_capture_with_the_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    from audio_video_search_backend.api import Services
+    from audio_video_search_backend.worker import capture
+
+    started: list[object] = []
+
+    async def record(services: object) -> None:
+        started.append(services)
+
+    monkeypatch.setattr(capture, "run_forever", record)
+    with TestClient(main.APP):
+        pass
+
+    assert len(started) == 1
+    assert isinstance(started[0], Services)

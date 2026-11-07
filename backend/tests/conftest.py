@@ -69,6 +69,20 @@ def no_intake(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(intake, "run_forever", idle)
 
 
+@pytest.fixture(autouse=True)
+def no_capture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lifespan starts the capture; in tests it never reads the gateway.
+
+    tests/test_capture.py runs the capture itself with a fake fetch.
+    """
+    from audio_video_search_backend.worker import capture
+
+    async def idle(_services: object) -> None:
+        return None
+
+    monkeypatch.setattr(capture, "run_forever", idle)
+
+
 def signed_headers(user: str = "admin", secret: str = SECRET, app_id: str = APP_ID) -> dict[str, str]:
     """The three headers AppAPIAuthMiddleware checks."""
     token = base64.b64encode(f"{user}:{secret}".encode()).decode()

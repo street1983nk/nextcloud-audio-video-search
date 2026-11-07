@@ -143,6 +143,57 @@ WHERE media_id = :m AND orphaned_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM file_ref WHERE media_id = :m AND state IN ('active', 'sample'))
 """
 
+# The capture (plan 02-08). A reference is claimed by setting stage fetching;
+# every write after the download names the claimed (etag, size, mtime) and
+# stage fetching, so a reference the intake changed in the meantime (pending
+# again with new values) is never overwritten with the result of old bytes.
+#
+# Due work: a new or deferred reference (pending, next_try_at empty or past)
+# and a failed one whose retry time has come. vanished, trashed and sample
+# references are never fetched. New references come before retries.
+_CLAIM_CAPTURE: Final = """
+UPDATE file_ref SET stage = 'fetching', updated_at = :now
+WHERE file_id = (
+    SELECT file_id FROM file_ref
+    WHERE state IN ('active', 'unreadable')
+      AND ((stage = 'pending' AND (next_try_at IS NULL OR next_try_at <= :now))
+        OR (stage = 'failed' AND next_try_at IS NOT NULL AND next_try_at <= :now))
+    ORDER BY COALESCE(next_try_at, 0), file_id
+    LIMIT 1)
+RETURNING file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage, reason,
+          attempts, next_try_at, proved_at, vanished_since, updated_at
+"""
+# A process that stopped during a download left its claim behind.
+_RESET_FETCHING: Final = "UPDATE file_ref SET stage = 'pending', updated_at = :now WHERE stage = 'fetching'"
+_CLAIMED: Final = """
+SELECT media_id FROM file_ref
+WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
+"""
+# The one place besides attach_by_proof (plan 13) that gives a reference its media_id.
+_KEY_REF: Final = """
+UPDATE file_ref SET media_id = :media_id, state = 'active', stage = 'keyed', reason = NULL, attempts = 0,
+    next_try_at = NULL, proved_at = :now, updated_at = :now
+WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
+"""
+# D-02-13: a content that comes back keeps transcript and corrections; only the
+# orphan mark goes. The head is written once, it is a function of the bytes.
+_KEY_MEDIA: Final = """
+UPDATE media SET head_sha256 = COALESCE(head_sha256, :head), orphaned_at = NULL WHERE media_id = :media_id
+"""
+_FAIL_REF: Final = """
+UPDATE file_ref SET state = :state, stage = 'failed', reason = :reason, attempts = attempts + :bump,
+    next_try_at = :retry_at, updated_at = :now
+WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
+"""
+_DEFER_REF: Final = """
+UPDATE file_ref SET stage = 'pending', reason = :reason, next_try_at = :retry_at, updated_at = :now
+WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
+"""
+_DELETE_CLAIMED: Final = """
+DELETE FROM file_ref
+WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
+"""
+
 _INSERT_TRANSCRIPT: Final = """
 INSERT INTO transcript (media_id, engine, model_sha256, config_version, profile, level, epoch, language,
                         input_file_sha256, created_at)
@@ -592,6 +643,132 @@ class Store:
                 applied.append(item.queue_id)
         _LOG.info("intake written", extra=counts | {"items": len(items), "applied": len(applied)})
         return applied
+
+    # The capture (plan 02-08), called only from worker/capture.py.
+
+    def next_capture(self, now: int | None = None) -> FileRef | None:
+        """Claim the next due reference for a download (stage fetching) and return it, or None."""
+        moment = _now() if now is None else now
+        with self._transaction():
+            row = self._conn.execute(_CLAIM_CAPTURE, {"now": moment}).fetchone()
+        return None if row is None else FileRef(*row)
+
+    def reset_fetching(self) -> int:
+        """Hand the claims of a stopped process back as pending; returns how many."""
+        with self._transaction():
+            reset = self._conn.execute(_RESET_FETCHING, {"now": _now()}).rowcount
+        if reset:
+            _LOG.info("capture claims reset", extra={"references": reset})
+        return reset
+
+    @staticmethod
+    def _claim_values(claimed: FileRef) -> dict[str, object]:
+        return {"file_id": claimed.file_id, "etag": claimed.etag, "size": claimed.size, "mtime": claimed.mtime}
+
+    def mark_keyed(self, claimed: FileRef, sha256: str, head_sha256: str, now: int | None = None) -> int | None:
+        """Hang a claimed reference at the content of its bytes; returns the media_id, None when stale.
+
+        In one transaction: find or create the media item of ``sha256``, write
+        its head when it has none, clear its orphan mark (D-02-13), and set the
+        reference active, keyed, proved now. Stale means the intake changed the
+        reference while it was downloaded; then nothing is written.
+        """
+        _require_hex64(sha256, "sha256")
+        _require_hex64(head_sha256, "head_sha256")
+        moment = _now() if now is None else now
+        values = self._claim_values(claimed) | {"now": moment, "head": head_sha256}
+        with self._transaction():
+            row = self._conn.execute(_CLAIMED, values).fetchone()
+            if row is None:
+                return None
+            previous = None if row[0] is None else int(row[0])
+            found = self._conn.execute(_MEDIA_FOR_KEY, (sha256,)).fetchone()
+            if found is None:
+                media_id = _row_id(self._conn.execute(_INSERT_MEDIA, (moment,)))
+                self._conn.execute(_INSERT_MEDIA_KEY, (sha256, media_id))
+            else:
+                media_id = int(found[0])
+            values["media_id"] = media_id
+            self._conn.execute(_KEY_MEDIA, values)
+            self._conn.execute(_KEY_REF, values)
+            if previous is not None and previous != media_id:
+                self._conn.execute(_MARK_ORPHANED, {"m": previous, "now": moment})
+        _LOG.info("reference keyed", extra={"file_id": claimed.file_id, "media_id": media_id})
+        return media_id
+
+    def mark_failed(
+        self,
+        claimed: FileRef,
+        reason: str,
+        *,
+        retry_at: int | None,
+        bump: bool = True,
+        state: str = "unreadable",
+        now: int | None = None,
+    ) -> bool:
+        """Set a claimed reference to stage failed with a reason and the time of its next try.
+
+        ``state`` is unreadable for every read failure of the own reader (such a
+        reference never counts and never gives a hit) and active only for a
+        verdict that is not about reading (too_large). A media item that loses
+        its last active reference this way is marked orphaned. False when stale.
+        """
+        if reason not in STATE_REASONS:
+            raise ValueError("invalid file_ref field: reason")
+        if state not in ("unreadable", "active"):
+            raise ValueError("invalid file_ref field: state")
+        if retry_at is not None and not _is_count(retry_at):
+            raise ValueError("invalid file_ref field: next_try_at")
+        moment = _now() if now is None else now
+        values = self._claim_values(claimed) | {
+            "now": moment,
+            "state": state,
+            "reason": reason,
+            "bump": 1 if bump else 0,
+            "retry_at": retry_at,
+        }
+        with self._transaction():
+            row = self._conn.execute(_CLAIMED, values).fetchone()
+            if row is None:
+                return False
+            self._conn.execute(_FAIL_REF, values)
+            if row[0] is not None:
+                self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": moment})
+        _LOG.info("reference failed", extra={"file_id": claimed.file_id, "reason": reason, "state": state})
+        return True
+
+    def defer_capture(self, claimed: FileRef, reason: str, *, retry_at: int, now: int | None = None) -> bool:
+        """Put a claimed reference back to pending until ``retry_at``; state and attempts stay. False when stale."""
+        if reason not in STATE_REASONS:
+            raise ValueError("invalid file_ref field: reason")
+        if not _is_count(retry_at):
+            raise ValueError("invalid file_ref field: next_try_at")
+        values = self._claim_values(claimed) | {
+            "now": _now() if now is None else now,
+            "reason": reason,
+            "retry_at": retry_at,
+        }
+        with self._transaction():
+            changed = self._conn.execute(_DEFER_REF, values).rowcount
+        return changed == 1
+
+    def delete_ref(self, claimed: FileRef, now: int | None = None) -> bool:
+        """Delete a claimed reference (the gateway says excluded); False when stale.
+
+        The media item, if any, is only marked orphaned here; forgetting a
+        content on exclusion is plan 15.
+        """
+        moment = _now() if now is None else now
+        values = self._claim_values(claimed)
+        with self._transaction():
+            row = self._conn.execute(_CLAIMED, values).fetchone()
+            if row is None:
+                return False
+            self._conn.execute(_DELETE_CLAIMED, values)
+            if row[0] is not None:
+                self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": moment})
+        _LOG.info("reference deleted", extra={"file_id": claimed.file_id, "reason": "excluded"})
+        return True
 
     def file_ref(self, file_id: int) -> FileRef | None:
         """The reference of one file, None when the file has never been seen."""

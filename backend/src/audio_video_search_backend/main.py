@@ -34,7 +34,7 @@ from audio_video_search_backend.api import Services, build_router
 from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, run_app, set_handlers
 from audio_video_search_backend.store.repo import Store
-from audio_video_search_backend.worker import intake
+from audio_video_search_backend.worker import capture, intake
 
 LOGGER = logging.getLogger(APP_ID)
 
@@ -133,12 +133,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The PHP work stock: claimed only while the companion state is ok, so not
     # before AppAPI enabled this container (worker/intake.py).
     intake_task = start_background(intake.run_forever(services), "intake")
+    # The capture: one full download per open reference, one at a time, also
+    # only while the companion state is ok (worker/capture.py).
+    capture_task = start_background(capture.run_forever(services), "capture")
     try:
         yield
     finally:
-        # Both loops never end on their own; they are cancelled instead of waited for.
+        # The loops never end on their own; they are cancelled instead of waited for.
         checker.cancel()
         intake_task.cancel()
+        capture_task.cancel()
         cancelled = await stop_background()
         app.state.services = None
         await asyncio.to_thread(services.close)
