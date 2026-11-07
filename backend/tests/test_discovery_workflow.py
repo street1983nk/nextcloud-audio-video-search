@@ -430,7 +430,7 @@ TOPOLOGY_WORDS = (
     "workflowengine",
     "timeout=20",
     "files_external_allow_create_new_local",
-    "oc_credentials",
+    "oc_storages_credentials",
 )
 
 

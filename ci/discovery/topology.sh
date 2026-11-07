@@ -356,7 +356,7 @@ create_m1() {
 		echo "first login of ${user}: HTTP $(dav_login "${user}")"
 		dav_login "${user}" SMB > /dev/null
 	done
-	stored=$(sql "SELECT COUNT(*) FROM oc_credentials WHERE identifier='password::logincredentials/credentials'")
+	stored=$(sql "SELECT COUNT(*) FROM oc_storages_credentials WHERE identifier='password::logincredentials/credentials'")
 	if [ "${stored}" = "$#" ]; then
 		set_id M1_MODE logincredentials
 		set_id M1_ID "${id}"
