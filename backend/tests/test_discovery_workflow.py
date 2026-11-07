@@ -10,6 +10,9 @@
   package permission, no registry login, no ghcr.io, no docker save, no image
   in an artifact, no cache export, no tag except the local leak-control tag
   (D-02-10, T-02-01). No other job and no other workflow names the patch.
+- No workflow reads the runner context in a workflow or job env block: GitHub
+  rejects the whole file there (push 1 of phase 2, line 414), so the run never
+  starts. Step env and run lines may read it.
 
 Every rule has a self test on a broken copy, so a gate whose body went missing
 does not stay green.
@@ -136,6 +139,23 @@ def leak_findings(text: str, others: dict[str, str]) -> list[str]:
     return findings
 
 
+def runner_env_findings(name: str, text: str) -> list[str]:
+    """Workflow and job env entries that read the runner context."""
+    findings: list[str] = []
+    block: int | None = None
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        if block is not None and stripped and indent <= block:
+            block = None
+        if stripped == "env:" and indent in (0, 4):
+            block = indent
+            continue
+        if block is not None and re.search(r"\$\{\{[^}]*\brunner\.", line):
+            findings.append(f"{name}:{number} reads the runner context in a {'job' if block else 'workflow'} env")
+    return findings
+
+
 def other_workflows() -> dict[str, str]:
     return {path.name: path.read_text(encoding="utf-8") for path in WORKFLOWS.glob("*.yml") if path != WORKFLOW}
 
@@ -150,6 +170,27 @@ def test_the_main_legs_hold_every_rule() -> None:
 
 def test_the_control_leg_holds_every_rule() -> None:
     assert leak_findings(source(), other_workflows()) == []
+
+
+def test_no_workflow_reads_the_runner_context_in_a_workflow_or_job_env() -> None:
+    texts = {path.name: path.read_text(encoding="utf-8") for path in sorted(WORKFLOWS.glob("*.yml"))}
+
+    assert [finding for name, text in texts.items() for finding in runner_env_findings(name, text)] == []
+
+
+def test_the_runner_env_rule_fires_on_a_job_and_a_workflow_env() -> None:
+    text = source()
+    job_env = "      LEAK_IMAGE: localhost:5000/audio_video_search_backend:leak-control\n"
+    assert job_env in text
+    broken = text.replace(job_env, job_env + "      LEAK_ROOT: ${{ runner.temp }}/leak-backend\n", 1)
+    broken = "env:\n  TOOLS: ${{ runner.tool_cache }}\n" + broken
+
+    findings = runner_env_findings("discovery-e2e.yml", broken)
+
+    assert len(findings) == 2
+    assert findings[0] == "discovery-e2e.yml:2 reads the runner context in a workflow env"
+    assert findings[1].endswith("reads the runner context in a job env")
+    assert runner_env_findings("discovery-e2e.yml", text) == []
 
 
 def test_the_leg_parser_reads_both_lists() -> None:

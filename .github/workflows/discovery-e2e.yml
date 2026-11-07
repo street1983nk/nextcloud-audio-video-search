@@ -411,7 +411,6 @@ jobs:
     env:
       SERVER_VERSION: stable33
       IDS_ENV: ${{ github.workspace }}/app-src/ci/discovery/ids.env
-      LEAK_ROOT: ${{ runner.temp }}/leak-backend
       LEAK_IMAGE: localhost:5000/audio_video_search_backend:leak-control
     steps:
       - name: Check out nextcloud/server
@@ -470,7 +469,10 @@ jobs:
 
       # The patch goes onto a copy under RUNNER_TEMP, never onto the checkout;
       # the checkout has to be clean afterwards (D-02-10).
+      # The runner context exists only inside steps, so LEAK_ROOT is set here.
       - name: Build the control image out of a patched copy
+        env:
+          LEAK_ROOT: ${{ runner.temp }}/leak-backend
         run: |
           mkdir -p "${LEAK_ROOT}"
           cp -a app-src/backend "${LEAK_ROOT}/backend"
