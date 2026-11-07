@@ -257,8 +257,16 @@ Kontrollen alle grün: Samba (`ana reads gesperrt.webm, ben gets NT_STATUS_ACCES
 | reattach:transcribed_plus_one | Wiederanhängen, SMB | 13, 15 |
 | foreign-change:operation, foreign_new_hash | Fremdänderung auf externem Speicher, Rescan | 12, 14 |
 | :wait ab move-cross (WAIT_LIMIT 300 s) | Arbeitsvorrat wird nicht fertig, solange externe Vorgänge fehlen | 12, 14, 15 |
-| **access-control:reason_77, sperre_reason (erwartet access_control, gefunden not_found), in allen Folgephasen** | **echter Befund in 02-10**: nach dem Tag der files_accesscontrol-Regel antwortet das Gateway 404, nicht 403 access_control (`[404]: GET /ocs/v2.php/apps/audio_video_search/files/77?userId=ana`, vorher 200). Die Annahme "files_accesscontrol wirft ForbiddenException bei fopen" stimmt auf stable33 nicht; der Knoten wird offenbar schon beim Auflösen verweigert. Folge: falscher Grund und Wiederholung nach 60 s statt 300 s; kein Treffer-Leck. | Owner-Entscheid (02-10 korrigieren oder in Plan 13/16 einplanen) |
+| **access-control:reason_77, sperre_reason (erwartet access_control, gefunden not_found), in allen Folgephasen** | **echter Befund in 02-10**: nach dem Tag der files_accesscontrol-Regel antwortet das Gateway 404, nicht 403 access_control (`[404]: GET /ocs/v2.php/apps/audio_video_search/files/77?userId=ana`, vorher 200). Die Annahme "files_accesscontrol wirft ForbiddenException bei fopen" stimmt auf stable33 nicht; der Knoten wird offenbar schon beim Auflösen verweigert. Folge: falscher Grund und Wiederholung nach 60 s statt 300 s; kein Treffer-Leck. | 13 (Owner 07.11.) |
 
 main unverändert (`cmp` grün), audio_video_search_backend vorher und nachher `STATE 404 Package not found`, kein leak-control, Positivkontrolle findling_backend 1.6.2 grün, Paket audio_video_search unverändert.
 
 Stand: Pflicht-Workflows grün, Kontrollen grün, Vorgangsprüfungen des ersten Schnitts grün; alle übrigen FAIL-Zeilen einem späteren Plan zugeordnet, eine (reason_77) als echter Befund. Plan 11 kann nach Owner-Entscheid zu reason_77 abgeschlossen werden. Jeder weitere Push braucht eine neue Freigabe.
+
+## Owner-Entscheid reason_77 und Abschluss
+
+- Owner 07.11. zu reason_77, wörtlich: "In Plan 13 einplanen (Empfohlen)".
+- Befund: Greift eine files_accesscontrol-Regel per Tag, antwortet das Gateway auf stable33 mit 404 statt 403 access_control (Zugriffslog Lauf 42387720556: `[404]: GET /ocs/v2.php/apps/audio_video_search/files/77?userId=ana`, vor dem Tag 200). Folge: Grund not_found statt access_control, Wiederholung nach 60 s statt 300 s; kein Treffer-Leck.
+- Eingeplant als Task 3 in 02-13-PLAN.md: Die Unterscheidung macht das Gateway (403 mit X-AVS-Reason access_control nur, wenn files_accesscontrol die Ursache ist; echte 404 bleibt 404), der Container deutet 404 nie um. Vor dem Bau wird belegt, an welcher Stelle stable33 verweigert. Abnahme: im nächsten Discovery-Lauf (Plan 17) sind access-control:reason_77 und sperre_reason PASS.
+- Damit sind alle FAIL-Zeilen von Push 4 einem späteren Plan zugeordnet; die Muss-Wahrheiten von Plan 11 sind erfüllt. Plan 11 ist abgeschlossen.
+- DISC-01 und DISC-04 bleiben offen: Dieser Plan belegt nur den ersten Schnitt (Homes, Gruppenordner, Ereignisse). Externe Speicher (Plan 12) und der periodische Abgleich (Plan 14, 19, 20) fehlen noch; abgehakt wird nach der Abnahme in Plan 22.
