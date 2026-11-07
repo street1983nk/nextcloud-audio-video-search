@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\AudioVideoSearch\AppInfo;
 
+use OCA\AudioVideoSearch\Listener\CacheEventListener;
 use OCA\AudioVideoSearch\Listener\FileEventListener;
 use OCA\AudioVideoSearch\Listener\UserEventListener;
 use OCA\AudioVideoSearch\Search\Provider;
@@ -47,6 +48,16 @@ class Application extends App implements IBootstrap {
 			\OCP\Files\Events\Node\NodeDeletedEvent::class,
 		] as $event) {
 			$context->registerEventListener($event, FileEventListener::class);
+		}
+
+		// What a scanner finds (occ files:scan, the rescan of external
+		// storages) raises no node event, only these.
+		foreach ([
+			\OCP\Files\Cache\CacheEntryInsertedEvent::class,
+			\OCP\Files\Cache\CacheEntryUpdatedEvent::class,
+			\OCP\Files\Cache\CacheEntryRemovedEvent::class,
+		] as $event) {
+			$context->registerEventListener($event, CacheEventListener::class);
 		}
 
 		// A deleted user is only a hint for the sweep of the container.
