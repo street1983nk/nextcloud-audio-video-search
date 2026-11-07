@@ -13,7 +13,7 @@ SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # HaRP's published start script, copied unchanged from nextcloud/HaRP.
 [[annotations]]
-path = "docker/start.sh"
+path = "backend/docker/start.sh"
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Nextcloud GmbH and Nextcloud contributors"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
