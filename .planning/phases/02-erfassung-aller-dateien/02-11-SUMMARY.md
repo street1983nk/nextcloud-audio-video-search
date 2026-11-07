@@ -173,3 +173,44 @@ main unverändert (`cmp` grün); audio_video_search_backend vorher und nachher `
 ## Stand
 
 Plan 11 bleibt offen: Deploy through HaRP rot (Befund 1), Discovery ohne Kontrollen (Befund 2, 3). Jeder weitere Push braucht eine neue Owner-Freigabe.
+
+## 02-11a: D-02-15 und Workflow-Korrekturen (Owner 07.11.)
+
+Owner-Entscheide 07.11.: Befund 1 "Getrennte Schichten (Empfohlen)", Workflow-Korrekturen, Push 3 "Ja, nach den Fixes pushen".
+
+| Commit | Inhalt |
+|---|---|
+| 654bb86 | docs: STATE completed_plans zurück auf 23 |
+| 40fff64 | test (RED): beide Reihenfolgen Intake/Probe aus Push 2, 7 von 8 rot (`assert [] == [52]`, `assert [] == [51, 53]`, ...) |
+| d86cb22 | docs: D-02-15 in 02-CONTEXT.md |
+| ffd38e1 | fix (GREEN): Tabelle `sample_ref`, Probe schreibt nie `file_ref`, `file_ref` ohne Zustand sample (Python STATES und PHP WORK_STATES), Suche = aktive Verweise plus Proben (Probe nur ohne Verweis, der keine Treffer gibt), Intake und Verwaist-Regel lassen sample_ref unberührt, remove_sample schreibt nie file_ref, Migration v1 nach v2 legt Proben in sample_ref |
+| 73d4d73 | fix(02-01): `-volume.port` 8380 für weed server; Run the phases nur nach `steps.setup.outcome == 'success'`, WAIT_LIMIT 300 s, Schritt 90 min; Gates mit Selbsttest (Positivkontrolle: am alten Stand melden beide Regeln die Lücke) |
+| f8b28a5 | docs: Plan 22 erkennt den Discovery-Lauf auch am Dateipfad (GitHub nimmt den Namen vom Standardzweig) |
+
+Entscheid innerhalb D-02-15: Die Verwaist-Marke richtet sich nur nach echten Verweisen; eine Probe schützt eine media nicht vor der Marke (sonst wären die Prüfungen old_media_orphaned, x_forgotten der Abnahme nicht mehr erreichbar, weil das Ledger dort Proben setzt). Die Marke versteckt keinen Probetreffer. Offen für Plan 16 und Phase 8: Ausschluss und Vergessen müssen die Probe der Datei mit entfernen.
+
+Gates lokal: ruff, format, pyright 0, vulture, pytest 620 grün. PHP lokal nicht prüfbar, in CI grün.
+
+## Push 3, f8b28a5
+
+- Autoren-, Committer- und Textprüfung grün, Freigabedatei `approvals/push-f8b28a5…`, Fast-Forward 434a350..f8b28a5 um 15:20:12Z.
+
+| Workflow | Lauf | Ergebnis |
+|---|---|---|
+| Python gates | 42385881719 | success |
+| PHP gates (Push, php/ geändert) | 42385881816 | success, OK (272 Tests, 5203 Assertions) |
+| Deploy through HaRP | 42385881969 | success, 10 von 10 Jobs (auch beide arm64-Beine, Befund 1 behoben) |
+| Discovery acceptance | 42385881743 | failure |
+
+Discovery: S3-Server, Testmedien, Samba und Samba-Kontrolle grün (`samba positive control: ana reads gesperrt.webm, ben gets NT_STATUS_ACCESS_DENIED`). Danach rot in "Topology part A":
+
+```
+first login of cem: HTTP 207
+Error: in prepare, no such table: oc_credentials
+```
+
+Die Tabelle heißt `oc_storages_credentials` (CredentialsManager::DB_TABLE, stable33); das Topologie-Gate aus 02-01 verlangte den falschen Namen. Durch den neuen Schutz liefen die Phasen nicht (skipped statt zwei Stunden Warten), das Urteil ist rot. Es gibt darum noch keine PASS/FAIL-Zeilen der Phasen, keinen Selbsttest und keine access-log-Kontrolle. leak-control: `can't open patch .../read-proof-off.patch` (erwartet bis Plan 13).
+
+Korrektur lokal, nicht gepusht: e05dbf9 fix(02-01) `oc_storages_credentials` in topology.sh und im Gate. Push 4 braucht eine neue Owner-Freigabe.
+
+main unverändert (`cmp` grün), audio_video_search_backend vorher und nachher `STATE 404 Package not found`, kein leak-control, Positivkontrolle findling_backend 1.6.2 grün, Paket audio_video_search unverändert.

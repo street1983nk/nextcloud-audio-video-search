@@ -129,7 +129,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- 02-11: Discovery acceptance lief bei Push 1 nie (runner.temp im Job-env, Zeile 414); Korrektur 6e02526 mit Push 2 (434a350, Owner-Freigabe 07.11.) auf phase-02, Plan 11 offen bis zur Auswertung
+- 02-11: Push 3 (f8b28a5): Python, PHP, Deploy 10/10 grün; Discovery rot in Topologie part A (oc_credentials statt oc_storages_credentials), Korrektur e05dbf9 lokal, Push 4 braucht neue Owner-Freigabe
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
