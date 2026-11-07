@@ -44,6 +44,9 @@ Ohne Konfiguration kennt das System alle Audio- und Videodateien der Instanz (al
 ### Testwerkzeug der Abnahme (Owner 07.11.)
 - **D-02-14 (Owner 07.11.):** S3-Bein der Abnahme mit SeaweedFS 4.52 statt MinIO (MinIO-Image nicht mehr frei erhältlich), nur CI, nicht Produkt.
 
+### Probe und Erfassung getrennt (Owner 07.11.)
+- **D-02-15 (Owner 07.11., "Getrennte Schichten"):** Eine Probe (Testtreffer per occ :sample) und der echte Verweis der Erfassung für dieselbe Datei überschreiben einander nie. Die Probe liegt in einer eigenen Tabelle `sample_ref` (file_id, media_id), nicht in `file_ref`; `file_ref` kennt keinen Zustand `sample` mehr. Die Suche liefert beides: aktive Verweise und Proben, eine Probe aber nur, solange die Erfassung für diese Datei keinen Verweis hält, der keine Treffer gibt (unreadable, vanished, trashed). Proben bleiben hinter dem Debug-Schalter (Kennzeichen sample im Treffer). Das Entfernen einer Probe schreibt nie `file_ref`; Intake und Verwaist-Regel lesen und schreiben `sample_ref` nie (die Verwaist-Marke richtet sich nur nach echten Verweisen und versteckt keinen Probetreffer). Anlass: Push 2, deploy-harp arm64 (Lauf 42375022170), beide Reihenfolgen Intake/Probe verloren Treffer. Folgen für spätere Pläne: Ausschluss (Plan 16) und endgültiges Vergessen (Phase 8) müssen die Probe einer ausgeschlossenen bzw. vergessenen Datei mit entfernen, sonst bliebe ein Probetreffer.
+
 ### Claude's Discretion
 - Ereignisweg (AppAPI node_event) und periodischer Abgleich nach Findling-Muster (reconcile, Quiet-Gate, Sweep), inklusive der 1.6.3-Lehre: der Sweep verschwundener Speicher darf nicht hinter dem Quiet-Gate hängen.
 - Sperrfrist für lange Vorschauen, SMB/S3-Timeouts, files_accesscontrol, Crawl-Flag-Tor: Recherche.
