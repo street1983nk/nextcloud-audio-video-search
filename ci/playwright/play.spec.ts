@@ -230,6 +230,10 @@ test('Suchtreffer für die Abnahme @screenshot', async ({ page }, testInfo) => {
 	await login(page, reviewer(testInfo) ?? users.alice());
 	const hit = await searchHit(page);
 	await expect(hit).toContainText(SAMPLE_MARK);
+	// Typing can start a second search; the picture waits until no loading ring
+	// and no placeholder row is visible and the hit is shown again.
+	await expect(page.locator('.loading-icon:visible, [class*="skeleton"]:visible')).toHaveCount(0);
+	await expect(hit).toBeVisible();
 	await screenshot(page, 'search-hit', testInfo);
 });
 

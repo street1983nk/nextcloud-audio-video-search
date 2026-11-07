@@ -153,5 +153,12 @@ export async function expectPartialContent(page: Page): Promise<void> {
 }
 
 export async function screenshot(page: Page, name: string, testInfo: TestInfo): Promise<void> {
-	await page.screenshot({ path: `screenshots/${name}-${testInfo.project.name}.png`, fullPage: true });
+	// Finite animations end, endless ones (the loading ring of the media controls,
+	// the shimmer of placeholders) stop, so a picture never shows a moment between states.
+	await page.screenshot({
+		path: `screenshots/${name}-${testInfo.project.name}.png`,
+		fullPage: true,
+		animations: 'disabled',
+		caret: 'hide',
+	});
 }
