@@ -9,6 +9,10 @@
 -- connection and live in repo.py.
 --
 -- All times are whole milliseconds of audio time, INTEGER (pitfall 8).
+--
+-- Schema version 2 (phase 2). A file of version 1 is lifted by
+-- store/migrate.py in one transaction before this script runs; this script
+-- describes version 2 for a new file.
 
 -- Version marks: schema_version, index_generation. Open names, so a later mark
 -- needs no migration.
@@ -21,10 +25,18 @@ CREATE TABLE IF NOT EXISTS meta (
 -- file id: two copies of the same recording share one transcript, while access
 -- rights stay per file_id. epoch rises only when an admin asks for a recompute
 -- or a faulty model is recalled; a result of an older epoch is stale.
+--
+-- head_sha256 is the sha256 of the first 64 KiB of the content: every further
+-- copy has to read the same head through its own file id and its own reader
+-- before it may attach (read proof, D-02-01a). orphaned_at is set when the last
+-- reference went away (trash, deleted user, D-02-09 and D-02-13); the content is
+-- forgotten later, so a copy that turns up again keeps its transcript.
 CREATE TABLE IF NOT EXISTS media (
-    media_id   INTEGER PRIMARY KEY,
-    epoch      INTEGER NOT NULL DEFAULT 0 CHECK (epoch >= 0),
-    created_at INTEGER NOT NULL
+    media_id    INTEGER PRIMARY KEY,
+    epoch       INTEGER NOT NULL DEFAULT 0 CHECK (epoch >= 0),
+    created_at  INTEGER NOT NULL,
+    head_sha256 TEXT,
+    orphaned_at INTEGER
 );
 
 -- Content keys pointing at a media item (decision 3). Phase 1 writes only
@@ -37,20 +49,45 @@ CREATE TABLE IF NOT EXISTS media_key (
     PRIMARY KEY (kind, value)
 );
 
--- One row per Nextcloud file that has been seen. reason is a code from the
--- closed list STATE_REASONS in repo.py, never free text.
+-- One row per Nextcloud file that has been seen: the work stock of the
+-- discovery. Rights stay per file_id; only a reference in state active (or a
+-- sample of the walking skeleton) ever gives a hit.
+--
+-- storage_id is the numeric Nextcloud storage id (oc_storages.numeric_id); the
+-- string id is cut to an md5 above 64 characters, so the container never keys
+-- on it. prefilter_key is a sha256 the PHP app computes from share, path in the
+-- share, size and mtime (D-02-01); the container never sees a path. reader_uid
+-- is the user the gateway reads the file as. stage is the place in the
+-- discovery (pending, probing, fetching, keyed, failed) with its own attempts
+-- and retry time, so a long download needs no lock in the PHP queue.
+-- proved_at is the time of the last successful read proof of this copy: the
+-- reconcile renews it at least every 7 days on SMB and SFTP (D-02-12).
+-- vanished_since is set when the storage of the reference is no longer mounted;
+-- such a reference neither counts nor gives hits, and comes back without a
+-- download. state, stage and reason are codes from the closed lists in repo.py,
+-- never free text.
 CREATE TABLE IF NOT EXISTS file_ref (
-    file_id    INTEGER PRIMARY KEY,
-    media_id   INTEGER REFERENCES media (media_id),
-    storage_id TEXT    NOT NULL,
-    etag       TEXT    NOT NULL,
-    size       INTEGER NOT NULL,
-    mtime      INTEGER NOT NULL,
-    state      TEXT    NOT NULL,
-    reason     TEXT,
-    updated_at INTEGER NOT NULL
+    file_id        INTEGER PRIMARY KEY,
+    media_id       INTEGER REFERENCES media (media_id),
+    storage_id     INTEGER NOT NULL,
+    prefilter_key  TEXT,
+    reader_uid     TEXT,
+    etag           TEXT    NOT NULL,
+    size           INTEGER NOT NULL,
+    mtime          INTEGER NOT NULL,
+    state          TEXT    NOT NULL,
+    stage          TEXT    NOT NULL,
+    reason         TEXT,
+    attempts       INTEGER NOT NULL DEFAULT 0,
+    next_try_at    INTEGER,
+    proved_at      INTEGER,
+    vanished_since INTEGER,
+    updated_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS file_ref_media ON file_ref (media_id);
+CREATE INDEX IF NOT EXISTS file_ref_storage ON file_ref (storage_id);
+CREATE INDEX IF NOT EXISTS file_ref_prefilter ON file_ref (prefilter_key) WHERE prefilter_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS file_ref_stage ON file_ref (stage, next_try_at) WHERE stage <> 'keyed';
 
 -- Every transcript version with its full provenance (decision 5).
 CREATE TABLE IF NOT EXISTS transcript (

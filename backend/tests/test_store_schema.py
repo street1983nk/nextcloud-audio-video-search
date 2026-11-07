@@ -59,7 +59,9 @@ def _real_prov(sha: str) -> Provenance:
 
 def _seed(store: Store, file_id: int, sha: str) -> int:
     media_id = store.media_for_file_sha256(sha)
-    store.upsert_file_ref(file_id, media_id, storage_id="", etag="", size=10, mtime=0, state="sample", reason="sample")
+    store.upsert_file_ref(
+        file_id, media_id, storage_id=0, etag="", size=10, mtime=0, state="sample", stage="keyed", reason="sample"
+    )
     assert store.publish_version(media_id, _sample_prov(sha), _words()).published
     return media_id
 
@@ -79,10 +81,10 @@ def _count(path: Path, table: str, media_id: int) -> int:
 
 
 def test_fresh_database_has_meta_marks(store: Store, tmp_path: Path) -> None:
-    assert store.schema_version() == 1
+    assert store.schema_version() == 2
     with _raw(tmp_path / "state.db") as conn:
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    assert meta["schema_version"] == "1"
+    assert meta["schema_version"] == "2"
     assert "index_generation" in meta
 
 
@@ -122,7 +124,7 @@ def test_open_twice_is_idempotent(tmp_path: Path) -> None:
     first.close()
     second = Store.open(tmp_path / "state.db")
     try:
-        assert second.schema_version() == 1
+        assert second.schema_version() == 2
         assert second.media_for_file_sha256(SHA_A) == media_id
     finally:
         second.close()
@@ -138,7 +140,7 @@ def test_read_only_store_refuses_writes(store: Store, tmp_path: Path) -> None:
     del store
     reader = Store.open(tmp_path / "state.db", read_only=True)
     try:
-        assert reader.schema_version() == 1
+        assert reader.schema_version() == 2
         with pytest.raises(sqlite3.OperationalError):
             reader.media_for_file_sha256(SHA_A)
     finally:
@@ -165,12 +167,18 @@ def test_media_for_file_sha256_rejects_non_hex(store: Store) -> None:
 
 def test_file_ref_roundtrip(store: Store) -> None:
     media_id = store.media_for_file_sha256(SHA_A)
-    store.upsert_file_ref(42, media_id, storage_id="home::alice", etag="e1", size=5, mtime=1, state="sample", reason="")
-    store.upsert_file_ref(43, media_id, storage_id="home::bob", etag="e2", size=5, mtime=1, state="sample", reason=None)
+    store.upsert_file_ref(
+        42, media_id, storage_id=11, etag="e1", size=5, mtime=1, state="sample", stage="keyed", reason=""
+    )
+    store.upsert_file_ref(
+        43, media_id, storage_id=12, etag="e2", size=5, mtime=1, state="sample", stage="keyed", reason=None
+    )
     assert store.media_for_file(42) == media_id
     assert store.media_for_file(99) is None
     assert store.file_ids_for_media(media_id) == [42, 43]
-    store.upsert_file_ref(43, None, storage_id="home::bob", etag="e3", size=5, mtime=2, state="sample", reason=None)
+    store.upsert_file_ref(
+        43, None, storage_id=12, etag="e3", size=5, mtime=2, state="sample", stage="pending", reason=None
+    )
     assert store.file_ids_for_media(media_id) == [42]
     assert store.media_for_file(43) is None
 
@@ -178,9 +186,13 @@ def test_file_ref_roundtrip(store: Store) -> None:
 def test_file_ref_reason_is_a_closed_list(store: Store) -> None:
     assert "sample" in STATE_REASONS
     with pytest.raises(ValueError, match="reason"):
-        store.upsert_file_ref(1, None, storage_id="", etag="", size=0, mtime=0, state="sample", reason="Sitzung.mp4")
+        store.upsert_file_ref(
+            1, None, storage_id=0, etag="", size=0, mtime=0, state="sample", stage="keyed", reason="Sitzung.mp4"
+        )
     with pytest.raises(ValueError, match="state"):
-        store.upsert_file_ref(1, None, storage_id="", etag="", size=0, mtime=0, state="Sitzung.mp4", reason=None)
+        store.upsert_file_ref(
+            1, None, storage_id=0, etag="", size=0, mtime=0, state="Sitzung.mp4", stage="keyed", reason=None
+        )
 
 
 def test_count_current_at_level(store: Store) -> None:
@@ -225,7 +237,9 @@ def test_remove_sample_keeps_media_with_corrections(store: Store, tmp_path: Path
 def test_remove_sample_keeps_media_shared_with_another_file(store: Store, tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     media_id = _seed(store, 7, SHA_A)
-    store.upsert_file_ref(8, media_id, storage_id="", etag="", size=10, mtime=0, state="sample", reason="sample")
+    store.upsert_file_ref(
+        8, media_id, storage_id=0, etag="", size=10, mtime=0, state="sample", stage="keyed", reason="sample"
+    )
     assert store.remove_sample(7) == ("removed", media_id)
     assert store.file_ids_for_media(media_id) == [8]
     assert _count(path, "media", media_id) == 1

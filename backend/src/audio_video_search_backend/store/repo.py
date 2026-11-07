@@ -32,20 +32,41 @@ from typing import Final
 from audio_video_search_backend.model import overlay
 from audio_video_search_backend.model.overlay import Correction, Word
 from audio_video_search_backend.model.provenance import Level, Provenance, validate
+from audio_video_search_backend.store.migrate import migrate_v1_to_v2, stored_version
 
 _LOG: Final = logging.getLogger(__name__)
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 _SCHEMA_FILE: Final = Path(__file__).with_name("schema.sql")
 _BUSY_TIMEOUT_MS: Final = 5000
 
-# Closed list of reason codes for file_ref.reason. These values reach an admin
-# page later, and a free field is the shortest path to a file name where no
-# file name may appear. Phase 1 knows only the walking-skeleton sample; an
-# empty reason is stored as NULL.
-STATE_REASONS: Final = frozenset({"sample"})
-# A state is a short code too, never free text.
-_STATE_CODE: Final = re.compile(r"[a-z][a-z_]{0,31}")
+# Closed lists for file_ref (schema v2). These values reach an admin page
+# later, and a free field is the shortest path to a file name where no file
+# name may appear. An empty reason is stored as NULL.
+#
+# state: whether the reference counts and gives hits. Only active and the
+# walking-skeleton sample do; unreadable (the read proof or the download
+# failed), vanished (the storage is no longer mounted) and trashed never give
+# a hit (T-02-06, _FILE_IDS_FOR_MEDIA).
+STATES: Final = frozenset({"active", "unreadable", "vanished", "trashed", "sample"})
+# stage: where the discovery of this file stands.
+STAGES: Final = frozenset({"pending", "probing", "fetching", "keyed", "failed"})
+STATE_REASONS: Final = frozenset(
+    {
+        "sample",
+        "read_denied",
+        "read_timeout",
+        "access_control",
+        "locked",
+        "gateway_failed",
+        "not_found",
+        "storage_paused",
+        "too_large",
+        "disk_full",
+        "excluded",
+        "size_mismatch",
+    }
+)
 _HEX64: Final = re.compile(r"[0-9a-f]{64}")
 CORRECTION_KINDS: Final = frozenset({"text", "speaker", "sound"})
 _MAX_UID_LENGTH: Final = 64
@@ -67,14 +88,27 @@ _MEDIA_EPOCH: Final = "SELECT epoch FROM media WHERE media_id = ?"
 _BUMP_EPOCH: Final = "UPDATE media SET epoch = epoch + 1 WHERE media_id = ? RETURNING epoch"
 
 _UPSERT_FILE_REF: Final = """
-INSERT INTO file_ref (file_id, media_id, storage_id, etag, size, mtime, state, reason, updated_at)
-VALUES (:file_id, :media_id, :storage_id, :etag, :size, :mtime, :state, :reason, :now)
+INSERT INTO file_ref (file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage,
+                      reason, attempts, next_try_at, proved_at, vanished_since, updated_at)
+VALUES (:file_id, :media_id, :storage_id, :prefilter_key, :reader_uid, :etag, :size, :mtime, :state, :stage,
+        :reason, :attempts, :next_try_at, :proved_at, :vanished_since, :now)
 ON CONFLICT (file_id) DO UPDATE SET
-    media_id = excluded.media_id, storage_id = excluded.storage_id, etag = excluded.etag,
-    size = excluded.size, mtime = excluded.mtime, state = excluded.state,
-    reason = excluded.reason, updated_at = excluded.updated_at
+    media_id = excluded.media_id, storage_id = excluded.storage_id, prefilter_key = excluded.prefilter_key,
+    reader_uid = excluded.reader_uid, etag = excluded.etag, size = excluded.size, mtime = excluded.mtime,
+    state = excluded.state, stage = excluded.stage, reason = excluded.reason, attempts = excluded.attempts,
+    next_try_at = excluded.next_try_at, proved_at = excluded.proved_at, vanished_since = excluded.vanished_since,
+    updated_at = excluded.updated_at
 """
-_FILE_IDS_FOR_MEDIA: Final = "SELECT file_id FROM file_ref WHERE media_id = ? ORDER BY file_id"
+# Only a reference that may give a hit: state active, or a sample of the
+# walking skeleton. unreadable, vanished and trashed never reach the search.
+_FILE_IDS_FOR_MEDIA: Final = """
+SELECT file_id FROM file_ref WHERE media_id = ? AND state IN ('active', 'sample') ORDER BY file_id
+"""
+_FILE_REF_ROW: Final = """
+SELECT file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage, reason,
+       attempts, next_try_at, proved_at, vanished_since, updated_at
+FROM file_ref WHERE file_id = ?
+"""
 _FILE_REF: Final = "SELECT media_id, state FROM file_ref WHERE file_id = ?"
 
 _INSERT_TRANSCRIPT: Final = """
@@ -156,6 +190,28 @@ class PublishResult:
 
 
 @dataclass(frozen=True, slots=True)
+class FileRef:
+    """One row of file_ref, the work stock of the discovery (schema v2)."""
+
+    file_id: int
+    media_id: int | None
+    storage_id: int
+    prefilter_key: str | None
+    reader_uid: str | None
+    etag: str
+    size: int
+    mtime: int
+    state: str
+    stage: str
+    reason: str | None
+    attempts: int
+    next_try_at: int | None
+    proved_at: int | None
+    vanished_since: int | None
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class CurrentRow:
     """The pointer to the current version of one media item."""
 
@@ -210,6 +266,11 @@ def _connect(path: Path, *, read_only: bool) -> sqlite3.Connection:
     return connection
 
 
+def _is_count(value: object) -> bool:
+    """A whole number of zero or more; a bool is not one."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _require_hex64(value: object, field: str) -> str:
     if not isinstance(value, str) or _HEX64.fullmatch(value) is None:
         raise ValueError(f"invalid field: {field}")
@@ -250,11 +311,22 @@ class Store:
 
     @classmethod
     def open(cls, path: Path, *, read_only: bool = False) -> "Store":
-        """Open the database; the writer applies the schema and the version marks."""
+        """Open the database; the writer migrates, applies the schema and the version marks.
+
+        A file of version 1 is lifted to version 2 in one transaction before
+        the schema script runs (store/migrate.py). A reader never migrates, and
+        a version this code does not know is refused before anything is
+        written.
+        """
         connection = _connect(path, read_only=read_only)
         try:
             if not read_only:
                 _enable_wal(connection)
+                found = stored_version(connection)
+                if found == 1:
+                    migrate_v1_to_v2(connection)
+                elif found not in (0, SCHEMA_VERSION):
+                    raise RuntimeError(f"unsupported store schema version {found}")
                 connection.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
                 connection.execute(_SET_META_DEFAULT, ("schema_version", str(SCHEMA_VERSION)))
                 connection.execute(_SET_META_DEFAULT, ("index_generation", "0"))
@@ -345,19 +417,40 @@ class Store:
         file_id: int,
         media_id: int | None,
         *,
-        storage_id: str,
+        storage_id: int,
         etag: str,
         size: int,
         mtime: int,
         state: str,
+        stage: str,
         reason: str | None,
+        prefilter_key: str | None = None,
+        reader_uid: str | None = None,
+        attempts: int = 0,
+        next_try_at: int | None = None,
+        proved_at: int | None = None,
+        vanished_since: int | None = None,
     ) -> None:
-        if _STATE_CODE.fullmatch(state) is None:
+        """Write one reference completely; every code is checked against its closed list first."""
+        if state not in STATES:
             raise ValueError("invalid file_ref field: state")
+        if stage not in STAGES:
+            raise ValueError("invalid file_ref field: stage")
         if reason == "":
             reason = None
         if reason is not None and reason not in STATE_REASONS:
             raise ValueError("invalid file_ref field: reason")
+        if not _is_count(storage_id):
+            raise ValueError("invalid file_ref field: storage_id")
+        if prefilter_key is not None:
+            _require_hex64(prefilter_key, "prefilter_key")
+        if reader_uid is not None and not 0 < len(reader_uid) <= _MAX_UID_LENGTH:
+            raise ValueError("invalid file_ref field: reader_uid")
+        if not _is_count(attempts):
+            raise ValueError("invalid file_ref field: attempts")
+        for name, value in (("next_try_at", next_try_at), ("proved_at", proved_at), ("vanished_since", vanished_since)):
+            if value is not None and not _is_count(value):
+                raise ValueError(f"invalid file_ref field: {name}")
         with self._transaction():
             self._conn.execute(
                 _UPSERT_FILE_REF,
@@ -365,16 +458,29 @@ class Store:
                     "file_id": file_id,
                     "media_id": media_id,
                     "storage_id": storage_id,
+                    "prefilter_key": prefilter_key,
+                    "reader_uid": reader_uid,
                     "etag": etag,
                     "size": size,
                     "mtime": mtime,
                     "state": state,
+                    "stage": stage,
                     "reason": reason,
+                    "attempts": attempts,
+                    "next_try_at": next_try_at,
+                    "proved_at": proved_at,
+                    "vanished_since": vanished_since,
                     "now": _now(),
                 },
             )
 
+    def file_ref(self, file_id: int) -> FileRef | None:
+        """The reference of one file, None when the file has never been seen."""
+        row = self._conn.execute(_FILE_REF_ROW, (file_id,)).fetchone()
+        return None if row is None else FileRef(*row)
+
     def file_ids_for_media(self, media_id: int) -> list[int]:
+        """The files that may give a hit for this content: state active or sample only."""
         return [int(r[0]) for r in self._conn.execute(_FILE_IDS_FOR_MEDIA, (media_id,))]
 
     def media_for_file(self, file_id: int) -> int | None:

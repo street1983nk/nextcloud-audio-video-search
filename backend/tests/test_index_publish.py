@@ -38,7 +38,9 @@ def _words(text: str, start_ms: int = 0) -> list[Word]:
 
 def _publish(store: Store, sha: str, text: str, *, file_id: int, level: Level = Level.SAMPLE) -> tuple[int, int]:
     media_id = store.media_for_file_sha256(sha)
-    store.upsert_file_ref(file_id, media_id, storage_id="", etag="", size=1, mtime=0, state="sample", reason="sample")
+    store.upsert_file_ref(
+        file_id, media_id, storage_id=0, etag="", size=1, mtime=0, state="sample", stage="keyed", reason="sample"
+    )
     prov = Provenance(
         engine="sample" if level == Level.SAMPLE else "parakeet",
         model_sha256=SAMPLE_MODEL_SHA256 if level == Level.SAMPLE else "c" * 64,

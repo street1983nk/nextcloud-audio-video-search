@@ -74,7 +74,7 @@ def test_a_signed_status_request_answers_with_versions_state_and_settings(
         "appVersion": "0.1.0",
         "companion": "ok",
         "companionVersion": "0.1.0",
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "sampleCount": 0,
         "settings": {"processing_enabled": "0", "max_file_size_mb": "100"},
     }

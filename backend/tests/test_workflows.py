@@ -310,7 +310,7 @@ def lifecycle_findings(source: str, redeploy: str) -> list[str]:
         findings.append("the upgrade job does not update the ExApp with app_api:app:update --info-xml")
     if "./occ upgrade" not in upgrade:
         findings.append("the upgrade job does not run occ upgrade")
-    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 1"):
+    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 2"):
         if proof not in upgrade:
             findings.append(f"the upgrade job does not compare {proof} before and after")
     if "rm-data" in source or "rm-data" in redeploy:

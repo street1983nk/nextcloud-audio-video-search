@@ -160,7 +160,9 @@ def test_the_marks_name_schema_analyzer_list_and_format() -> None:
 
 def _seed(store: Store, text: str) -> int:
     media_id = store.media_for_file_sha256(SHA)
-    store.upsert_file_ref(7, media_id, storage_id="", etag="", size=1, mtime=0, state="sample", reason="sample")
+    store.upsert_file_ref(
+        7, media_id, storage_id=0, etag="", size=1, mtime=0, state="sample", stage="keyed", reason="sample"
+    )
     prov = Provenance(
         engine="sample",
         model_sha256=SAMPLE_MODEL_SHA256,
@@ -209,5 +211,5 @@ def test_set_meta_refuses_the_stores_own_marks_and_odd_keys(store: Store, key: s
     with pytest.raises(ValueError, match="key"):
         store.set_meta(key, "1")
 
-    assert store.schema_version() == 1
+    assert store.schema_version() == 2
     assert store.index_generation() == 0

@@ -281,7 +281,7 @@ def test_status_reports_the_fields_of_the_admin_section(api: TestClient) -> None
         "appVersion": "0.1.0",
         "companion": "ok",
         "companionVersion": "0.1.0",
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "sampleCount": 0,
         "settings": {"processing_enabled": "0"},
     }

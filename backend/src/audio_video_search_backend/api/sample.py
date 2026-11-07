@@ -78,7 +78,7 @@ def _seed(opened: Services, file_id: int, sha256: str, size: int, at_ms: int) ->
     store, index = opened.store, opened.index
     media_id = store.media_for_file_sha256(sha256)
     store.upsert_file_ref(
-        file_id, media_id, storage_id="", etag="", size=size, mtime=0, state="sample", reason="sample"
+        file_id, media_id, storage_id=0, etag="", size=size, mtime=0, state="sample", stage="keyed", reason="sample"
     )
     prov = Provenance(
         engine="sample",

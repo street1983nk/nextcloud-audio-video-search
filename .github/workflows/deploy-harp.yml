@@ -791,7 +791,7 @@ jobs:
             "http://localhost:8090/exapps/${BACKEND_APP_ID}/status"
           cat status-before.json; echo
           jq -e --arg v "${PREV_VERSION}" \
-            '.appVersion == $v and .schemaVersion == 1 and .companion == "ok" and .sampleCount >= 1' status-before.json
+            '.appVersion == $v and .schemaVersion == 2 and .companion == "ok" and .sampleCount >= 1' status-before.json
           bash app-src/ci/admin-state.sh state-before.json
           jq -e --arg v "${PREV_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-before.json
           curl -sfS -o search-before.json -u "alice:${ALICE_PASS}" \
@@ -852,7 +852,7 @@ jobs:
           done
           cat status-after.json; echo
           jq -e --arg v "${CURR_VERSION}" --argjson n "${SAMPLE_COUNT}" \
-            '.appVersion == $v and .schemaVersion == 1 and .sampleCount == $n and .companion == "ok"' status-after.json
+            '.appVersion == $v and .schemaVersion == 2 and .sampleCount == $n and .companion == "ok"' status-after.json
           volume="nc_app_${BACKEND_APP_ID}_data"
           created=$(docker volume inspect --format '{{.CreatedAt}}' "${volume}")
           inode=$(docker exec "${EXAPP_CONTAINER}" sh -c 'stat -c %i "${APP_PERSISTENT_STORAGE}/state.db"')
