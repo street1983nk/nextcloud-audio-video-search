@@ -90,6 +90,28 @@ export function position(page: Page): () => Promise<number> {
 	return () => media.evaluate((element: HTMLMediaElement) => (element.readyState >= 1 ? element.currentTime : -1));
 }
 
+/**
+ * The medium is at rest for a screenshot: the seek is done, the frame at the
+ * mark is decoded and the browser stopped fetching. Metadata alone is not
+ * enough: Chromium reaches readyState 1 with currentTime already on the mark
+ * while it is still seeking, and draws its loading spinner over the video.
+ */
+export async function expectMediaSettled(page: Page): Promise<void> {
+	const media = page.locator('#avs-media');
+	await expect
+		.poll(
+			() =>
+				media.evaluate(
+					(element: HTMLMediaElement) =>
+						element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+						!element.seeking &&
+						element.networkState !== HTMLMediaElement.NETWORK_LOADING,
+				),
+			{ timeout: 15_000 },
+		)
+		.toBe(true);
+}
+
 export async function expectAtMark(page: Page): Promise<void> {
 	const at = position(page);
 	await expect.poll(at).toBeGreaterThanOrEqual(MARK_SECONDS - TOLERANCE_SECONDS);

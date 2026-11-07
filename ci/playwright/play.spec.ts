@@ -8,6 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
 	expectAtMark,
+	expectMediaSettled,
 	expectPartialContent,
 	fileIds,
 	gridOnly,
@@ -211,5 +212,6 @@ test('Abspielansicht für die Abnahme @screenshot', async ({ page }, testInfo) =
 	await page.goto(playPath(highContrast ? fileIds.team() : fileIds.webm()));
 
 	await expectAtMark(page);
+	await expectMediaSettled(page);
 	await screenshot(page, 'play', testInfo);
 });
