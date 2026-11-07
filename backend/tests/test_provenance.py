@@ -7,6 +7,7 @@ The order is lexicographic over (epoch, level, config_version); a tie is stale.
 
 import hashlib
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -130,7 +131,7 @@ ROVER = f"{HEX_A},{HEX_B}"
 
 
 def _version_rows(path: Path) -> tuple[int, int]:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         transcripts = conn.execute("SELECT COUNT(*) FROM transcript").fetchone()[0]
         words = conn.execute("SELECT COUNT(*) FROM word").fetchone()[0]
     return transcripts, words

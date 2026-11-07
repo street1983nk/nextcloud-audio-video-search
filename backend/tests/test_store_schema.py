@@ -1,6 +1,8 @@
 """The SQLite schema as source of truth: tables, types, keys, indirection, sample removal."""
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -15,8 +17,11 @@ SHA_B = "b" * 64
 MODEL = "d" * 64
 
 
-def _raw(store_path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(store_path)
+@contextmanager
+def _raw(store_path: Path) -> Iterator[sqlite3.Connection]:
+    """A raw connection that commits like sqlite3's own context manager and is closed afterwards."""
+    with closing(sqlite3.connect(store_path)) as conn, conn:
+        yield conn
 
 
 def _words() -> list[Word]:

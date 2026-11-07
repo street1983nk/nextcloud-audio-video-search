@@ -7,6 +7,7 @@ at word indices. A machine word whose midpoint falls into the span is replaced.
 import itertools
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -207,7 +208,7 @@ def test_overlapping_correction_supersedes(store: Store, tmp_path: Path) -> None
     old = _correct(store, media_id, 250, 900, "Haushaltsplan")
     speaker = _correct(store, media_id, 0, 2000, "Anna", kind="speaker")
     new = _correct(store, media_id, 600, 1300, "plan verabschiedet")
-    with sqlite3.connect(tmp_path / "state.db") as conn:
+    with closing(sqlite3.connect(tmp_path / "state.db")) as conn:
         superseded = conn.execute("SELECT superseded_by FROM correction WHERE correction_id = ?", (old,)).fetchone()[0]
     assert superseded == new
     active = store.active_corrections(media_id)
