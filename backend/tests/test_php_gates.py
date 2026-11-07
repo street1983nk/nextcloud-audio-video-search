@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The eleven rules:
+The thirteen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -28,6 +28,14 @@ The eleven rules:
     ``button:not(...) > span[class^=icon-] { display: block }`` outranks two
     classes and showed a hidden spinner (``!important`` is ruled out by the
     UI-SPEC).
+12. ``getDistinctMounts(``, ``getByAncestorInStorage(`` and the media type
+    query on ``mimetypes`` appear in ``StorageService.php`` only: event, crawl,
+    reconcile and diagnosis ask one place what lies in a mount (RESEARCH,
+    Pitfall 10).
+13. Nothing the container gets from the PHP app carries a key ``path``,
+    ``name``, ``mountPoint`` or ``host``: not the rows of
+    ``QueueService::describe``, not the answers of an ExApp route, not a body
+    ``ExAppService`` sends (T-02-23).
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -443,3 +451,77 @@ def test_self_rule10_fires_on_a_helper_named_status() -> None:
 def test_self_rule11_fires_on_a_hidden_rule_without_an_id() -> None:
     assert weak_hidden_rules(".avs-admin [hidden] {\n\tdisplay: none;\n}") == [".avs-admin [hidden]"]
     assert weak_hidden_rules("#avs-admin [hidden] {\n\tdisplay: none;\n}") == []
+
+
+# -- rules 12 and 13 ----------------------------------------------------------------
+
+MOUNT_HOME = "StorageService.php"
+MOUNT_NEEDLES = ("getDistinctMounts(", "getByAncestorInStorage(", "->from('mimetypes')")
+FORBIDDEN_KEYS = ("path", "name", "mountPoint", "host")
+# An array key in a literal ('path' => ...), a write ($item['path'] = ...) or a
+# list entry of a key constant (ITEM_KEYS = [..., 'path', ...]).
+_FORBIDDEN_KEY = re.compile(
+    r"""(?:(['"])(?P<a>path|name|mountPoint|host)\1\s*=>)"""
+    r"""|(?:\[\s*(['"])(?P<b>path|name|mountPoint|host)\3\s*\]\s*=(?!=))"""
+)
+_KEY_CONSTANT = re.compile(r"const\s+\w*KEYS\s*=\s*\[(?P<body>[^\]]*)\]")
+CONTAINER_FACING = ("QueueService.php", PROXY_HOME)
+
+
+def mount_lookups_outside_home(sources: dict[str, str]) -> list[str]:
+    """Files other than StorageService.php that enumerate mounts, files or media types."""
+    return sorted({name for needle in MOUNT_NEEDLES for name in misplaced(sources, needle, MOUNT_HOME)})
+
+
+def container_facing(sources: dict[str, str]) -> dict[str, str]:
+    """The sources whose arrays reach the container: ExApp routes, describe, ExAppService."""
+    return {
+        name: text for name, text in sources.items() if EXAPP_ATTRIBUTE in text or Path(name).name in CONTAINER_FACING
+    }
+
+
+def forbidden_keys(source: str) -> list[str]:
+    """The keys of FORBIDDEN_KEYS a source writes into an array or lists as a key constant."""
+    found = [match.group("a") or match.group("b") for match in _FORBIDDEN_KEY.finditer(source)]
+    for constant in _KEY_CONSTANT.finditer(source):
+        found += [key for key in FORBIDDEN_KEYS if re.search(rf"""['"]{key}['"]""", constant.group("body"))]
+    return found
+
+
+def test_rule12_mounts_files_and_media_types_are_enumerated_in_storage_service_only() -> None:
+    sources = _lib_sources()
+    storage = sources.get("php/lib/Service/StorageService.php", "")
+    assert all(needle in storage for needle in MOUNT_NEEDLES), "StorageService lost one of its enumerations"
+    assert mount_lookups_outside_home(sources) == []
+
+
+def test_rule13_nothing_the_container_gets_carries_a_path_or_a_name() -> None:
+    facing = container_facing(_lib_sources())
+    assert "php/lib/Service/QueueService.php" in facing
+    assert "php/lib/Controller/QueueController.php" in facing
+    findings = {name: forbidden_keys(text) for name, text in facing.items()}
+    assert {name: keys for name, keys in findings.items() if keys} == {}
+
+
+def test_self_rule12_fires_on_a_second_mount_enumeration() -> None:
+    sources = _lib_sources()
+    sources["php/lib/BackgroundJobs/Other.php"] = "$this->fileAccess->getDistinctMounts([], true);"
+    sources["php/lib/Service/Other.php"] = "$qb->select('id')->from('mimetypes');"
+
+    assert mount_lookups_outside_home(sources) == ["php/lib/BackgroundJobs/Other.php", "php/lib/Service/Other.php"]
+
+
+def test_self_rule13_fires_on_a_path_key_in_queue_service() -> None:
+    sources = _lib_sources()
+    name = "php/lib/Service/QueueService.php"
+    assert forbidden_keys(sources[name]) == []
+    staged = [
+        "$item['path'] = $entry->getPath();",
+        "return ['fileId' => $id, 'name' => $file->getName()];",
+        "public const ITEM_KEYS = ['queueId', 'mountPoint'];",
+        '$answer["host"] = $host;',
+    ]
+    for line in staged:
+        assert len(forbidden_keys(sources[name] + "\n" + line)) == 1, line
+    # A comparison or a variable of that name is no key.
+    assert forbidden_keys("if ($row['path'] === $x) { $path = 1; }") == []
