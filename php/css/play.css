@@ -126,9 +126,15 @@
 	min-width: 0;
 }
 
-.avs-banner__title,
-.avs-banner__text {
+/* Two classes on purpose: the settings page styles ".section p" with the
+   muted text colour, a margin of 1em and a maximum width, and that selector
+   outranks a single class. The text keeps the colour of the status pair of
+   its banner, on the admin page as on the playback page. */
+.avs-banner .avs-banner__title,
+.avs-banner .avs-banner__text {
+	max-width: none;
 	margin: 0;
+	color: inherit;
 	line-height: var(--default-line-height);
 	overflow-wrap: anywhere;
 }
@@ -142,7 +148,9 @@
 }
 
 /* The one action of a banner. Border and text share currentColor, so the pair
-   of the banner surface keeps carrying the contrast in both modes. */
+   of the banner surface keeps carrying the contrast in both modes. On the
+   playback page it stays this way; the admin section gives its action the
+   accent (admin.css). */
 .avs-banner__action {
 	display: inline-flex;
 	align-items: center;
