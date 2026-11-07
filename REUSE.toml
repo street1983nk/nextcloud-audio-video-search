@@ -17,3 +17,11 @@ path = "docker/start.sh"
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Nextcloud GmbH and Nextcloud contributors"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Icon path data from Material Design Icons (Pictogrammers), Apache-2.0, inlined
+# in the PHP templates beside our own AGPL code.
+[[annotations]]
+path = ["php/templates/admin.php", "php/templates/play.php"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2026 street1983nk", "Pictogrammers and Material Design Icons contributors"]
+SPDX-License-Identifier = "AGPL-3.0-or-later AND Apache-2.0"

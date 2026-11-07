@@ -56,3 +56,5 @@ Bestandteile Dritter im Image des Backends:
 
 - Deutsche Wortliste `wngerman` (Debian), GPL-2.0-or-later, für die Zerlegung zusammengesetzter Wörter; Lizenztext im Image unter `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
 - Für die Transkription sind in späteren Versionen Parakeet TDT 0.6B v3 von NVIDIA (CC-BY-4.0) und Whisper (MIT) vorgesehen. Phase 1 enthält noch kein Modell.
+
+Symbole der PHP-App: Material Design Icons von Pictogrammers, Apache-2.0, Lizenztext unter [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).

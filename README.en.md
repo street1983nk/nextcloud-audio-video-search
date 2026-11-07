@@ -56,3 +56,5 @@ Third-party parts in the backend image:
 
 - German word list `wngerman` (Debian), GPL-2.0-or-later, for splitting compound words; licence text in the image at `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
 - For transcription, later versions are planned to use Parakeet TDT 0.6B v3 by NVIDIA (CC-BY-4.0) and Whisper (MIT). Phase 1 contains no model yet.
+
+Icons of the PHP app: Material Design Icons by Pictogrammers, Apache-2.0, licence text in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).

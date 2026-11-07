@@ -56,3 +56,5 @@ Composants tiers dans l'image du backend :
 
 - Liste de mots allemande `wngerman` (Debian), GPL-2.0-or-later, pour décomposer les mots composés ; texte de licence dans l'image sous `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
 - Pour la transcription, les versions ultérieures prévoient Parakeet TDT 0.6B v3 de NVIDIA (CC-BY-4.0) et Whisper (MIT). La phase 1 ne contient encore aucun modèle.
+
+Icônes de l'application PHP : Material Design Icons de Pictogrammers, Apache-2.0, texte de licence dans [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
