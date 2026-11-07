@@ -306,4 +306,152 @@ final class ExAppServiceTest extends TestCase {
 		);
 		self::assertNull($this->service($this->json(['result' => 'gone', 'mediaId' => null]))->removeSample('alice', 11));
 	}
+
+	// -- the admin routes of occ (plan 02-10) ---------------------------------------
+
+	/**
+	 * The service with the transport scripted and an admin to ask as.
+	 *
+	 * @param array<mixed>|IResponse|null $answer
+	 */
+	private function adminService(array|IResponse|null $answer, ?string $admin = 'root'): ExAppService&MockObject {
+		$appManager = $this->createMock(IAppManager::class);
+		$appManager->method('getAppVersion')->willReturn('0.1.0');
+
+		$service = $this->getMockBuilder(ExAppService::class)
+			->setConstructorArgs([
+				$appManager,
+				$this->createMock(IUserManager::class),
+				$this->appConfig,
+				$this->createMock(LoggerInterface::class),
+				$this->createMock(IGroupManager::class),
+				$this->createMock(ITimeFactory::class),
+			])
+			->onlyMethods(['proxyRequest', 'firstAdmin'])
+			->getMock();
+		$service->method('firstAdmin')->willReturn($admin);
+		$service->method('proxyRequest')->willReturnCallback(
+			function (string $path, string $userId, string $method, array $params, float $timeout) use ($answer): array|IResponse|null {
+				$this->calls[] = ['path' => $path, 'userId' => $userId, 'method' => $method, 'params' => $params, 'timeout' => $timeout];
+
+				return $answer;
+			},
+		);
+
+		return $service;
+	}
+
+	/** @return array<string, mixed> */
+	private static function entry(array $override = []): array {
+		return $override + ['fileId' => 11, 'mediaId' => 3, 'storageId' => 2, 'state' => 'active', 'stage' => 'keyed', 'reason' => null];
+	}
+
+	/** @return array<string, mixed> */
+	private static function coverageAnswer(array $override = []): array {
+		return $override + [
+			'contents' => 4,
+			'transcribed' => 1,
+			'files' => 6,
+			'byState' => ['active' => 6, 'sample' => 0, 'trashed' => 0, 'unreadable' => 1, 'vanished' => 0],
+			'byStage' => ['failed' => 1, 'fetching' => 0, 'keyed' => 3, 'pending' => 3, 'probing' => 0],
+			'dueWork' => 3,
+		];
+	}
+
+	public function testWorkstockAsksAsAnAdminWithGetAndTheQuery(): void {
+		$service = $this->adminService($this->json(['files' => [self::entry()], 'next' => 11]));
+
+		$page = $service->workstock(['state' => 'active', 'after' => 5, 'limit' => 1]);
+
+		self::assertSame(['files' => [self::entry()], 'next' => 11], $page);
+		self::assertSame('/workstock', $this->calls[0]['path']);
+		self::assertSame('root', $this->calls[0]['userId']);
+		self::assertSame('GET', $this->calls[0]['method']);
+		self::assertSame(['state' => 'active', 'after' => 5, 'limit' => 1], $this->calls[0]['params']);
+		self::assertSame(ExAppService::ADMIN_TIMEOUT_SECONDS, $this->calls[0]['timeout']);
+		self::assertSame(10.0, ExAppService::ADMIN_TIMEOUT_SECONDS);
+	}
+
+	public function testWorkstockRefusesAQueryOutsideTheContractWithoutACall(): void {
+		$service = $this->adminService($this->json(['files' => [], 'next' => null]));
+
+		self::assertNull($service->workstock(['state' => 'deleted']));
+		self::assertNull($service->workstock(['after' => -1]));
+		self::assertNull($service->workstock(['limit' => 0]));
+		self::assertNull($service->workstock(['limit' => 1001]));
+		self::assertSame([], $this->calls);
+	}
+
+	public function testWorkstockWithoutAnAdminMakesNoCall(): void {
+		$service = $this->adminService($this->json(['files' => [], 'next' => null]), null);
+
+		self::assertNull($service->workstock([]));
+		self::assertSame([], $this->calls);
+	}
+
+	/** @return array<string, array{array<mixed>}> */
+	public static function malformedPages(): array {
+		return [
+			'extra key' => [['files' => [], 'next' => null, 'path' => '/x']],
+			'missing next' => [['files' => []]],
+			'files not a list' => [['files' => ['a' => self::entry()], 'next' => null]],
+			'next zero' => [['files' => [], 'next' => 0]],
+			'entry with a path' => [['files' => [self::entry() + ['path' => '/alice/files/a.mp4']], 'next' => null]],
+			'entry without reason' => [['files' => [array_diff_key(self::entry(), ['reason' => true])], 'next' => null]],
+			'unknown state' => [['files' => [self::entry(['state' => 'gone'])], 'next' => null]],
+			'unknown stage' => [['files' => [self::entry(['stage' => 'done'])], 'next' => null]],
+			'reason with text' => [['files' => [self::entry(['reason' => 'Sitzung.mp4 denied'])], 'next' => null]],
+			'file id zero' => [['files' => [self::entry(['fileId' => 0])], 'next' => null]],
+			'media id as text' => [['files' => [self::entry(['mediaId' => '3'])], 'next' => null]],
+			'negative storage' => [['files' => [self::entry(['storageId' => -1])], 'next' => null]],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider('malformedPages')]
+	public function testAPageWithAnythingOutOfShapeIsNoPage(array $answer): void {
+		self::assertNull($this->adminService($this->json($answer))->workstock([]));
+	}
+
+	public function testCoverageHasItsFixedKeysInTheOrderOfTheLists(): void {
+		$service = $this->adminService($this->json(self::coverageAnswer()));
+
+		$coverage = $service->coverage();
+
+		self::assertNotNull($coverage);
+		self::assertSame(ExAppService::COVERAGE_KEYS, array_keys($coverage));
+		self::assertSame(ExAppService::WORK_STATES, array_keys($coverage['byState']));
+		self::assertSame(ExAppService::WORK_STAGES, array_keys($coverage['byStage']));
+		self::assertSame(1, $coverage['transcribed']);
+		self::assertSame('/coverage', $this->calls[0]['path']);
+		self::assertSame('GET', $this->calls[0]['method']);
+	}
+
+	/** @return array<string, array{array<mixed>}> */
+	public static function malformedCoverage(): array {
+		return [
+			'extra key' => [self::coverageAnswer() + ['name' => 'x']],
+			'negative' => [self::coverageAnswer(['files' => -1])],
+			'text number' => [self::coverageAnswer(['contents' => '4'])],
+			'over 100 percent' => [self::coverageAnswer(['transcribed' => 5])],
+			'unknown state' => [self::coverageAnswer(['byState' => ['active' => 1, 'gone' => 0, 'sample' => 0, 'trashed' => 0, 'unreadable' => 0]])],
+			'missing stage' => [self::coverageAnswer(['byStage' => ['keyed' => 1]])],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider('malformedCoverage')]
+	public function testCoverageOutOfShapeIsNoAnswer(array $answer): void {
+		self::assertNull($this->adminService($this->json($answer))->coverage());
+	}
+
+	public function testAnUnreachableBackendIsNoCoverageAndNoPage(): void {
+		self::assertNull($this->adminService(['error' => 'refused'])->coverage());
+		self::assertNull($this->adminService(['error' => 'refused'])->workstock([]));
+		self::assertNull($this->adminService($this->answer('{}', 500))->coverage());
+	}
+
+	public function testTheClosedListsAreTheOnesOfTheContainer(): void {
+		// backend/src/audio_video_search_backend/store/repo.py STATES and STAGES.
+		self::assertSame(['active', 'unreadable', 'vanished', 'trashed', 'sample'], ExAppService::WORK_STATES);
+		self::assertSame(['pending', 'probing', 'fetching', 'keyed', 'failed'], ExAppService::WORK_STAGES);
+	}
 }

@@ -585,3 +585,26 @@ def test_the_workstock_states_are_the_closed_list_of_the_store() -> None:
     from audio_video_search_backend.store.repo import STATES
 
     assert set(get_args(workstock.WorkstockState.__value__)) == STATES
+
+
+def _php_list(name: str) -> list[str]:
+    import re
+
+    from tests.conftest import REPO_ROOT
+
+    source = (REPO_ROOT / "php" / "lib" / "Service" / "ExAppService.php").read_text(encoding="utf-8")
+    match = re.search(rf"const {name} = \[(?P<body>[^\]]*)\];", source)
+    assert match is not None, name
+    return re.findall(r"'([A-Za-z_]+)'", match.group("body"))
+
+
+def test_the_php_app_checks_the_same_closed_lists_and_keys() -> None:
+    """ExAppService (plan 02-10) validates /workstock and /coverage against these lists."""
+    from audio_video_search_backend.store import coverage as counting
+    from audio_video_search_backend.store.repo import STAGES, STATES
+
+    assert set(_php_list("WORK_STATES")) == STATES
+    assert set(_php_list("WORK_STAGES")) == STAGES
+    assert _php_list("WORKSTOCK_KEYS") == ["fileId", "mediaId", "storageId", "state", "stage", "reason"]
+    wire = counting.Coverage(0, 0, 0, {}, {}, 0).as_wire()
+    assert set(_php_list("COVERAGE_KEYS")) == set(wire)

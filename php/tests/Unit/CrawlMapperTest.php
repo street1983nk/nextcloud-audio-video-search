@@ -81,4 +81,15 @@ final class CrawlMapperTest extends TestCase {
 	public function testAnUnknownMountHasNoRow(): void {
 		self::assertNull($this->mapper->find(4, 12));
 	}
+
+	public function testProgressCountsFinishedAndOpenCrawls(): void {
+		self::assertSame(['finished' => 0, 'open' => 0], $this->mapper->progress());
+
+		$this->mapper->upsert(3, 11);
+		$this->mapper->upsert(4, 12);
+		$this->mapper->upsert(5, 13);
+		$this->mapper->finish(4, 12);
+
+		self::assertSame(['finished' => 1, 'open' => 2], $this->mapper->progress());
+	}
 }

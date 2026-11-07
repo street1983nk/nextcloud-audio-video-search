@@ -99,6 +99,26 @@ class CrawlMapper {
 		];
 	}
 
+	/**
+	 * How many first crawls are finished and how many are still open, for
+	 * occ audio_video_search:status. Numbers only.
+	 *
+	 * @return array{finished: int, open: int}
+	 */
+	public function progress(): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectAlias($qb->func()->count('*'), 'all_rows')
+			->selectAlias($qb->func()->count('finished_at'), 'finished_rows')
+			->from(self::TABLE);
+		$result = $qb->executeQuery();
+		$row = $result->fetch();
+		$result->closeCursor();
+		$all = $row === false ? 0 : (int)$row['all_rows'];
+		$finished = $row === false ? 0 : (int)$row['finished_rows'];
+
+		return ['finished' => $finished, 'open' => $all - $finished];
+	}
+
 	private function key(IQueryBuilder $qb, int $storageId, int $rootId): string {
 		return (string)$qb->expr()->andX(
 			$qb->expr()->eq('storage_id', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)),

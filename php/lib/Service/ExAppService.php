@@ -40,6 +40,8 @@ use Psr\Log\LoggerInterface;
  *   POST /sample         {fileId, userId, atMs} -> {result, mediaId, indexRev} | {error}
  *   POST /sample/remove  {fileId}              -> {result, mediaId}
  *   GET  /status                               -> {appVersion, companion, sampleCount, ...}
+ *   GET  /workstock      ?state&after&limit    -> {files: [{fileId, mediaId, storageId, state, stage, reason}], next}
+ *   GET  /coverage                             -> {contents, transcribed, files, byState, byStage, dueWork}
  *
  * The state of the other half (plan 07, research decision 6) is read in two
  * steps: the registration in AppAPI first, without a network call, then
@@ -68,6 +70,20 @@ class ExAppService {
 	 * and hash it. 1.5 s would refuse any real recording.
 	 */
 	public const SAMPLE_TIMEOUT_SECONDS = 120.0;
+
+	/** Ten seconds for the two admin routes of occ (plan 02-10): counting 140,000 rows takes well under one. */
+	public const ADMIN_TIMEOUT_SECONDS = 10.0;
+
+	/** The closed lists of the container (backend store/repo.py STATES, STAGES). */
+	public const WORK_STATES = ['active', 'unreadable', 'vanished', 'trashed', 'sample'];
+	public const WORK_STAGES = ['pending', 'probing', 'fetching', 'keyed', 'failed'];
+	/** The keys of one work stock entry, exactly. */
+	public const WORKSTOCK_KEYS = ['fileId', 'mediaId', 'storageId', 'state', 'stage', 'reason'];
+	/** The keys of the coverage answer, exactly. */
+	public const COVERAGE_KEYS = ['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork'];
+	public const WORKSTOCK_MAX_LIMIT = 1000;
+	/** A reason is a code of the closed list of the container, never free text. */
+	private const REASON_PATTERN = '/^[a-z_]{1,32}$/D';
 
 	public const LOCKSTEP_MATCH = 'match';
 	public const LOCKSTEP_DRIFT = 'drift';
@@ -265,6 +281,177 @@ class ExAppService {
 		}
 
 		return ['result' => $result, 'mediaId' => $mediaId];
+	}
+
+	/**
+	 * One page of the work stock of the container (occ audio_video_search:files).
+	 *
+	 * $query takes state (a code of WORK_STATES), after (>= 0) and limit (1 to
+	 * 1000); anything else is not sent. The answer is checked key by key and
+	 * value by value: a page with one entry out of shape is no page at all,
+	 * so the command never prints a half answer.
+	 *
+	 * @param array{state?: string, after?: int, limit?: int} $query
+	 * @return array{files: list<array{fileId: int, mediaId: ?int, storageId: int, state: string, stage: string, reason: ?string}>, next: ?int}|null
+	 */
+	public function workstock(array $query): ?array {
+		$params = [];
+		if (isset($query['state'])) {
+			if (!in_array($query['state'], self::WORK_STATES, true)) {
+				return null;
+			}
+			$params['state'] = $query['state'];
+		}
+		if (isset($query['after'])) {
+			if ($query['after'] < 0) {
+				return null;
+			}
+			$params['after'] = $query['after'];
+		}
+		if (isset($query['limit'])) {
+			if ($query['limit'] < 1 || $query['limit'] > self::WORKSTOCK_MAX_LIMIT) {
+				return null;
+			}
+			$params['limit'] = $query['limit'];
+		}
+
+		$uid = $this->firstAdmin();
+		if ($uid === null) {
+			return null;
+		}
+		$answer = $this->call('/workstock', $uid, $params, self::ADMIN_TIMEOUT_SECONDS, 'GET');
+		if ($answer === null || !self::hasExactKeys($answer, ['files', 'next'])) {
+			return null;
+		}
+
+		$next = $answer['next'];
+		if ($next !== null && (!is_int($next) || $next <= 0)) {
+			return null;
+		}
+		if (!is_array($answer['files']) || !array_is_list($answer['files'])) {
+			return null;
+		}
+
+		$files = [];
+		foreach ($answer['files'] as $entry) {
+			$checked = self::workstockEntry($entry);
+			if ($checked === null) {
+				$this->logger->warning('Audio & Video Search: malformed work stock entry, page dropped');
+				return null;
+			}
+			$files[] = $checked;
+		}
+
+		return ['files' => $files, 'next' => $next];
+	}
+
+	/**
+	 * @return array{fileId: int, mediaId: ?int, storageId: int, state: string, stage: string, reason: ?string}|null
+	 */
+	private static function workstockEntry(mixed $entry): ?array {
+		if (!is_array($entry) || !self::hasExactKeys($entry, self::WORKSTOCK_KEYS)) {
+			return null;
+		}
+		$fileId = $entry['fileId'];
+		$mediaId = $entry['mediaId'];
+		$storageId = $entry['storageId'];
+		$state = $entry['state'];
+		$stage = $entry['stage'];
+		$reason = $entry['reason'];
+		if (!is_int($fileId) || $fileId <= 0
+			|| ($mediaId !== null && (!is_int($mediaId) || $mediaId <= 0))
+			|| !is_int($storageId) || $storageId < 0
+			|| !is_string($state) || !in_array($state, self::WORK_STATES, true)
+			|| !is_string($stage) || !in_array($stage, self::WORK_STAGES, true)
+			|| ($reason !== null && (!is_string($reason) || preg_match(self::REASON_PATTERN, $reason) !== 1))) {
+			return null;
+		}
+
+		return [
+			'fileId' => $fileId,
+			'mediaId' => $mediaId,
+			'storageId' => $storageId,
+			'state' => $state,
+			'stage' => $stage,
+			'reason' => $reason,
+		];
+	}
+
+	/**
+	 * The numbers of D-02-06 from the container (occ audio_video_search:status).
+	 *
+	 * Every key of COVERAGE_KEYS, a whole number of zero or more each, byState
+	 * and byStage with exactly the codes of the closed lists, and transcribed
+	 * never above contents. Anything else is no answer.
+	 *
+	 * @return array{contents: int, transcribed: int, files: int, byState: array<string, int>, byStage: array<string, int>, dueWork: int}|null
+	 */
+	public function coverage(): ?array {
+		$uid = $this->firstAdmin();
+		if ($uid === null) {
+			return null;
+		}
+		$answer = $this->call('/coverage', $uid, [], self::ADMIN_TIMEOUT_SECONDS, 'GET');
+		if ($answer === null || !self::hasExactKeys($answer, self::COVERAGE_KEYS)) {
+			return null;
+		}
+
+		foreach (['contents', 'transcribed', 'files', 'dueWork'] as $key) {
+			if (!is_int($answer[$key]) || $answer[$key] < 0) {
+				return null;
+			}
+		}
+		$byState = self::countsOf($answer['byState'], self::WORK_STATES);
+		$byStage = self::countsOf($answer['byStage'], self::WORK_STAGES);
+		if ($byState === null || $byStage === null || $answer['transcribed'] > $answer['contents']) {
+			$this->logger->warning('Audio & Video Search: malformed coverage answer');
+			return null;
+		}
+
+		return [
+			'contents' => $answer['contents'],
+			'transcribed' => $answer['transcribed'],
+			'files' => $answer['files'],
+			'byState' => $byState,
+			'byStage' => $byStage,
+			'dueWork' => $answer['dueWork'],
+		];
+	}
+
+	/**
+	 * True when $array has exactly these keys, in any order.
+	 *
+	 * @param array<mixed> $array
+	 * @param list<string> $keys
+	 */
+	private static function hasExactKeys(array $array, array $keys): bool {
+		$found = array_map('strval', array_keys($array));
+		sort($found);
+		sort($keys);
+
+		return $found === $keys;
+	}
+
+	/**
+	 * A map of exactly the given codes to whole numbers of zero or more, in
+	 * the order of the list.
+	 *
+	 * @param list<string> $codes
+	 * @return array<string, int>|null
+	 */
+	private static function countsOf(mixed $map, array $codes): ?array {
+		if (!is_array($map) || count($map) !== count($codes)) {
+			return null;
+		}
+		$counts = [];
+		foreach ($codes as $code) {
+			if (!array_key_exists($code, $map) || !is_int($map[$code]) || $map[$code] < 0) {
+				return null;
+			}
+			$counts[$code] = $map[$code];
+		}
+
+		return $counts;
 	}
 
 	// -- lockstep ---------------------------------------------------------------
