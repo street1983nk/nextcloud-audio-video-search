@@ -34,6 +34,8 @@ export const users = {
 	carol: (): User => ({ name: 'carol', password: env('CAROL_PASS') }),
 	mallory: (): User => ({ name: 'mallory', password: env('MALLORY_PASS') }),
 	dora: (): User => ({ name: 'dora', password: env('DORA_PASS') }),
+	elke: (): User => ({ name: 'elke', password: env('ELKE_PASS') }),
+	fleur: (): User => ({ name: 'fleur', password: env('FLEUR_PASS') }),
 };
 
 export const fileIds = {
@@ -49,17 +51,28 @@ export function isHighContrast(testInfo: TestInfo): boolean {
 
 /**
  * The review user of a project beside the English grid, else null: dora for
- * high contrast. ci/seed.sh gives her the reach of every screenshot: admin,
- * member of the team folder, the shares of locked.webm and broken.webm, and
- * no access to alice's own tone-90s.webm.
+ * high contrast, elke for German, fleur for French. ci/seed.sh gives all three
+ * the reach of every screenshot (admin, member of the team folder, the shares
+ * of locked.webm and broken.webm, no access to alice's own tone-90s.webm) and
+ * sets the theme or the language.
  */
 export function reviewer(testInfo: TestInfo): User | null {
-	return isHighContrast(testInfo) ? users.dora() : null;
+	if (isHighContrast(testInfo)) {
+		return users.dora();
+	}
+	switch (testInfo.project.metadata?.language) {
+		case 'de':
+			return users.elke();
+		case 'fr':
+			return users.fleur();
+		default:
+			return null;
+	}
 }
 
-/** Tests that are not part of the screenshot grid skip the high contrast project. */
+/** Tests that are not part of the screenshot grid skip the review projects. */
 export function gridOnly(testInfo: TestInfo): void {
-	test.skip(isHighContrast(testInfo), 'the high contrast project only takes screenshots');
+	test.skip(reviewer(testInfo) !== null, 'the review projects only take screenshots');
 }
 
 export function playPath(fileId: string): string {

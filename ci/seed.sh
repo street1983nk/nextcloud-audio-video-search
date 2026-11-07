@@ -13,19 +13,23 @@
 #   dora     admin and member of "team", receives locked.webm and broken.webm,
 #            high contrast theme, only for the screenshots of the high
 #            contrast project
+#   elke     like dora, language de_DE, for the German screenshots
+#   fleur    like dora, language fr_FR, for the French screenshots
 #
 # The passwords come out of the job variables of the throwaway instance, never
 # out of repository secrets. The file ids land in fileids.env for the later
 # steps; this file is the only place that pairs an id with a test file.
 #
 # usage: NC_URL=... OCC=./occ MEDIA_DIR=... ALICE_PASS=... BOB_PASS=...
-#        CAROL_PASS=... MALLORY_PASS=... DORA_PASS=... ci/seed.sh
+#        CAROL_PASS=... MALLORY_PASS=... DORA_PASS=... ELKE_PASS=...
+#        FLEUR_PASS=... ci/seed.sh
 set -euo pipefail
 
 : "${NC_URL:?NC_URL is required}"
 : "${OCC:?OCC is required}"
 : "${MEDIA_DIR:?MEDIA_DIR is required (output of ci/make-testmedia.sh)}"
 : "${ALICE_PASS:?}" "${BOB_PASS:?}" "${CAROL_PASS:?}" "${MALLORY_PASS:?}" "${DORA_PASS:?}"
+: "${ELKE_PASS:?}" "${FLEUR_PASS:?}"
 FILEIDS_ENV="${FILEIDS_ENV:-$(dirname "$0")/fileids.env}"
 SERVER_VERSION="${SERVER_VERSION:-}"
 AT_SECONDS=42
@@ -51,13 +55,23 @@ add_user bob "${BOB_PASS}"
 add_user carol "${CAROL_PASS}"
 add_user mallory "${MALLORY_PASS}"
 add_user dora "${DORA_PASS}"
+add_user elke "${ELKE_PASS}"
+add_user fleur "${FLEUR_PASS}"
 
 occ group:add "${TEAM_GROUP}"
 occ group:adduser "${TEAM_GROUP}" alice
 occ group:adduser "${TEAM_GROUP}" carol
-occ group:adduser "${TEAM_GROUP}" dora
-occ group:adduser admin dora
+for reviewer in dora elke fleur; do
+	occ group:adduser "${TEAM_GROUP}" "${reviewer}"
+	occ group:adduser admin "${reviewer}"
+done
 occ user:setting dora theming enabled-themes '["light-highcontrast"]'
+# Set before the first login: Nextcloud stores the browser language as the
+# user language on the first request of a user who has none.
+occ user:setting elke core lang de_DE
+occ user:setting elke core locale de_DE
+occ user:setting fleur core lang fr
+occ user:setting fleur core locale fr_FR
 
 # -- the team folder ------------------------------------------------------------
 
@@ -115,9 +129,9 @@ share --data-urlencode 'path=/tone-90s.webm' --data-urlencode 'shareWith=bob' \
 share --data-urlencode 'path=/locked.webm' --data-urlencode 'shareWith=bob' \
 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' \
 	--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
-# The review user dora reaches every banner of the playback page: the same
-# two shares as a recipient, next to the team folder.
-for reviewer in dora; do
+# The review users reach every banner of the playback page: the same two
+# shares as a recipient, next to the team folder.
+for reviewer in dora elke fleur; do
 	share --data-urlencode 'path=/locked.webm' --data-urlencode "shareWith=${reviewer}" 		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' 		--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
 	share --data-urlencode 'path=/broken.webm' --data-urlencode "shareWith=${reviewer}" 		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
 done

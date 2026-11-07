@@ -17,7 +17,8 @@ name: Deploy through HaRP
 #   - WebDAV answers a byte range with 206, so the playback page can seek,
 #   - Playwright walks the three UI surfaces (search hit, playback page, admin
 #     section) and leaves screenshots at 375, 768 and 1280 px, light and dark,
-#     plus high contrast at 1280, as an artifact for the owner's review,
+#     plus high contrast at 1280 and German and French at 375 px light and
+#     1280 px dark, as an artifact for the owner's review,
 #   - no test file name ends up in the Nextcloud log or the container log,
 #   - lockstep at runtime (plan 10): a backend a minor apart gives
 #     version_drift and an empty search, a patch apart gives
@@ -60,13 +61,15 @@ env:
   CAROL_PASS: 'avs-ci-carol-2026-11'
   MALLORY_PASS: 'avs-ci-mallory-2026-11'
   DORA_PASS: 'avs-ci-dora-2026-11'
+  ELKE_PASS: 'avs-ci-elke-2026-11'
+  FLEUR_PASS: 'avs-ci-fleur-2026-11'
 
 jobs:
   deploy-harp:
     name: deploy-harp ${{ matrix.server-version }} ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     # An estimate until the first green run measures it: image build, HaRP,
-    # seed, the browser download, seven Playwright projects and the three
+    # seed, the browser download, eleven Playwright projects and the three
     # registrations of the drift steps (plan 10).
     timeout-minutes: 75
     strategy:
