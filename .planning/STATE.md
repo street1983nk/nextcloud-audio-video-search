@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-07-PLAN.md (Welle 2 fertig)
-last_updated: "2026-11-07T10:43:05.812Z"
+stopped_at: Completed 02-08-PLAN.md
+last_updated: "2026-11-07T10:58:00.942Z"
 last_activity: 2026-11-07
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 20
+  completed_plans: 21
   percent: 9
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 7 of 22 (planned, 11 waves)
+Plan: 8 of 22 (planned, 11 waves)
 Status: Ready to execute
 Last activity: 2026-11-07
 
-Progress: [██████░░░░] 57%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [██████░░░░] 57%
 | Phase 02 P05 | 50 min | 2 tasks | 9 files |
 | Phase 02 P06 | 45 min | 2 tasks | 7 files |
 | Phase 02 P07 | 35 min | 2 tasks | 6 files |
+| Phase 02 P08 | 70 min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-05: Intake quittiert nach dem Commit; HTTP der Warteschlange in nc.py, Vertrag in nc_queue.py; kein Claim vor companion ok
 - [Phase 02]: 02-06: Erst-Crawl nur bei Backend ok/version_patch_differs (firstAdmin öffentlich); Cursor in avs_crawl, verlorener Crawl-Job wird vom Scheduler ersetzt
 - [Phase 02]: 02-07: Cache-Ereignisse per Pfadendung vorgefiltert, Removed nur für die Mountmenge; gelöschter Nutzer nur Hinweis sweep_hint_at für den Sweep
+- [Phase 02]: 02-08: Erfassung über eigenen Leser mit Claim-Identität (etag, size, mtime); Grund eines 403 im Header X-AVS-Reason; Wartezeit ab 60 s verdoppelt bis 6 h, fünf Versuche, access_control 300 s
 
 ### Pending Todos
 
@@ -136,6 +138,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-07T10:43:05.793Z
-Stopped at: Completed 02-07-PLAN.md (Welle 2 fertig)
+Last session: 2026-11-07T10:58:00.911Z
+Stopped at: Completed 02-08-PLAN.md
 Resume file: None
