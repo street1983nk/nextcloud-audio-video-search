@@ -278,3 +278,89 @@ def test_the_leak_rule_fires_on_an_image_artifact_or_a_cache_export() -> None:
         "leak-control contains cache-to",
         "leak-control uploads the image in 'Upload the logs'",
     ]
+
+
+# -- the topology (plan 02-01, task 2) ------------------------------------------
+
+TOPOLOGY = REPO_ROOT / "ci" / "discovery" / "topology.sh"
+OPERATIONS = (
+    "upload_new",
+    "overwrite",
+    "copy_in_home",
+    "rename_in_home",
+    "tag_file",
+    "move_home_to_team",
+    "trash_file",
+    "restore_file",
+    "access_control",
+    "exclude_user_after",
+    "exclude_storage_after",
+    "exclude_after",
+    "revoke_cem",
+    "vanish_cem",
+    "delete_dan",
+    "foreign_change",
+    "reattach",
+)
+SUBCOMMANDS = ("samba", "part-a", "part-b", "control")
+TOPOLOGY_WORDS = (
+    "amazons3",
+    " local ",
+    "password::sessioncredentials",
+    "password::logincredentials",
+    "smbcacls",
+    "acl_xattr",
+    "groupfolders:permissions",
+    "workflowengine",
+    "timeout=20",
+    "files_external_allow_create_new_local",
+    "oc_credentials",
+)
+
+
+def topology_findings(script: str) -> list[str]:
+    """Every case of D-02-07 the topology script does not build."""
+    findings: list[str] = []
+    if not script.startswith("#!/usr/bin/env bash\n") or "\nset -euo pipefail\n" not in script:
+        findings.append("topology.sh is not a strict bash script")
+    findings += [
+        f"topology.sh has no function {name}"
+        for name in OPERATIONS
+        if not re.search(rf"^{name}\(\) \{{$", script, re.MULTILINE)
+    ]
+    operations = re.search(r"^OPERATIONS=\((.*?)\)$", script, re.MULTILINE | re.DOTALL)
+    listed = set(operations.group(1).split()) if operations else set()
+    findings += [f"topology.sh does not dispatch {name}" for name in OPERATIONS if name not in listed]
+    findings += [f"topology.sh has no subcommand {name}" for name in SUBCOMMANDS if f"\t\t{name}) cmd_" not in script]
+    findings += [f"topology.sh does not use {word.strip()}" for word in TOPOLOGY_WORDS if word not in script]
+    for user in ("ana", "ben", "cem", "dan", "eva", "fritz"):
+        if not re.search(rf"^NC_USERS=\(.*\b{user}\b.*\)$", script, re.MULTILINE):
+            findings.append(f"topology.sh does not create the user {user}")
+    for exclusion in ("--user=eva", "--group=extern", "--folder=privat"):
+        if f"exclude {exclusion}\n" not in script:
+            findings.append(f"topology.sh does not exclude {exclusion} before the first run")
+    return findings
+
+
+def test_the_topology_builds_every_case() -> None:
+    assert topology_findings(TOPOLOGY.read_text(encoding="utf-8")) == []
+
+
+def test_the_topology_rule_fires_on_a_missing_operation_and_backend() -> None:
+    script = TOPOLOGY.read_text(encoding="utf-8")
+    broken = script.replace("vanish_cem() {", "vanish() {").replace("amazons3", "s3")
+
+    assert topology_findings(broken) == [
+        "topology.sh has no function vanish_cem",
+        "topology.sh does not use amazons3",
+    ]
+
+
+def test_the_topology_rule_fires_on_a_missing_exclusion_and_dispatch() -> None:
+    script = TOPOLOGY.read_text(encoding="utf-8")
+    broken = script.replace("\texclude --group=extern\n", "").replace("\tvanish_cem delete_dan", "\tdelete_dan")
+
+    assert topology_findings(broken) == [
+        "topology.sh does not dispatch vanish_cem",
+        "topology.sh does not exclude --group=extern before the first run",
+    ]
