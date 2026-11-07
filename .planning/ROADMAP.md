@@ -14,7 +14,8 @@ Projektmodus: mvp, Owner-Regel "erst Risiko, dann vertikal". 11 Phasen bei Granu
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: Zwei-App-Gerüst und Integrationsbeweis** - PHP-App und ExApp im Lockstep, Dummy-Treffer in der Unified Search, Abspielansicht ab `#t=`, Schlüssel/Provenienz/Schema festgelegt (completed 2026-11-07)
+- [x] **Phase 1: Zwei-App-Gerüst und Integrationsbeweis** - PHP-App und ExApp im Lockstep, Dummy-Treffer in der Unified Search, Abspielansicht ab `#t=`, Schlüssel/Provenienz/Schema festgelegt
+ (completed 2026-11-07)
 - [ ] **Phase 2: Erfassung aller Dateien** - Arbeitsvorrat, Ereignisse, Crawl inkl. Gruppenordner und externer Speicher, Ausschlüsse, Inhalts-Dedupe
 - [ ] **Phase 3: Vorschau-Transkripte in der Suche** - Gehärteter Medien-Eingang, Parakeet-Vorschau mit Wächter und Abfangregel, echte Treffer mit Rechteprüfung zur Abfragezeit
 - [ ] **Phase 4: Suchqualität und Export** - Wortformen/Komposita/Zahlen, Filter-Verträglichkeit, Download-Sperre, SRT/VTT/TXT und Nebendatei als Untertitel-Entwurf
@@ -67,7 +68,22 @@ Plans:
   2. Ausgeschlossene Nutzer, Gruppen und Ordner landen nie im Arbeitsvorrat, auch wenn der Ausschluss vor dem ersten Durchlauf gesetzt wurde; ein nachträglicher Ausschluss entfernt vorhandene Einträge und Transkripte.
   3. Eine neu hochgeladene oder geänderte Datei steht innerhalb weniger Minuten im Arbeitsvorrat; eine außerhalb von Nextcloud geänderte Datei auf externem Speicher wird spätestens beim periodischen Abgleich erkannt.
   4. Kopie, Verschieben, Umbenennen, Taggen und dieselbe externe Freigabe bei mehreren Nutzern erzeugen keinen zweiten Rechenauftrag (Inhalts-Schlüssel).
-**Plans**: TBD
+**Plans**: 14 plans (8 Wellen)
+Plans:
+- [ ] 02-01-PLAN.md: (W1) Fehlschlagende Abnahme D-02-07 auf Samba mit unabhängiger Wahrheit und Positivkontrollen
+- [ ] 02-02-PLAN.md: (W1) Container: Schema v2, Intake mit Ack nach Eintrag in state.db
+- [ ] 02-03-PLAN.md: (W1) PHP: Warteschlange mit Claim, Mountmenge, Erst-Crawl nach Handshake
+- [ ] 02-04-PLAN.md: (W2) Container: Erfassung per Temp-Download und sha256, Zählung nach Inhalten, /workstock, /coverage
+- [ ] 02-05-PLAN.md: (W2) PHP: Ereignisweg, Gateway mit access_control/locked und Kopf-Route, occ :files/:status
+- [ ] 02-06-PLAN.md: (W3) Owner: früher Push auf phase-02, CI mit Korrekturschleife
+- [ ] 02-07-PLAN.md: (W4) PHP: externe Speicher ab Werk, Klassifikation nach Anmeldeart, Vorfilter-Schlüssel, ExternalRescanJob
+- [ ] 02-08-PLAN.md: (W4) Container: Lesebeweis 64 KiB je Kopie mit Negativtests und Positivkontrolle
+- [ ] 02-09-PLAN.md: (W5) PHP: Ausschlüsse vor dem ersten Durchlauf, dreifach geprüft, occ :exclude
+- [ ] 02-10-PLAN.md: (W5) Container: rückwirkender Ausschluss, letzter Verweis, Papierkorb
+- [ ] 02-11-PLAN.md: (W6) PHP: Fingerabdruck der Regeln, ExclusionClearJob, Gruppen und Papierkorb-Ereignisse
+- [ ] 02-12-PLAN.md: (W6) Abgleich: Sweep vor dem Tor, Crawl-Flag je Mount, occ :reconcile
+- [ ] 02-13-PLAN.md: (W7) Owner: Version 0.2.0, Upgrade-Beweis, Doku DE/EN/FR nach Textfreigabe
+- [ ] 02-14-PLAN.md: (W8) Owner: Push, discovery-e2e auf sechs Beinen grün, Korrekturschleife
 **Research flag**: Sperrfrist für lange Vorschauen, SMB/S3-Timeouts, Sitzungs-Anmeldedaten bei externen Speichern, `files_accesscontrol`, Crawl-Flag-Tor für den Abgleich.
 
 ### Phase 3: Vorschau-Transkripte in der Suche
