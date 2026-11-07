@@ -70,6 +70,7 @@ STATE_REASONS: Final = frozenset(
 _HEX64: Final = re.compile(r"[0-9a-f]{64}")
 CORRECTION_KINDS: Final = frozenset({"text", "speaker", "sound"})
 _MAX_UID_LENGTH: Final = 64
+_MAX_ETAG_LENGTH: Final = 64
 
 _SET_META_DEFAULT: Final = "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)"
 _GET_META: Final = "SELECT value FROM meta WHERE key = ?"
@@ -110,6 +111,37 @@ SELECT file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mti
 FROM file_ref WHERE file_id = ?
 """
 _FILE_REF: Final = "SELECT media_id, state FROM file_ref WHERE file_id = ?"
+
+# The intake of the PHP work stock (plan 02-05). Only these kinds are written
+# here; every other kind goes back to the PHP queue unlocked, never lost.
+INTAKE_KINDS: Final = frozenset({"content", "metadata"})
+_INTAKE_ROW: Final = "SELECT media_id, etag, size, mtime FROM file_ref WHERE file_id = ?"
+_INTAKE_NEW: Final = """
+INSERT INTO file_ref (file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage,
+                      reason, attempts, next_try_at, proved_at, vanished_since, updated_at)
+VALUES (:file_id, NULL, :storage_id, :prefilter_key, :reader_uid, :etag, :size, :mtime, 'active', 'pending',
+        NULL, 0, NULL, NULL, NULL, :now)
+"""
+# Same bytes as far as the cache can tell: the keyed state stays as it is.
+_INTAKE_METADATA: Final = """
+UPDATE file_ref SET prefilter_key = :prefilter_key, reader_uid = :reader_uid, updated_at = :now
+WHERE file_id = :file_id
+"""
+# Any change of etag, size or mtime: the content key is unknown again (D-02-01).
+_INTAKE_CHANGED: Final = """
+UPDATE file_ref SET media_id = NULL, storage_id = :storage_id, prefilter_key = :prefilter_key,
+    reader_uid = :reader_uid, etag = :etag, size = :size, mtime = :mtime, state = 'active', stage = 'pending',
+    reason = NULL, attempts = 0, next_try_at = NULL, proved_at = NULL, vanished_since = NULL, updated_at = :now
+WHERE file_id = :file_id
+"""
+# The orphan rule (D-02-09, D-02-13): a content without an active or sample
+# reference is only marked; it is forgotten later, so a copy that turns up
+# again keeps its transcript and corrections.
+_MARK_ORPHANED: Final = """
+UPDATE media SET orphaned_at = :now
+WHERE media_id = :m AND orphaned_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM file_ref WHERE media_id = :m AND state IN ('active', 'sample'))
+"""
 
 _INSERT_TRANSCRIPT: Final = """
 INSERT INTO transcript (media_id, engine, model_sha256, config_version, profile, level, epoch, language,
@@ -209,6 +241,37 @@ class FileRef:
     proved_at: int | None
     vanished_since: int | None
     updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class IntakeItem:
+    """One row of the PHP work stock as the intake writes it (nc_queue.ClaimItem without the wire names)."""
+
+    queue_id: int
+    kind: str
+    file_id: int | None
+    storage_id: int
+    etag: str | None
+    size: int | None
+    mtime: int | None
+    prefilter_key: str | None
+    reader_uid: str | None
+
+
+def _check_intake(item: IntakeItem) -> None:
+    """The fields of a content or metadata row, checked before the transaction."""
+    if item.file_id is None or not _is_count(item.file_id) or item.file_id == 0:
+        raise ValueError("invalid intake field: file_id")
+    if not _is_count(item.storage_id):
+        raise ValueError("invalid intake field: storage_id")
+    if item.etag is None or len(item.etag) > _MAX_ETAG_LENGTH:
+        raise ValueError("invalid intake field: etag")
+    if not _is_count(item.size) or not _is_count(item.mtime):
+        raise ValueError("invalid intake field: size or mtime")
+    if item.prefilter_key is not None:
+        _require_hex64(item.prefilter_key, "prefilter_key")
+    if item.reader_uid is not None and not 0 < len(item.reader_uid) <= _MAX_UID_LENGTH:
+        raise ValueError("invalid intake field: reader_uid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,6 +536,62 @@ class Store:
                     "now": _now(),
                 },
             )
+
+    def apply_intake(self, items: Sequence[IntakeItem]) -> list[int]:
+        """Write the content and metadata rows of one claimed band in one transaction.
+
+        Returns the queue ids that are written and may be acknowledged; a row
+        of another kind is not written and not returned, so the intake unlocks
+        it. Writing the same band twice ends in the same state (a crash between
+        commit and ack delivers it again).
+
+        - new file: active, pending, attempts 0;
+        - content with the same (etag, size, mtime): stage, state and media stay,
+          only the prefilter key and the reader are refreshed;
+        - content with any difference: pending again without a media item, and
+          the previous media item is marked orphaned when no active or sample
+          reference points at it any more (D-02-13);
+        - metadata: only the prefilter key and the reader (DISC-06).
+
+        Called only from worker/intake.py (gate in plan 02-20).
+        """
+        usable = [item for item in items if item.kind in INTAKE_KINDS]
+        for item in usable:
+            _check_intake(item)
+        applied: list[int] = []
+        counts = {"new": 0, "unchanged": 0, "changed": 0, "metadata": 0, "orphaned": 0}
+        now = _now()
+        with self._transaction():
+            for item in usable:
+                values = {
+                    "file_id": item.file_id,
+                    "storage_id": item.storage_id,
+                    "prefilter_key": item.prefilter_key,
+                    "reader_uid": item.reader_uid,
+                    "etag": item.etag,
+                    "size": item.size,
+                    "mtime": item.mtime,
+                    "now": now,
+                }
+                row = self._conn.execute(_INTAKE_ROW, (item.file_id,)).fetchone()
+                if row is None:
+                    self._conn.execute(_INTAKE_NEW, values)
+                    counts["new"] += 1
+                elif item.kind == "metadata":
+                    self._conn.execute(_INTAKE_METADATA, values)
+                    counts["metadata"] += 1
+                elif (str(row[1]), int(row[2]), int(row[3])) == (item.etag, item.size, item.mtime):
+                    self._conn.execute(_INTAKE_METADATA, values)
+                    counts["unchanged"] += 1
+                else:
+                    self._conn.execute(_INTAKE_CHANGED, values)
+                    counts["changed"] += 1
+                    if row[0] is not None:
+                        marked = self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": now})
+                        counts["orphaned"] += marked.rowcount
+                applied.append(item.queue_id)
+        _LOG.info("intake written", extra=counts | {"items": len(items), "applied": len(applied)})
+        return applied
 
     def file_ref(self, file_id: int) -> FileRef | None:
         """The reference of one file, None when the file has never been seen."""

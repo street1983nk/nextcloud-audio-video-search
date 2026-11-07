@@ -12,10 +12,13 @@ Clients live only inside ``nc_app()``: every AsyncNextcloudApp opens its own
 HTTP sessions and nc_py_api has no public close, so a client that is never
 closed leaks connections until the garbage collector finds it (Gameworld WR-05).
 
-The second client here is httpx, for one job: reading the bytes of a file from
+The second client here is httpx, for two jobs: reading the bytes of a file from
 the content gateway of the PHP app as a stream (Findling ``nc/client.py``
-``fetch_file_stream``). nc_py_api's OCS entry point parses every answer as
-JSON, so a media file cannot go through it.
+``fetch_file_stream``), since nc_py_api's OCS entry point parses every answer as
+JSON and a media file cannot go through it; and the three routes of the PHP
+work stock (claim, ack, unlock), which run every 30 seconds on one long lived
+client instead of a new nc_py_api client per call (plan 02-05). nc_queue.py
+holds the contract of those routes and never imports a client itself.
 """
 
 import hashlib
@@ -33,9 +36,12 @@ from nc_py_api.ex_app import AppAPIAuthMiddleware, run_app, set_handlers
 from nc_py_api.ex_app.ui.settings import SettingsField, SettingsFieldType, SettingsForm
 
 __all__ = [
+    "QUEUE_ACTIONS",
+    "QUEUE_TIMEOUT",
     "AppAPIAuthMiddleware",
     "AsyncNextcloudApp",
     "FetchResult",
+    "HttpClient",
     "NextcloudException",
     "SettingsField",
     "SettingsFieldType",
@@ -44,6 +50,8 @@ __all__ = [
     "fetch_file_sha256",
     "fetch_handshake",
     "nc_app",
+    "new_queue_client",
+    "queue_post",
     "run_app",
     "set_handlers",
 ]
@@ -206,3 +214,57 @@ async def fetch_handshake() -> tuple[int | None, str | None]:
         return None, None
     version = answer.get("companionVersion") if isinstance(answer, dict) else None
     return 200, version if isinstance(version, str) else None
+
+
+# The work stock of the PHP app (plan 02-03). Only these three actions exist;
+# the path has no other variable part.
+QUEUE_PATH: Final = "/ocs/v2.php/apps/audio_video_search/queues/media/{action}"
+QUEUE_ACTIONS: Final = frozenset({"claim", "ack", "unlock"})
+# Connect fast or fail, and a claim of a full band answers within seconds.
+QUEUE_TIMEOUT: Final = httpx.Timeout(30.0, connect=10.0)
+
+# The client type the work stock client holds, so nc_queue.py needs no import
+# of its own.
+HttpClient = httpx.AsyncClient
+
+
+def queue_url(action: str) -> str:
+    """Absolute URL of one queue route, NEXTCLOUD_URL normalised like gateway_url."""
+    if action not in QUEUE_ACTIONS:
+        raise ValueError("invalid queue action")
+    base = os.environ.get("NEXTCLOUD_URL", "").removesuffix("/").removesuffix("/index.php").removesuffix("/")
+    return base + QUEUE_PATH.format(action=action)
+
+
+def new_queue_client() -> httpx.AsyncClient:
+    """One client for the queue routes, held for the life of the intake. No redirects (credential)."""
+    return httpx.AsyncClient(verify=_certificate_setting(), timeout=QUEUE_TIMEOUT, follow_redirects=False)
+
+
+async def queue_post(client: httpx.AsyncClient, action: str, body: dict[str, object]) -> tuple[int | None, object]:
+    """POST one queue route and return (status, the data of the OCS answer).
+
+    ``(None, None)`` when the instance could not be reached, ``(status, None)``
+    for an error status or an answer that is not an OCS JSON document. Never
+    raises for a network error; logs carry the action, a status and the error
+    type, never the URL or the body.
+    """
+    try:
+        response = await client.post(
+            queue_url(action),
+            json=body,
+            headers=app_api_headers() | {"Accept": "application/json"},
+        )
+    except httpx.HTTPError as error:
+        LOGGER.info("queue not reached", extra={"action": action, "error_type": type(error).__name__})
+        return None, None
+    if response.status_code >= _FIRST_ERROR_STATUS:
+        LOGGER.warning("queue refused", extra={"action": action, "status": response.status_code})
+        return response.status_code, None
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.status_code, None
+    ocs = payload.get("ocs") if isinstance(payload, dict) else None
+    data = ocs.get("data") if isinstance(ocs, dict) else None
+    return response.status_code, data
