@@ -129,7 +129,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- 02-11: Push 3 (f8b28a5): Python, PHP, Deploy 10/10 grün; Discovery rot in Topologie part A (oc_credentials statt oc_storages_credentials), Korrektur e05dbf9 lokal, Push 4 braucht neue Owner-Freigabe
+- 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; offen Owner-Entscheid zu reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10)
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell

@@ -214,3 +214,51 @@ Die Tabelle heißt `oc_storages_credentials` (CredentialsManager::DB_TABLE, stab
 Korrektur lokal, nicht gepusht: e05dbf9 fix(02-01) `oc_storages_credentials` in topology.sh und im Gate. Push 4 braucht eine neue Owner-Freigabe.
 
 main unverändert (`cmp` grün), audio_video_search_backend vorher und nachher `STATE 404 Package not found`, kein leak-control, Positivkontrolle findling_backend 1.6.2 grün, Paket audio_video_search unverändert.
+
+## Push 4, 80ce5c9
+
+- Owner-Freigabe 07.11. ("Ja, Push 4"); genau e05dbf9 und 80ce5c9 vor origin/phase-02 geprüft; Autoren-, Committer- und Textprüfung grün; Gates lokal grün (pytest 620); Fast-Forward f8b28a5..80ce5c9 um 15:42:59Z.
+- D-02-15a (Owner "Ja, so lassen") danach lokal: bc9a1b0 (02-CONTEXT.md, deferred-items.md für Plan 16 und Phase 8).
+
+| Workflow | Lauf | Ergebnis |
+|---|---|---|
+| Python gates | 42387720591 | success |
+| PHP gates (workflow_dispatch, Pfadfilter ohne php/) | 42388136823 | success |
+| Deploy through HaRP | 42387720598 | success, 10 von 10 |
+| Discovery acceptance | 42387720556 | discovery: Aufbau komplett grün, Urteil rot; leak-control rot (Patch fehlt, Plan 13) |
+
+Kontrollen alle grün: Samba (`ana reads gesperrt.webm, ben gets NT_STATUS_ACCESS_DENIED`), Selbsttest (jede verschobene Erwartung schlägt an: files_count, contents, transcribed, never_in_log), Warten auf den Arbeitsvorrat (30 s), access-log (`1 gateway line(s) for file 74`). Run the phases lief in 60 min durch (alle 20 Phasen).
+
+### Erster Schnitt (Homes und Gruppenordner): Vorgangsprüfungen grün
+
+- initial: shared_once_ben, shared_once_cem, shared_once_dan, transcribed, unmapped PASS
+- upload: upload_within_300s, upload_active PASS
+- overwrite: overwrite_active, overwrite_new_media, overwrite_downloaded, old_media_orphaned PASS (bestätigt D-02-15a)
+- copy: copy_active, copy_same_media, copy_at_most_one_download PASS
+- rename: rename_same_file_id, rename_same_media, rename_no_gateway_line PASS
+- tag: tag_same_media, tag_no_gateway_line PASS
+
+### FAIL-Zeilen und Zuordnung (results.txt, je Phase gleiche Muster)
+
+| FAIL | Ursache | Plan |
+|---|---|---|
+| active_set / files_count / contents in allen Phasen (fehlt 41, 44, 55, 63, 66, 72, 73, 105 bis 137: SMB-, S3- und lokale externe Speicher) | externe Speicher noch ohne Crawl | 12 |
+| unreadable_set / unreadable_count (fehlt 52 = BEN SMB gesperrt, später 66) | SMB-Rechteleck, Lesebeweis | 12, 13 |
+| initial:skipped_session_mount, local_captured, s3_captured | Klassifikation externer Speicher | 12 |
+| transcribed in read-proof bis foreign-change zu klein | Proben des Ledgers liegen auf SMB-Dateien ohne aktiven Verweis | 12 (Folge) |
+| zuviel / never_in_stock / never_in_log 83, 91, 95 (ANA privat P, EVA, FRITZ) | Ausschlüsse fehlen (`occ audio_video_search:exclude is missing`), ausgeschlossene Dateien wurden geladen | 16 |
+| never_in_log zusätzlich 41, 44, 107, 113, 114 | Gateway-Zeilen der Ledger-Proben (occ :sample) auf SMB-Dateien, die noch nicht im Vorrat sind | 12 (Folge) |
+| shares:eva_finds_nothing, exclude-user-after:ben_finds_nothing | keine Treffer für Ausgeschlossene | 16, 18 |
+| exclude-user-after:ana_storage_refs_stay, exclude-storage-after:files_fewer, exclude-after:z_kept, z_correction_kept | rückwirkender Ausschluss | 15, 18 |
+| trash:trashed_not_active (75 bleibt active), restore | Papierkorb-Kinds | 15, 18 |
+| delete-user:dan_ref_gone, dan_media_orphaned, transcribed_minus_one | Löschen eines Nutzers | 15 |
+| reprove:cem_finds_before, operation, reprove_unreadable | erneuter Lesebeweis auf SMB | 13, 20 |
+| vanish:cem_refs_vanished, transcribed_minus_one | Sweep verschwundener Speicher | 20 (12) |
+| reattach:transcribed_plus_one | Wiederanhängen, SMB | 13, 15 |
+| foreign-change:operation, foreign_new_hash | Fremdänderung auf externem Speicher, Rescan | 12, 14 |
+| :wait ab move-cross (WAIT_LIMIT 300 s) | Arbeitsvorrat wird nicht fertig, solange externe Vorgänge fehlen | 12, 14, 15 |
+| **access-control:reason_77, sperre_reason (erwartet access_control, gefunden not_found), in allen Folgephasen** | **echter Befund in 02-10**: nach dem Tag der files_accesscontrol-Regel antwortet das Gateway 404, nicht 403 access_control (`[404]: GET /ocs/v2.php/apps/audio_video_search/files/77?userId=ana`, vorher 200). Die Annahme "files_accesscontrol wirft ForbiddenException bei fopen" stimmt auf stable33 nicht; der Knoten wird offenbar schon beim Auflösen verweigert. Folge: falscher Grund und Wiederholung nach 60 s statt 300 s; kein Treffer-Leck. | Owner-Entscheid (02-10 korrigieren oder in Plan 13/16 einplanen) |
+
+main unverändert (`cmp` grün), audio_video_search_backend vorher und nachher `STATE 404 Package not found`, kein leak-control, Positivkontrolle findling_backend 1.6.2 grün, Paket audio_video_search unverändert.
+
+Stand: Pflicht-Workflows grün, Kontrollen grün, Vorgangsprüfungen des ersten Schnitts grün; alle übrigen FAIL-Zeilen einem späteren Plan zugeordnet, eine (reason_77) als echter Befund. Plan 11 kann nach Owner-Entscheid zu reason_77 abgeschlossen werden. Jeder weitere Push braucht eine neue Freigabe.
