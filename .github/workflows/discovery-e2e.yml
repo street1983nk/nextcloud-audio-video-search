@@ -58,6 +58,10 @@ env:
   # SeaweedFS 4.52 and its S3 gateway, pinned by index digest (amd64 and arm64).
   S3_IMAGE: chrislusf/seaweedfs@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
   S3_PORT: '8333'
+  # weed server starts a volume server on 8080 by default, the port of the
+  # Nextcloud server (push 2 of phase 2: bind: address already in use). It gets
+  # a port of its own; the gate keeps it apart from every other port here.
+  S3_VOLUME_PORT: '8380'
   LOCAL_REGISTRY: 'localhost:5000'
   LOCAL_IMAGE_TAG: 'citest'
   NC_URL: 'http://localhost:8080'
@@ -169,7 +173,7 @@ jobs:
               actions: ["Admin", "Read", "Write", "List", "Tagging"]}]}' > "${RUNNER_TEMP}/s3/s3.json"
           docker run -d --name avs-s3 --net host \
             -v "${RUNNER_TEMP}/s3:/etc/avs-s3:ro" \
-            "${S3_IMAGE}" server -dir=/data -s3 -s3.port="${S3_PORT}" -s3.config=/etc/avs-s3/s3.json
+            "${S3_IMAGE}" server -dir=/data -volume.port="${S3_VOLUME_PORT}"             -s3 -s3.port="${S3_PORT}" -s3.config=/etc/avs-s3/s3.json
           for _ in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${S3_PORT}/" || true)
             case "${code}" in 200|403) exit 0 ;; esac
@@ -276,7 +280,10 @@ jobs:
           test -n "${container}" || { docker ps -a; exit 1; }
           echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
 
+      # The last step of the setup. The phases run only after it succeeded:
+      # without the instance every phase would only wait out its limit.
       - name: Topology part B, after the backend is registered
+        id: setup
         env:
           OCC: ./occ
           MEDIA_DIR: ${{ runner.temp }}/testdata
@@ -307,10 +314,14 @@ jobs:
       # One phase after the other: test results and controls, snapshot,
       # operation, wait, truth, comparison. A FAIL stops nothing: every phase
       # judges only its own checks against the truth of the current file
-      # system, and the last step turns the list into the verdict.
+      # system, and the last step turns the list into the verdict. Each wait is
+      # bounded (WAIT_LIMIT) and the step as a whole too, so the verdict and the
+      # logs always come before the limit of the job.
       - name: Run the phases
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 90
         env:
+          WAIT_LIMIT: '300'
           OCC: ./occ
           MEDIA_DIR: ${{ runner.temp }}/testdata
           ACCESS_LOG: ${{ runner.temp }}/php-server.log

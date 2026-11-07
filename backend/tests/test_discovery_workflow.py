@@ -13,6 +13,9 @@
 - No workflow reads the runner context in a workflow or job env block: GitHub
   rejects the whole file there (push 1 of phase 2, line 414), so the run never
   starts. Step env and run lines may read it.
+- The S3 server never takes a port of the leg (push 2: its volume server took
+  8080 from Nextcloud), and the phases run only after a successful setup, with
+  a bounded wait and a step limit (push 2 waited two hours for nothing).
 
 Every rule has a self test on a broken copy, so a gate whose body went missing
 does not stay green.
@@ -156,6 +159,41 @@ def runner_env_findings(name: str, text: str) -> list[str]:
     return findings
 
 
+def port_findings(text: str) -> list[str]:
+    """The S3 server of the discovery leg never takes a port another service of the leg uses."""
+    findings: list[str] = []
+    discovery = job_text(text, "discovery")
+    volume = re.search(r"^  S3_VOLUME_PORT: '(\d+)'$", text, re.MULTILINE)
+    if volume is None:
+        return ["the workflow names no S3_VOLUME_PORT"]
+    if '-volume.port="${S3_VOLUME_PORT}"' not in discovery:
+        findings.append("weed server starts without -volume.port, so its volume server takes 8080")
+    taken = set(re.findall(r"-S 0\.0\.0\.0:(\d+)", discovery))
+    taken |= set(re.findall(r"listen (\d+);", discovery))
+    taken |= set(re.findall(r"-p (\d+):\d+", discovery))
+    taken |= set(re.findall(r"^  S3_PORT: '(\d+)'$", text, re.MULTILINE))
+    if volume.group(1) in taken:
+        findings.append(f"S3_VOLUME_PORT {volume.group(1)} is taken by another service of the leg")
+    return findings
+
+
+def phase_guard_findings(text: str) -> list[str]:
+    """The phases run only after the setup succeeded, with a bounded wait and a step limit."""
+    findings: list[str] = []
+    steps = dict(steps_of(job_text(text, "discovery")))
+    setup = steps.get("Topology part B, after the backend is registered", "")
+    if "\n        id: setup\n" not in setup:
+        findings.append("the last setup step has no id setup")
+    phases = steps.get("Run the phases", "")
+    if "if: ${{ !cancelled() && steps.setup.outcome == 'success' }}" not in phases:
+        findings.append("the phases do not wait for a successful setup")
+    if not re.search(r"^        timeout-minutes: \d+$", phases, re.MULTILINE):
+        findings.append("the phases step has no timeout-minutes")
+    if not re.search(r"^          WAIT_LIMIT: '\d+'$", phases, re.MULTILINE):
+        findings.append("the phases step does not bound WAIT_LIMIT")
+    return findings
+
+
 def other_workflows() -> dict[str, str]:
     return {path.name: path.read_text(encoding="utf-8") for path in WORKFLOWS.glob("*.yml") if path != WORKFLOW}
 
@@ -191,6 +229,43 @@ def test_the_runner_env_rule_fires_on_a_job_and_a_workflow_env() -> None:
     assert findings[0] == "discovery-e2e.yml:2 reads the runner context in a workflow env"
     assert findings[1].endswith("reads the runner context in a job env")
     assert runner_env_findings("discovery-e2e.yml", text) == []
+
+
+def test_the_s3_server_keeps_off_the_ports_of_the_leg() -> None:
+    assert port_findings(source()) == []
+
+
+def test_the_port_rule_fires_without_the_volume_port_or_on_a_taken_one() -> None:
+    text = source()
+    flag = '-volume.port="${S3_VOLUME_PORT}" '
+    assert flag in text
+    assert port_findings(text.replace(flag, "")) == [
+        "weed server starts without -volume.port, so its volume server takes 8080"
+    ]
+    assert port_findings(text.replace("  S3_VOLUME_PORT: '8380'", "  S3_VOLUME_PORT: '8080'")) == [
+        "S3_VOLUME_PORT 8080 is taken by another service of the leg"
+    ]
+
+
+def test_the_phases_wait_for_the_setup() -> None:
+    assert phase_guard_findings(source()) == []
+
+
+def test_the_phase_guard_fires_on_the_old_condition_and_without_limits() -> None:
+    broken = (
+        source()
+        .replace("if: ${{ !cancelled() && steps.setup.outcome == 'success' }}", "if: ${{ !cancelled() }}")
+        .replace("        timeout-minutes: 90\n", "")
+        .replace("          WAIT_LIMIT: '300'\n", "")
+        .replace("        id: setup\n", "")
+    )
+
+    assert phase_guard_findings(broken) == [
+        "the last setup step has no id setup",
+        "the phases do not wait for a successful setup",
+        "the phases step has no timeout-minutes",
+        "the phases step does not bound WAIT_LIMIT",
+    ]
 
 
 def test_the_leg_parser_reads_both_lists() -> None:
