@@ -147,6 +147,14 @@ jobs:
             --admin-user admin --admin-pass "${ADMIN_PASS}"
           ./occ config:system:get version
 
+      # The work stock and crawl mappers are tested against the real database
+      # (QueueMapperTest, CrawlMapperTest): enabling the app runs its
+      # migrations, which create oc_avs_queue, oc_avs_crawl and oc_avs_storage.
+      - name: Enable the PHP app so its migrations create the tables
+        run: |
+          ./occ app:enable audio_video_search
+          sqlite3 data/owncloud.db '.tables' | tr -s ' ' '\n' | grep -qx 'oc_avs_queue'
+
       # --no-scripts: a package that adds a script gets no shell in this job.
       - name: Install the dev dependencies of the PHP app
         working-directory: apps/audio_video_search
