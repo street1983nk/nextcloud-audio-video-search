@@ -14,6 +14,8 @@ export const MARK_SECONDS = 44.4;
 export const TOLERANCE_SECONDS = 0.5;
 /** Every name ci/seed.sh gives a test file; none of them may leak (T-01-44). */
 export const TEST_FILE_NAMES = ['tone-90s', 'broken.webm', 'locked.webm'] as const;
+/** The mark of a test result in the subline, in the three languages. */
+export const SAMPLE_MARK = /Test result|Testtreffer|Résultat de test/;
 
 export type User = { name: string; password: string };
 
@@ -43,6 +45,16 @@ export const fileIds = {
 
 export function isHighContrast(testInfo: TestInfo): boolean {
 	return testInfo.project.metadata?.highContrast === true;
+}
+
+/**
+ * The review user of a project beside the English grid, else null: dora for
+ * high contrast. ci/seed.sh gives her the reach of every screenshot: admin,
+ * member of the team folder, the shares of locked.webm and broken.webm, and
+ * no access to alice's own tone-90s.webm.
+ */
+export function reviewer(testInfo: TestInfo): User | null {
+	return isHighContrast(testInfo) ? users.dora() : null;
 }
 
 /** Tests that are not part of the screenshot grid skip the high contrast project. */

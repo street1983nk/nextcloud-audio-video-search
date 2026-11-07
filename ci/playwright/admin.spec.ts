@@ -9,15 +9,13 @@
 // apart, and not registered at all; AVS_BACKEND_VERSION names the version the
 // workflow registered.
 import { expect, test, type Page } from '@playwright/test';
-import { ADMIN_PATH, gridOnly, isHighContrast, login, ocsSearch, screenshot, users } from './helpers';
+import { ADMIN_PATH, gridOnly, login, ocsSearch, reviewer, SAMPLE_MARK, screenshot, users, type User } from './helpers';
 
 const VERSION = '0.1.0';
-// The mark of a test result in the subline, in the three languages.
-const SAMPLE_MARK = /Test result|Testtreffer|Résultat de test/;
 
-async function openSection(page: Page, highContrast: boolean): Promise<void> {
-	// dora is an admin as well and carries the high contrast theme.
-	await login(page, highContrast ? users.dora() : users.admin());
+/** The review users are admins as well; every other project logs in as admin. */
+async function openSection(page: Page, user: User): Promise<void> {
+	await login(page, user);
 	await page.goto(ADMIN_PATH);
 	await expect(page.locator('#avs-admin')).toBeVisible();
 }
@@ -55,7 +53,7 @@ async function recheck(page: Page): Promise<void> {
 }
 
 test('Zustand ok mit Version auf beiden Seiten @screenshot', async ({ page }, testInfo) => {
-	await openSection(page, isHighContrast(testInfo));
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 
 	await expect(page.locator('[data-state="ok"]')).toBeVisible();
 	await expect(page.locator('.avs-version-own').first()).toHaveText(VERSION);
@@ -68,7 +66,7 @@ test('Zustand ok mit Version auf beiden Seiten @screenshot', async ({ page }, te
 
 test('Debug-Block: Schalter blendet den Testtreffer ein und aus', async ({ page }, testInfo) => {
 	gridOnly(testInfo);
-	await openSection(page, false);
+	await openSection(page, users.admin());
 
 	const toggle = page.locator('#avs-sample-visible');
 	// The Nextcloud checkbox style moves the input out of sight; a user clicks its label.
@@ -100,7 +98,7 @@ test('Debug-Block: Schalter blendet den Testtreffer ein und aus', async ({ page 
 
 test('Erneut prüfen: aria-busy während der Prüfung, danach Fokus auf dem Zustand', async ({ page }, testInfo) => {
 	gridOnly(testInfo);
-	await openSection(page, false);
+	await openSection(page, users.admin());
 
 	// The answer is held back until aria-busy has been seen; no fixed wait.
 	let release: () => void = () => {};
@@ -123,7 +121,7 @@ test('Erneut prüfen: aria-busy während der Prüfung, danach Fokus auf dem Zust
 });
 
 test('Backend deaktiviert: Banner und leere Suche @disabled @screenshot', async ({ page }, testInfo) => {
-	await openSection(page, isHighContrast(testInfo));
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	await expect(page.locator('[data-state="backend_disabled"]')).toBeVisible();
@@ -134,7 +132,7 @@ test('Backend deaktiviert: Banner und leere Suche @disabled @screenshot', async 
 });
 
 test('Backend nicht erreichbar: Banner und leere Suche @unreachable @screenshot', async ({ page }, testInfo) => {
-	await openSection(page, isHighContrast(testInfo));
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	await expect(page.locator('[data-state="backend_unreachable"]')).toBeVisible();
@@ -144,16 +142,16 @@ test('Backend nicht erreichbar: Banner und leere Suche @unreachable @screenshot'
 	await screenshot(page, 'admin-backend_unreachable', testInfo);
 });
 
-test('Ohne Debug-Modus wird der Debug-Block nicht gerendert @nodebug', async ({ page }, testInfo) => {
-	gridOnly(testInfo);
-	await openSection(page, false);
+test('Ohne Debug-Modus wird der Debug-Block nicht gerendert @nodebug @screenshot', async ({ page }, testInfo) => {
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 
 	await expect(page.locator('.avs-admin__debug')).toHaveCount(0);
 	await expect(page.locator('#avs-sample-visible')).toHaveCount(0);
+	await screenshot(page, 'admin-nodebug', testInfo);
 });
 
 test('Versionen weichen in Major.Minor ab: Fehlerbanner mit beiden Versionen, leere Suche @drift @screenshot', async ({ page }, testInfo) => {
-	await openSection(page, isHighContrast(testInfo));
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	const banner = page.locator('[data-state="version_drift"]');
@@ -166,7 +164,7 @@ test('Versionen weichen in Major.Minor ab: Fehlerbanner mit beiden Versionen, le
 });
 
 test('Nur der Patch-Teil weicht ab: Hinweis mit beiden Versionen, Suche liefert Treffer @patch @screenshot', async ({ page }, testInfo) => {
-	await openSection(page, isHighContrast(testInfo));
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	const banner = page.locator('[data-state="version_patch_differs"]');
@@ -178,7 +176,7 @@ test('Nur der Patch-Teil weicht ab: Hinweis mit beiden Versionen, Suche liefert 
 });
 
 test('Backend nicht installiert: Banner und leere Suche @missing @screenshot', async ({ page }, testInfo) => {
-	await openSection(page, isHighContrast(testInfo));
+	await openSection(page, reviewer(testInfo) ?? users.admin());
 	await recheck(page);
 
 	await expect(page.locator('[data-state="backend_missing"]')).toBeVisible();

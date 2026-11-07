@@ -10,8 +10,9 @@
 #   bob      receives tone-90s.webm and locked.webm (download switched off)
 #   carol    member of the group "team", reads the team folder "Team"
 #   mallory  reads nothing of the above
-#   dora     admin and member of "team", high contrast theme, only for the
-#            screenshots of the high contrast project
+#   dora     admin and member of "team", receives locked.webm and broken.webm,
+#            high contrast theme, only for the screenshots of the high
+#            contrast project
 #
 # The passwords come out of the job variables of the throwaway instance, never
 # out of repository secrets. The file ids land in fileids.env for the later
@@ -114,6 +115,12 @@ share --data-urlencode 'path=/tone-90s.webm' --data-urlencode 'shareWith=bob' \
 share --data-urlencode 'path=/locked.webm' --data-urlencode 'shareWith=bob' \
 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' \
 	--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
+# The review user dora reaches every banner of the playback page: the same
+# two shares as a recipient, next to the team folder.
+for reviewer in dora; do
+	share --data-urlencode 'path=/locked.webm' --data-urlencode "shareWith=${reviewer}" 		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' 		--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
+	share --data-urlencode 'path=/broken.webm' --data-urlencode "shareWith=${reviewer}" 		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
+done
 # Without this a share without download may still be viewed; with it the
 # playback page shows the hint banner instead of the medium (01-RESEARCH.md,
 # Pitfall 2).

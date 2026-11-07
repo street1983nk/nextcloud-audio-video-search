@@ -12,11 +12,12 @@ import {
 	expectPartialContent,
 	fileIds,
 	gridOnly,
-	isHighContrast,
 	login,
 	playPath,
 	position,
 	QUERY,
+	reviewer,
+	SAMPLE_MARK,
 	screenshot,
 	submitLogin,
 	TEST_FILE_NAMES,
@@ -42,7 +43,7 @@ async function openUnifiedSearch(page: Page): Promise<void> {
 	const trigger = landmark
 		.getByRole('button')
 		.or(landmark.getByRole('combobox'))
-		.or(page.locator('#unified-search button, header [aria-label="Unified search"]'))
+		.or(page.locator('#unified-search button, header [aria-label="Unified search"], header [aria-label="Einheitliche Suche"], header [aria-label="Recherche unifiée"]'))
 		.first();
 	await expect(trigger).toBeVisible();
 	await trigger.click();
@@ -58,9 +59,8 @@ function searchField(page: Page) {
 		.first();
 }
 
-test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page }, testInfo) => {
-	gridOnly(testInfo);
-	await login(page, users.alice());
+/** Open the Unified Search, type the query and return the visible hit on the medium at 0:44. */
+async function searchHit(page: Page) {
 	await openUnifiedSearch(page);
 
 	const input = searchField(page);
@@ -77,6 +77,13 @@ test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page },
 		.filter({ hasText: /(^|\s)0:44 · / })
 		.first();
 	await expect(hit).toBeVisible();
+	return hit;
+}
+
+test('Kernweg: Treffer finden und an der Zeitstelle abspielen', async ({ page }, testInfo) => {
+	gridOnly(testInfo);
+	await login(page, users.alice());
+	const hit = await searchHit(page);
 
 	// The media request goes to WebDAV with a byte range, so the answer is 206.
 	const partialContent = page.waitForResponse(
@@ -204,14 +211,44 @@ test('Seitentitel nennt die Datei, nichts startet von selbst', async ({ page }, 
 });
 
 // The screenshot of the playback page for every project of the grid. The high
-// contrast project opens the team folder copy as dora, whose theme is high
-// contrast; every other project opens alice's own file.
+// review projects open the team folder copy as their review user; the English
+// grid opens alice's own file.
 test('Abspielansicht für die Abnahme @screenshot', async ({ page }, testInfo) => {
-	const highContrast = isHighContrast(testInfo);
-	await login(page, highContrast ? users.dora() : users.alice());
-	await page.goto(playPath(highContrast ? fileIds.team() : fileIds.webm()));
+	const review = reviewer(testInfo);
+	await login(page, review ?? users.alice());
+	await page.goto(playPath(review !== null ? fileIds.team() : fileIds.webm()));
 
 	await expectAtMark(page);
 	await expectMediaSettled(page);
 	await screenshot(page, 'play', testInfo);
 });
+
+// The hit in the Unified Search for every project of the grid: group name,
+// time and the test result mark in the subline (UI-SPEC, surface 1). The
+// review users find the copy in the team folder.
+test('Suchtreffer für die Abnahme @screenshot', async ({ page }, testInfo) => {
+	await login(page, reviewer(testInfo) ?? users.alice());
+	const hit = await searchHit(page);
+	await expect(hit).toContainText(SAMPLE_MARK);
+	await screenshot(page, 'search-hit', testInfo);
+});
+
+// The banners of the playback page for every project of the grid (UI-SPEC,
+// surface 2, state table). The English grid reaches each state with the user
+// of its functional test above; a review user reaches all three, since alice's
+// own file is not shared with them and they hold the shares of locked.webm
+// (download switched off) and broken.webm.
+const BANNER_SHOTS = [
+	{ title: 'Nicht verfügbar', name: 'play-unavailable', banner: '#avs-banner-unavailable', user: users.mallory, fileId: fileIds.webm },
+	{ title: 'Download gesperrt', name: 'play-download_blocked', banner: '#avs-banner-download_blocked', user: users.bob, fileId: fileIds.locked },
+	{ title: 'Format kaputt', name: 'play-format_broken', banner: '#avs-banner-format', user: users.alice, fileId: fileIds.broken },
+] as const;
+
+for (const shot of BANNER_SHOTS) {
+	test(`Banner "${shot.title}" für die Abnahme @screenshot`, async ({ page }, testInfo) => {
+		await login(page, reviewer(testInfo) ?? shot.user());
+		await page.goto(playPath(shot.fileId()));
+		await expect(page.locator(shot.banner)).toBeVisible();
+		await screenshot(page, shot.name, testInfo);
+	});
+}
