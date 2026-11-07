@@ -75,7 +75,7 @@ class ExAppService {
 	public const ADMIN_TIMEOUT_SECONDS = 10.0;
 
 	/** The closed lists of the container (backend store/repo.py STATES, STAGES). */
-	public const WORK_STATES = ['active', 'unreadable', 'vanished', 'trashed', 'sample'];
+	public const WORK_STATES = ['active', 'unreadable', 'vanished', 'trashed'];
 	public const WORK_STAGES = ['pending', 'probing', 'fetching', 'keyed', 'failed'];
 	/** The keys of one work stock entry, exactly. */
 	public const WORKSTOCK_KEYS = ['fileId', 'mediaId', 'storageId', 'state', 'stage', 'reason'];

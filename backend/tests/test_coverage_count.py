@@ -148,7 +148,7 @@ def test_two_pending_copies_with_one_prefilter_key_are_one_content(store: Store)
     assert cov.coverage(conn, NOW).contents == 2
 
 
-@pytest.mark.parametrize("state", ["vanished", "trashed", "unreadable", "sample"])
+@pytest.mark.parametrize("state", ["vanished", "trashed", "unreadable"])
 def test_references_that_may_not_count_are_neither_files_nor_contents(store: Store, state: str) -> None:
     conn = _conn(store)
     _media(conn, 1, transcript=True, orphaned=False)
@@ -159,6 +159,17 @@ def test_references_that_may_not_count_are_neither_files_nor_contents(store: Sto
 
     assert (found.contents, found.transcribed, found.files) == (0, 0, 0)
     assert found.by_state[state] == 2
+
+
+def test_a_sample_counts_in_neither_and_has_no_state(store: Store) -> None:
+    conn = _conn(store)
+    _media(conn, 1, transcript=True, orphaned=False)
+    store.put_sample(10, 1)  # D-02-15: the sample layer is no reference
+
+    found = cov.coverage(conn, NOW)
+
+    assert (found.contents, found.transcribed, found.files) == (0, 0, 0)
+    assert "sample" not in found.by_state
 
 
 def test_an_unreadable_copy_is_not_pulled_in_by_its_keyed_sibling(store: Store) -> None:

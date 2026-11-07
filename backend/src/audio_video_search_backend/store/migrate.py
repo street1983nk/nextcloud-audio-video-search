@@ -6,7 +6,9 @@ anew, the rows are copied, the old table is dropped and the new one renamed.
 ``storage_id`` was TEXT and carries ``''`` for the samples of phase 1
 (api/sample.py); v2 keeps the numeric Nextcloud storage id and gives a sample
 0. A row with a media item is ``keyed`` (its content key is known), one
-without is ``pending``. ``media`` gains ``head_sha256`` (the first 64 KiB, for
+without is ``pending``. The samples of phase 1 move to their own layer
+``sample_ref`` (D-02-15); a sample row without a media item has no content and
+is dropped. ``media`` gains ``head_sha256`` (the first 64 KiB, for
 the read proof) and ``orphaned_at`` (the last reference went away).
 
 Every statement runs inside ``BEGIN IMMEDIATE``; any failure rolls the whole
@@ -44,15 +46,29 @@ CREATE TABLE file_ref_v2 (
 )
 """
 
+# Must stay identical to the sample_ref definition in schema.sql.
+SAMPLE_REF_V2: Final = """
+CREATE TABLE sample_ref (
+    file_id    INTEGER PRIMARY KEY,
+    media_id   INTEGER NOT NULL REFERENCES media (media_id),
+    created_at INTEGER NOT NULL
+)
+"""
+
 V1_TO_V2_STEPS: tuple[str, ...] = (
     FILE_REF_V2,
+    SAMPLE_REF_V2,
+    """
+    INSERT INTO sample_ref (file_id, media_id, created_at)
+    SELECT file_id, media_id, updated_at FROM file_ref WHERE state = 'sample' AND media_id IS NOT NULL
+    """,
     """
     INSERT INTO file_ref_v2 (file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime,
                              state, stage, reason, attempts, next_try_at, proved_at, vanished_since, updated_at)
     SELECT file_id, media_id, COALESCE(CAST(NULLIF(storage_id, '') AS INTEGER), 0), NULL, NULL, etag, size,
            mtime, state, CASE WHEN media_id IS NULL THEN 'pending' ELSE 'keyed' END, reason, 0, NULL, NULL,
            NULL, updated_at
-    FROM file_ref
+    FROM file_ref WHERE state <> 'sample'
     """,
     "DROP TABLE file_ref",
     "ALTER TABLE file_ref_v2 RENAME TO file_ref",
@@ -60,6 +76,7 @@ V1_TO_V2_STEPS: tuple[str, ...] = (
     "CREATE INDEX file_ref_storage ON file_ref (storage_id)",
     "CREATE INDEX file_ref_prefilter ON file_ref (prefilter_key) WHERE prefilter_key IS NOT NULL",
     "CREATE INDEX file_ref_stage ON file_ref (stage, next_try_at) WHERE stage <> 'keyed'",
+    "CREATE INDEX sample_ref_media ON sample_ref (media_id)",
     "ALTER TABLE media ADD COLUMN head_sha256 TEXT",
     "ALTER TABLE media ADD COLUMN orphaned_at INTEGER",
     "UPDATE meta SET value = '2' WHERE key = 'schema_version'",

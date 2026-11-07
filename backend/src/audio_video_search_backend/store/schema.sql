@@ -50,8 +50,9 @@ CREATE TABLE IF NOT EXISTS media_key (
 );
 
 -- One row per Nextcloud file that has been seen: the work stock of the
--- discovery. Rights stay per file_id; only a reference in state active (or a
--- sample of the walking skeleton) ever gives a hit.
+-- discovery. Rights stay per file_id; only a reference in state active ever
+-- gives a hit. The test results of the walking skeleton live in sample_ref,
+-- never here (D-02-15).
 --
 -- storage_id is the numeric Nextcloud storage id (oc_storages.numeric_id); the
 -- string id is cut to an md5 above 64 characters, so the container never keys
@@ -88,6 +89,20 @@ CREATE INDEX IF NOT EXISTS file_ref_media ON file_ref (media_id);
 CREATE INDEX IF NOT EXISTS file_ref_storage ON file_ref (storage_id);
 CREATE INDEX IF NOT EXISTS file_ref_prefilter ON file_ref (prefilter_key) WHERE prefilter_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS file_ref_stage ON file_ref (stage, next_try_at) WHERE stage <> 'keyed';
+
+-- The test results of occ :sample (D-02-15, Owner 07.11.): a layer of its own,
+-- so a sample and the reference of the discovery for the same file never
+-- overwrite each other. The intake and the orphan rule never write here; the
+-- sample removal never writes file_ref. A sample gives a hit for its file
+-- unless the discovery holds a reference of that file that gives none
+-- (unreadable, vanished, trashed). media_id is the content of the bytes the
+-- sample read through the gateway.
+CREATE TABLE IF NOT EXISTS sample_ref (
+    file_id    INTEGER PRIMARY KEY,
+    media_id   INTEGER NOT NULL REFERENCES media (media_id),
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sample_ref_media ON sample_ref (media_id);
 
 -- Every transcript version with its full provenance (decision 5).
 CREATE TABLE IF NOT EXISTS transcript (

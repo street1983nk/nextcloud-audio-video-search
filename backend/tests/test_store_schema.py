@@ -11,7 +11,18 @@ from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import SAMPLE_MODEL_SHA256, Level, Provenance
 from audio_video_search_backend.store.repo import STATE_REASONS, Store
 
-TABLES = {"meta", "media", "media_key", "file_ref", "transcript", "word", "current", "correction", "index_outbox"}
+TABLES = {
+    "meta",
+    "media",
+    "media_key",
+    "file_ref",
+    "sample_ref",
+    "transcript",
+    "word",
+    "current",
+    "correction",
+    "index_outbox",
+}
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 MODEL = "d" * 64
@@ -59,9 +70,7 @@ def _real_prov(sha: str) -> Provenance:
 
 def _seed(store: Store, file_id: int, sha: str) -> int:
     media_id = store.media_for_file_sha256(sha)
-    store.upsert_file_ref(
-        file_id, media_id, storage_id=0, etag="", size=10, mtime=0, state="sample", stage="keyed", reason="sample"
-    )
+    store.put_sample(file_id, media_id)
     assert store.publish_version(media_id, _sample_prov(sha), _words()).published
     return media_id
 
@@ -72,6 +81,7 @@ def _count(path: Path, table: str, media_id: int) -> int:
         "word": "SELECT COUNT(*) FROM word JOIN transcript USING (version_id) WHERE media_id = ?",
         "current": "SELECT COUNT(*) FROM current WHERE media_id = ?",
         "file_ref": "SELECT COUNT(*) FROM file_ref WHERE media_id = ?",
+        "sample_ref": "SELECT COUNT(*) FROM sample_ref WHERE media_id = ?",
         "index_outbox": "SELECT COUNT(*) FROM index_outbox WHERE media_id = ?",
         "media": "SELECT COUNT(*) FROM media WHERE media_id = ?",
         "media_key": "SELECT COUNT(*) FROM media_key WHERE media_id = ?",
@@ -168,26 +178,26 @@ def test_media_for_file_sha256_rejects_non_hex(store: Store) -> None:
 def test_file_ref_roundtrip(store: Store) -> None:
     media_id = store.media_for_file_sha256(SHA_A)
     store.upsert_file_ref(
-        42, media_id, storage_id=11, etag="e1", size=5, mtime=1, state="sample", stage="keyed", reason=""
+        42, media_id, storage_id=11, etag="e1", size=5, mtime=1, state="active", stage="keyed", reason=""
     )
     store.upsert_file_ref(
-        43, media_id, storage_id=12, etag="e2", size=5, mtime=1, state="sample", stage="keyed", reason=None
+        43, media_id, storage_id=12, etag="e2", size=5, mtime=1, state="active", stage="keyed", reason=None
     )
     assert store.media_for_file(42) == media_id
     assert store.media_for_file(99) is None
     assert store.file_ids_for_media(media_id) == [42, 43]
     store.upsert_file_ref(
-        43, None, storage_id=12, etag="e3", size=5, mtime=2, state="sample", stage="pending", reason=None
+        43, None, storage_id=12, etag="e3", size=5, mtime=2, state="active", stage="pending", reason=None
     )
     assert store.file_ids_for_media(media_id) == [42]
     assert store.media_for_file(43) is None
 
 
 def test_file_ref_reason_is_a_closed_list(store: Store) -> None:
-    assert "sample" in STATE_REASONS
+    assert "sample" not in STATE_REASONS  # a sample is no reference (D-02-15)
     with pytest.raises(ValueError, match="reason"):
         store.upsert_file_ref(
-            1, None, storage_id=0, etag="", size=0, mtime=0, state="sample", stage="keyed", reason="Sitzung.mp4"
+            1, None, storage_id=0, etag="", size=0, mtime=0, state="active", stage="keyed", reason="Sitzung.mp4"
         )
     with pytest.raises(ValueError, match="state"):
         store.upsert_file_ref(
@@ -217,7 +227,7 @@ def test_remove_sample_never_touches_real_transcripts(store: Store, tmp_path: Pa
     media_id = _seed(store, 7, SHA_A)
     assert store.publish_version(media_id, _real_prov(SHA_A), _words()).published
     assert store.remove_sample(7) == ("not_sample", media_id)
-    for table in ("transcript", "word", "current", "file_ref", "media"):
+    for table in ("transcript", "word", "current", "sample_ref", "media"):
         assert _count(path, table, media_id) > 0, table
 
 
@@ -237,9 +247,7 @@ def test_remove_sample_keeps_media_with_corrections(store: Store, tmp_path: Path
 def test_remove_sample_keeps_media_shared_with_another_file(store: Store, tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     media_id = _seed(store, 7, SHA_A)
-    store.upsert_file_ref(
-        8, media_id, storage_id=0, etag="", size=10, mtime=0, state="sample", stage="keyed", reason="sample"
-    )
+    store.put_sample(8, media_id)
     assert store.remove_sample(7) == ("removed", media_id)
     assert store.file_ids_for_media(media_id) == [8]
     assert _count(path, "media", media_id) == 1
@@ -252,6 +260,7 @@ def test_remove_sample_keeps_a_reference_of_the_discovery(store: Store, tmp_path
         7, media_id, storage_id=4, etag="e", size=10, mtime=1, state="active", stage="keyed", reason=None, proved_at=3
     )
     before = store.file_ref(7)
+    store.put_sample(7, media_id)
     assert store.publish_version(media_id, _sample_prov(SHA_A), _words()).published
 
     assert store.remove_sample(7) == ("removed", media_id)

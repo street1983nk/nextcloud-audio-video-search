@@ -44,16 +44,16 @@ _BUSY_TIMEOUT_MS: Final = 5000
 # later, and a free field is the shortest path to a file name where no file
 # name may appear. An empty reason is stored as NULL.
 #
-# state: whether the reference counts and gives hits. Only active and the
-# walking-skeleton sample do; unreadable (the read proof or the download
-# failed), vanished (the storage is no longer mounted) and trashed never give
-# a hit (T-02-06, _FILE_IDS_FOR_MEDIA).
-STATES: Final = frozenset({"active", "unreadable", "vanished", "trashed", "sample"})
+# state: whether the reference counts and gives hits. Only active does;
+# unreadable (the read proof or the download failed), vanished (the storage is
+# no longer mounted) and trashed never give a hit (T-02-06, _FILE_IDS_FOR_MEDIA).
+# The samples of the walking skeleton are not a state here: they live in
+# sample_ref (D-02-15).
+STATES: Final = frozenset({"active", "unreadable", "vanished", "trashed"})
 # stage: where the discovery of this file stands.
 STAGES: Final = frozenset({"pending", "probing", "fetching", "keyed", "failed"})
 STATE_REASONS: Final = frozenset(
     {
-        "sample",
         "read_denied",
         "read_timeout",
         "access_control",
@@ -100,11 +100,29 @@ ON CONFLICT (file_id) DO UPDATE SET
     next_try_at = excluded.next_try_at, proved_at = excluded.proved_at, vanished_since = excluded.vanished_since,
     updated_at = excluded.updated_at
 """
-# Only a reference that may give a hit: state active, or a sample of the
-# walking skeleton. unreadable, vanished and trashed never reach the search.
+# Only a file that may give a hit: an active reference of the discovery, or a
+# sample (D-02-15) of a file whose reference, if the discovery has one, is
+# active. unreadable, vanished and trashed never reach the search, also not
+# through a sample.
 _FILE_IDS_FOR_MEDIA: Final = """
-SELECT file_id FROM file_ref WHERE media_id = ? AND state IN ('active', 'sample') ORDER BY file_id
+SELECT file_id FROM file_ref WHERE media_id = :m AND state = 'active'
+UNION
+SELECT s.file_id FROM sample_ref s
+WHERE s.media_id = :m
+  AND NOT EXISTS (SELECT 1 FROM file_ref r WHERE r.file_id = s.file_id AND r.state <> 'active')
+ORDER BY 1
 """
+# The sample layer (D-02-15), written only by api/sample.py and remove_sample.
+_PUT_SAMPLE: Final = """
+INSERT INTO sample_ref (file_id, media_id, created_at) VALUES (:file_id, :media_id, :now)
+ON CONFLICT (file_id) DO UPDATE SET media_id = excluded.media_id, created_at = excluded.created_at
+"""
+_SAMPLE_MEDIA: Final = "SELECT media_id FROM sample_ref WHERE file_id = ?"
+_SAMPLE_VISIBLE: Final = """
+SELECT s.media_id FROM sample_ref s
+WHERE s.file_id = :f AND NOT EXISTS (SELECT 1 FROM file_ref r WHERE r.file_id = :f AND r.state <> 'active')
+"""
+_HAS_CURRENT: Final = "SELECT 1 FROM current WHERE media_id = ?"
 _FILE_REF_ROW: Final = """
 SELECT file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage, reason,
        attempts, next_try_at, proved_at, vanished_since, updated_at
@@ -134,13 +152,15 @@ UPDATE file_ref SET media_id = NULL, storage_id = :storage_id, prefilter_key = :
     reason = NULL, attempts = 0, next_try_at = NULL, proved_at = NULL, vanished_since = NULL, updated_at = :now
 WHERE file_id = :file_id
 """
-# The orphan rule (D-02-09, D-02-13): a content without an active or sample
-# reference is only marked; it is forgotten later, so a copy that turns up
-# again keeps its transcript and corrections.
+# The orphan rule (D-02-09, D-02-13): a content without an active reference
+# is only marked; it is forgotten later, so a copy that turns up again keeps
+# its transcript and corrections. The rule looks at the references of the
+# discovery only (D-02-15): a sample neither keeps a content from the mark nor
+# is it ever written here; the mark does not hide a sample hit.
 _MARK_ORPHANED: Final = """
 UPDATE media SET orphaned_at = :now
 WHERE media_id = :m AND orphaned_at IS NULL
-  AND NOT EXISTS (SELECT 1 FROM file_ref WHERE media_id = :m AND state IN ('active', 'sample'))
+  AND NOT EXISTS (SELECT 1 FROM file_ref WHERE media_id = :m AND state = 'active')
 """
 
 # The capture (plan 02-08). A reference is claimed by setting stage fetching;
@@ -149,8 +169,8 @@ WHERE media_id = :m AND orphaned_at IS NULL
 # again with new values) is never overwritten with the result of old bytes.
 #
 # Due work: a new or deferred reference (pending, next_try_at empty or past)
-# and a failed one whose retry time has come. vanished, trashed and sample
-# references are never fetched. New references come before retries.
+# and a failed one whose retry time has come. vanished and trashed references
+# are never fetched; a sample is no reference (D-02-15). New references come before retries.
 _CLAIM_CAPTURE: Final = """
 UPDATE file_ref SET stage = 'fetching', updated_at = :now
 WHERE file_id = (
@@ -252,9 +272,10 @@ DELETE FROM word WHERE version_id IN (SELECT version_id FROM transcript WHERE me
 """
 _DELETE_SAMPLE_TRANSCRIPTS: Final = "DELETE FROM transcript WHERE media_id = ? AND engine = 'sample'"
 _DELETE_OUTBOX: Final = "DELETE FROM index_outbox WHERE media_id = ?"
-_DELETE_FILE_REF: Final = "DELETE FROM file_ref WHERE file_id = ?"
+_DELETE_SAMPLE_REF: Final = "DELETE FROM sample_ref WHERE file_id = ?"
 _MEDIA_STILL_USED: Final = """
 SELECT EXISTS (SELECT 1 FROM file_ref WHERE media_id = :m)
+    OR EXISTS (SELECT 1 FROM sample_ref WHERE media_id = :m)
     OR EXISTS (SELECT 1 FROM correction WHERE media_id = :m)
     OR EXISTS (SELECT 1 FROM transcript WHERE media_id = :m)
 """
@@ -604,8 +625,9 @@ class Store:
         - content with the same (etag, size, mtime): stage, state and media stay,
           only the prefilter key and the reader are refreshed;
         - content with any difference: pending again without a media item, and
-          the previous media item is marked orphaned when no active or sample
-          reference points at it any more (D-02-13);
+          the previous media item is marked orphaned when no active reference
+          points at it any more (D-02-13); samples are neither read nor
+          written here (D-02-15);
         - metadata: only the prefilter key and the reader (DISC-06).
 
         Called only from worker/intake.py (gate in plan 02-20).
@@ -780,12 +802,34 @@ class Store:
         return None if row is None else FileRef(*row)
 
     def file_ids_for_media(self, media_id: int) -> list[int]:
-        """The files that may give a hit for this content: state active or sample only."""
-        return [int(r[0]) for r in self._conn.execute(_FILE_IDS_FOR_MEDIA, (media_id,))]
+        """The files that may give a hit for this content: active references and visible samples."""
+        return [int(r[0]) for r in self._conn.execute(_FILE_IDS_FOR_MEDIA, {"m": media_id})]
 
     def media_for_file(self, file_id: int) -> int | None:
+        """The content of a file for its excerpt: the one with a transcript first, the discovery before the sample."""
         row = self._conn.execute(_FILE_REF, (file_id,)).fetchone()
-        return None if row is None or row[0] is None else int(row[0])
+        real = None if row is None or row[0] is None else int(row[0])
+        visible = self._conn.execute(_SAMPLE_VISIBLE, {"f": file_id}).fetchone()
+        sample = None if visible is None else int(visible[0])
+        candidates = [m for m in (real, sample) if m is not None]
+        for media_id in candidates:
+            if self._conn.execute(_HAS_CURRENT, (media_id,)).fetchone() is not None:
+                return media_id
+        return candidates[0] if candidates else None
+
+    # The sample layer (D-02-15), called only from api/sample.py.
+
+    def put_sample(self, file_id: int, media_id: int) -> None:
+        """Point the sample of a file at a content; file_ref is never written here."""
+        if not _is_count(file_id) or file_id == 0 or not _is_count(media_id):
+            raise ValueError("invalid sample_ref field")
+        with self._transaction():
+            self._conn.execute(_PUT_SAMPLE, {"file_id": file_id, "media_id": media_id, "now": _now()})
+
+    def sample_media(self, file_id: int) -> int | None:
+        """The content the sample of a file points at, None without a sample."""
+        row = self._conn.execute(_SAMPLE_MEDIA, (file_id,)).fetchone()
+        return None if row is None else int(row[0])
 
     # Versions.
 
@@ -964,26 +1008,24 @@ class Store:
     # Walking-skeleton sample.
 
     def remove_sample(self, file_id: int) -> tuple[str, int | None]:
-        """Remove a seeded sample hit; real transcripts (level > 1) and real references are never touched."""
+        """Remove a seeded sample hit; real transcripts (level > 1) and file_ref are never touched (D-02-15)."""
         with self._transaction():
-            ref = self._conn.execute(_FILE_REF, (file_id,)).fetchone()
-            if ref is None:
-                return ("not_found", None)
-            media_id = None if ref[0] is None else int(ref[0])
-            current = self.current(media_id) if media_id is not None else None
+            sample = self._conn.execute(_SAMPLE_MEDIA, (file_id,)).fetchone()
+            if sample is None:
+                ref = self._conn.execute(_FILE_REF, (file_id,)).fetchone()
+                if ref is None:
+                    return ("not_found", None)
+                return ("not_sample", None if ref[0] is None else int(ref[0]))
+            media_id = int(sample[0])
+            current = self.current(media_id)
             if current is not None and current.level != Level.SAMPLE:
                 return ("not_sample", media_id)
-            if current is None and ref[1] != "sample":
-                return ("not_sample", media_id)
-            if media_id is not None:
-                self._conn.execute(_DELETE_CURRENT, (media_id,))
-                self._conn.execute(_DELETE_SAMPLE_WORDS, (media_id,))
-                self._conn.execute(_DELETE_SAMPLE_TRANSCRIPTS, (media_id,))
-                self._conn.execute(_DELETE_OUTBOX, (media_id,))
-            # A reference the discovery made stays: only the sample's own row goes.
-            if ref[1] == "sample":
-                self._conn.execute(_DELETE_FILE_REF, (file_id,))
-            if media_id is not None and not self._conn.execute(_MEDIA_STILL_USED, {"m": media_id}).fetchone()[0]:
+            self._conn.execute(_DELETE_CURRENT, (media_id,))
+            self._conn.execute(_DELETE_SAMPLE_WORDS, (media_id,))
+            self._conn.execute(_DELETE_SAMPLE_TRANSCRIPTS, (media_id,))
+            self._conn.execute(_DELETE_OUTBOX, (media_id,))
+            self._conn.execute(_DELETE_SAMPLE_REF, (file_id,))
+            if not self._conn.execute(_MEDIA_STILL_USED, {"m": media_id}).fetchone()[0]:
                 self._conn.execute(_DELETE_MEDIA_KEYS, (media_id,))
                 self._conn.execute(_DELETE_MEDIA, (media_id,))
         _LOG.info("sample removed", extra={"file_id": file_id, "media_id": media_id})

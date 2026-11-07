@@ -160,9 +160,7 @@ def test_the_marks_name_schema_analyzer_list_and_format() -> None:
 
 def _seed(store: Store, text: str) -> int:
     media_id = store.media_for_file_sha256(SHA)
-    store.upsert_file_ref(
-        7, media_id, storage_id=0, etag="", size=1, mtime=0, state="sample", stage="keyed", reason="sample"
-    )
+    store.put_sample(7, media_id)
     prov = Provenance(
         engine="sample",
         model_sha256=SAMPLE_MODEL_SHA256,

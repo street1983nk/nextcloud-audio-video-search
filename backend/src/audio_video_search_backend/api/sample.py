@@ -74,19 +74,15 @@ def sample_words(at_ms: int) -> list[Word]:
     ]
 
 
-def _seed(opened: Services, file_id: int, sha256: str, size: int, at_ms: int) -> dict[str, object]:
+def _seed(opened: Services, file_id: int, sha256: str, at_ms: int) -> dict[str, object]:
     store, index = opened.store, opened.index
     media_id = store.media_for_file_sha256(sha256)
-    # The acceptance test of phase 2 (plan 02-04) seeds samples on files the
-    # discovery has already captured. A sample never rewrites such a reference:
-    # its state, media item, stage and read proof stay what the discovery made
-    # of them, and the sample goes to the content of the bytes it read. Only a
-    # file without a reference gets a sample row. Both steps run under the one
-    # lock of the services, so nothing slips in between.
-    if store.file_ref(file_id) is None:
-        store.upsert_file_ref(
-            file_id, media_id, storage_id=0, etag="", size=size, mtime=0, state="sample", stage="keyed", reason="sample"
-        )
+    # D-02-15: the sample is a layer of its own (sample_ref). It never writes
+    # the reference of the discovery (state, media item, stage, read proof),
+    # and the intake never writes the sample, so the order of the two does not
+    # matter. The sample goes to the content of the bytes it read; it gives a
+    # hit unless the discovery holds a reference of the file that gives none.
+    store.put_sample(file_id, media_id)
     prov = Provenance(
         engine="sample",
         model_sha256=SAMPLE_MODEL_SHA256,
@@ -126,7 +122,7 @@ async def sample(body: SampleRequest, opened: Annotated[Services, Depends(servic
         _LOG.info("sample refused", extra={"file_id": body.fileId, "error": error})
         return {"error": error}
     sha256 = fetched.sha256
-    answer = await run_locked(opened, lambda: _seed(opened, body.fileId, sha256, fetched.size, body.atMs))
+    answer = await run_locked(opened, lambda: _seed(opened, body.fileId, sha256, body.atMs))
     _LOG.info("sample answered", extra={"file_id": body.fileId, "result": answer["result"]})
     return answer
 

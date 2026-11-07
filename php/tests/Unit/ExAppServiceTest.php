@@ -352,7 +352,7 @@ final class ExAppServiceTest extends TestCase {
 			'contents' => 4,
 			'transcribed' => 1,
 			'files' => 6,
-			'byState' => ['active' => 6, 'sample' => 0, 'trashed' => 0, 'unreadable' => 1, 'vanished' => 0],
+			'byState' => ['active' => 6, 'trashed' => 0, 'unreadable' => 1, 'vanished' => 0],
 			'byStage' => ['failed' => 1, 'fetching' => 0, 'keyed' => 3, 'pending' => 3, 'probing' => 0],
 			'dueWork' => 3,
 		];
@@ -433,7 +433,7 @@ final class ExAppServiceTest extends TestCase {
 			'negative' => [self::coverageAnswer(['files' => -1])],
 			'text number' => [self::coverageAnswer(['contents' => '4'])],
 			'over 100 percent' => [self::coverageAnswer(['transcribed' => 5])],
-			'unknown state' => [self::coverageAnswer(['byState' => ['active' => 1, 'gone' => 0, 'sample' => 0, 'trashed' => 0, 'unreadable' => 0]])],
+			'unknown state' => [self::coverageAnswer(['byState' => ['active' => 1, 'gone' => 0, 'trashed' => 0, 'unreadable' => 0]])],
 			'missing stage' => [self::coverageAnswer(['byStage' => ['keyed' => 1]])],
 		];
 	}
@@ -451,7 +451,7 @@ final class ExAppServiceTest extends TestCase {
 
 	public function testTheClosedListsAreTheOnesOfTheContainer(): void {
 		// backend/src/audio_video_search_backend/store/repo.py STATES and STAGES.
-		self::assertSame(['active', 'unreadable', 'vanished', 'trashed', 'sample'], ExAppService::WORK_STATES);
+		self::assertSame(['active', 'unreadable', 'vanished', 'trashed'], ExAppService::WORK_STATES);
 		self::assertSame(['pending', 'probing', 'fetching', 'keyed', 'failed'], ExAppService::WORK_STAGES);
 	}
 }

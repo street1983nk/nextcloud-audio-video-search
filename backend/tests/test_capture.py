@@ -861,9 +861,17 @@ async def test_a_failure_of_a_reference_changed_meanwhile_is_not_written(store: 
     assert (ref.state, ref.stage, ref.attempts) == ("active", "pending", 0)
 
 
-@pytest.mark.parametrize("state", ["vanished", "trashed", "sample"])
+@pytest.mark.parametrize("state", ["vanished", "trashed"])
 async def test_references_that_may_not_count_are_never_fetched(store: Store, tmp_dir: Path, state: str) -> None:
     store.upsert_file_ref(10, None, storage_id=3, etag="e", size=1, mtime=1, state=state, stage="pending", reason=None)
+    fetch = FakeFetch()
+
+    assert (await _capture(store, fetch, tmp_dir, Clock()).run_once()).outcome == CaptureOutcome.IDLE
+    assert fetch.calls == []
+
+
+async def test_a_file_with_only_a_sample_is_never_fetched(store: Store, tmp_dir: Path) -> None:
+    store.put_sample(10, store.media_for_file_sha256("a" * 64))  # D-02-15: a sample is no reference
     fetch = FakeFetch()
 
     assert (await _capture(store, fetch, tmp_dir, Clock()).run_once()).outcome == CaptureOutcome.IDLE

@@ -17,7 +17,7 @@ from audio_video_search_backend.store import coverage as counting
 
 # The closed list of repo.STATES, spelled out so the validation answers 422;
 # tests/test_api_routes.py holds both lists equal.
-type WorkstockState = Literal["active", "unreadable", "vanished", "trashed", "sample"]
+type WorkstockState = Literal["active", "unreadable", "vanished", "trashed"]
 
 router = APIRouter()
 

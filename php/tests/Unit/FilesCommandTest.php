@@ -136,7 +136,7 @@ final class FilesCommandTest extends TestCase {
 			'contents' => 4,
 			'transcribed' => 1,
 			'files' => 6,
-			'byState' => ['active' => 6, 'unreadable' => 1, 'vanished' => 0, 'trashed' => 0, 'sample' => 0],
+			'byState' => ['active' => 6, 'unreadable' => 1, 'vanished' => 0, 'trashed' => 0],
 			'byStage' => ['pending' => 3, 'probing' => 0, 'fetching' => 0, 'keyed' => 3, 'failed' => 1],
 			'dueWork' => 3,
 		];

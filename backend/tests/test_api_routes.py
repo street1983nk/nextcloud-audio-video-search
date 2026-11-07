@@ -179,17 +179,18 @@ def test_a_sample_whose_bytes_differ_from_the_reference_goes_to_its_own_content(
     assert answer["mediaId"] == store.media_for_file_sha256(SHA)
     assert answer["mediaId"] != other
     assert store.file_ref(42) == before
-    assert _hit_ids(api) == []
+    # D-02-15: the sample is its own layer; the reference is active, so the
+    # sample of the bytes the gateway gave shows (behind the debug switch).
+    assert _hit_ids(api) == [42]
 
 
-def test_a_sample_without_a_reference_adds_a_sample_row(api: TestClient) -> None:
+def test_a_sample_without_a_reference_writes_only_the_sample_layer(api: TestClient) -> None:
     store, _index = _services(api)
 
-    _seed(api)
+    answer = _seed(api)
 
-    ref = store.file_ref(42)
-    assert ref is not None
-    assert (ref.state, ref.storage_id, ref.stage, ref.reason) == ("sample", 0, "keyed", "sample")
+    assert store.file_ref(42) is None
+    assert store.sample_media(42) == answer["mediaId"]
     assert _hit_ids(api) == [42]
 
 

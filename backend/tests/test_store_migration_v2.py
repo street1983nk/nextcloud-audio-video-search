@@ -146,7 +146,7 @@ KEPT = ("media_key", "transcript", "word", "current", "correction", "index_outbo
 
 _ALL_ROWS = {
     table: f"SELECT * FROM {table} ORDER BY 1, 2"  # noqa: S608 - fixed table names of this test
-    for table in ("media", *KEPT)
+    for table in ("media", "sample_ref", *KEPT)
 }
 
 
@@ -177,24 +177,21 @@ def test_a_v1_file_is_lifted_to_v2_without_loss(tmp_path: Path) -> None:
     store = Store.open(path)
     try:
         assert store.schema_version() == 2
-        sample = store.file_ref(42)
+        sample_ref = store.file_ref(42)
+        sample_media = store.sample_media(42)
         other = store.file_ref(43)
     finally:
         store.close()
 
-    assert sample is not None
-    assert other is not None
-    assert (sample.storage_id, sample.state, sample.stage, sample.media_id, sample.size) == (
-        0,
-        "sample",
-        "keyed",
-        5,
-        1234,
-    )
-    assert (sample.reason, sample.updated_at) == ("sample", 100)
-    assert (other.storage_id, other.stage, other.media_id, other.etag) == (7, "pending", None, "e")
-    assert (sample.prefilter_key, sample.reader_uid, sample.proved_at, sample.vanished_since) == (None,) * 4
-    assert (sample.attempts, sample.next_try_at) == (0, None)
+    # D-02-15: v1 knew only samples (phase 1). They move to their own layer;
+    # a sample without a media item has no content and is dropped, so file_ref
+    # starts empty.
+    assert sample_ref is None
+    assert other is None
+    assert sample_media == 5
+    assert _rows(path, "sample_ref") == [(42, 5, 100)]
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM file_ref").fetchone()[0] == 0
     for table in KEPT:
         assert _rows(path, table) == before[table], table
     assert _rows(path, "media") == [(5, 0, 100, None, None)]
@@ -317,7 +314,7 @@ def _ref(store: Store, file_id: int, **changes: object) -> None:
 
 
 def test_the_closed_lists() -> None:
-    assert frozenset({"active", "unreadable", "vanished", "trashed", "sample"}) == STATES
+    assert frozenset({"active", "unreadable", "vanished", "trashed"}) == STATES
     assert frozenset({"pending", "probing", "fetching", "keyed", "failed"}) == STAGES
 
 
@@ -370,11 +367,11 @@ def test_upsert_file_ref_stores_every_field(store: Store) -> None:
 
 
 @pytest.mark.parametrize("state", ["unreadable", "vanished", "trashed"])
-def test_only_active_and_sample_references_give_hits(store: Store, state: str) -> None:
+def test_only_active_references_and_samples_give_hits(store: Store, state: str) -> None:
     media_id = store.media_for_file_sha256(SHA_A)
     common: dict[str, object] = {"etag": "", "size": 1, "mtime": 0, "stage": "keyed"}
     store.upsert_file_ref(1, media_id, storage_id=1, state="active", reason=None, **common)  # type: ignore[arg-type]
-    store.upsert_file_ref(2, media_id, storage_id=0, state="sample", reason="sample", **common)  # type: ignore[arg-type]
+    store.put_sample(2, media_id)
     store.upsert_file_ref(3, media_id, storage_id=1, state=state, reason=None, **common)  # type: ignore[arg-type]
 
     assert store.file_ids_for_media(media_id) == [1, 2]

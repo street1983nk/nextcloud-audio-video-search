@@ -20,17 +20,22 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from audio_video_search_backend import main, nc
 from audio_video_search_backend.store.repo import IntakeItem, Store
-from tests.test_api_routes import (  # noqa: F401  (pytest fixtures)
-    SHA,
-    _hit_ids,
-    _post,
-    _search,
-    _seed,
-    _services,
-    api,
-    fetched,
-)
+from tests.test_api_routes import CONTENT, SHA, _hit_ids, _post, _search, _seed, _services
+
+
+@pytest.fixture
+def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """The app with a gateway that always gives the same bytes."""
+
+    async def fake(file_id: int, user_id: str, *, max_bytes: int) -> nc.FetchResult:
+        del file_id, user_id, max_bytes
+        return nc.FetchResult(sha256=SHA, size=len(CONTENT), error=None)
+
+    monkeypatch.setattr(nc, "fetch_file_sha256", fake)
+    with TestClient(main.APP) as client:
+        yield client
 
 
 def _content(file_id: int, queue_id: int = 1) -> IntakeItem:
@@ -45,10 +50,6 @@ def _content(file_id: int, queue_id: int = 1) -> IntakeItem:
         prefilter_key=None,
         reader_uid="ana",
     )
-
-
-def _orphaned_at(store: Store, media_id: int) -> object:
-    return store.reading_connection().execute("SELECT orphaned_at FROM media WHERE media_id = ?", (media_id,)).fetchone()[0]
 
 
 def test_intake_before_the_sample_still_gives_the_sample_hit(api: TestClient) -> None:
@@ -73,7 +74,7 @@ def test_sample_before_the_intake_keeps_the_sample_hit(api: TestClient) -> None:
     store.apply_intake([_content(51), _content(53, queue_id=2)])
 
     assert sorted(_hit_ids(api)) == [51, 53]  # type: ignore[type-var]
-    assert _orphaned_at(store, media_id) is None
+    assert (store.sample_media(51), store.sample_media(53)) == (media_id, media_id)
     for file_id in (51, 53):
         ref = store.file_ref(file_id)
         assert ref is not None
@@ -89,7 +90,8 @@ def test_both_orders_end_in_the_same_hits(api: TestClient) -> None:
 
     assert sorted(_hit_ids(api)) == [61, 62]  # type: ignore[type-var]
     first, second = store.file_ref(61), store.file_ref(62)
-    assert first is not None and second is not None
+    assert first is not None
+    assert second is not None
     assert (first.state, first.stage) == (second.state, second.stage) == ("active", "pending")
 
 
@@ -145,4 +147,6 @@ def plain(tmp_path: Path) -> Iterator[Store]:
 
 def test_the_file_ref_states_no_longer_know_sample(plain: Store) -> None:
     with pytest.raises(ValueError, match="state"):
-        plain.upsert_file_ref(1, None, storage_id=0, etag="", size=0, mtime=0, state="sample", stage="keyed", reason=None)
+        plain.upsert_file_ref(
+            1, None, storage_id=0, etag="", size=0, mtime=0, state="sample", stage="keyed", reason=None
+        )

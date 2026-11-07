@@ -12,7 +12,8 @@ from the SAME set of references, the active ones (Findling #25, pitfall 4):
   that active reference, so X is a subset of Y by construction and the rate
   never goes above 100 %.
 
-unreadable, vanished, trashed and sample references count in neither, and an
+unreadable, vanished and trashed references count in neither, a sample
+(sample_ref, D-02-15) is no reference at all, and an
 unreadable copy is never pulled in through a keyed sibling: the sibling counts
 for itself, the unreadable copy adds nothing.
 

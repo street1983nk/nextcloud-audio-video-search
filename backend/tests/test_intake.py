@@ -192,11 +192,9 @@ def test_an_invalid_row_rolls_back_the_whole_band(store: Store) -> None:
     assert store.file_ref(10) is None
 
 
-def test_a_sample_reference_becomes_a_real_one_on_its_first_content_row(store: Store) -> None:
+def test_a_file_with_a_sample_gets_a_real_reference_on_its_first_content_row(store: Store) -> None:
     media_id = store.media_for_file_sha256(SHA_B)
-    store.upsert_file_ref(
-        10, media_id, storage_id=0, etag="", size=1000, mtime=0, state="sample", stage="keyed", reason="sample"
-    )
+    store.put_sample(10, media_id)
 
     store.apply_intake([item()])
 
