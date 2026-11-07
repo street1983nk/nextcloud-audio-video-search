@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-11-07T10:31:27.754Z"
+stopped_at: Completed 02-06-PLAN.md
+last_updated: "2026-11-07T10:38:44.658Z"
 last_activity: 2026-11-07
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 18
+  completed_plans: 19
   percent: 9
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 5 of 22 (planned, 11 waves)
+Plan: 6 of 22 (planned, 11 waves)
 Status: Ready to execute
 Last activity: 2026-11-07
 
-Progress: [█████░░░░░] 51%
+Progress: [█████░░░░░] 54%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [█████░░░░░] 51%
 | Phase 02 P03 | 70 min | 2 tasks | 12 files |
 | Phase 02 P04 | 75 min | 3 tasks | 8 files |
 | Phase 02 P05 | 50 min | 2 tasks | 9 files |
+| Phase 02 P06 | 45 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -110,6 +111,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-03: PHP-Warteschlange avs_queue mit Claim-Token, 900 s Sperrfrist, content/delete ersetzen einander; Mapper-Tests gegen echte DB, php.yml aktiviert dafür die App; Spalte last_file_id statt cursor
 - [Phase 02]: 02-04: Gemeinsame Hilfen der Abnahme in ci/discovery/common.sh; Ledger vergisst Proben nur nach Ausschluss-Phasen
 - [Phase 02]: 02-05: Intake quittiert nach dem Commit; HTTP der Warteschlange in nc.py, Vertrag in nc_queue.py; kein Claim vor companion ok
+- [Phase 02]: 02-06: Erst-Crawl nur bei Backend ok/version_patch_differs (firstAdmin öffentlich); Cursor in avs_crawl, verlorener Crawl-Job wird vom Scheduler ersetzt
 
 ### Pending Todos
 
@@ -132,6 +134,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-07T10:31:27.725Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-11-07T10:38:44.638Z
+Stopped at: Completed 02-06-PLAN.md
 Resume file: None

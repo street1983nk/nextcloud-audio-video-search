@@ -75,7 +75,7 @@ Plans:
 - [x] 02-03-PLAN.md: (W1) PHP: Tabellen, Warteschlange, Mountmenge, Queue-Routen
 - [x] 02-04-PLAN.md: (W2) Abnahme Teil 2: unabhängige Wahrheit, Ledger, Vergleich, Positivkontrollen
 - [x] 02-05-PLAN.md: (W2) Container: Intake mit Ack nach Eintrag
-- [ ] 02-06-PLAN.md: (W2) PHP: Erst-Crawl nach Handshake, Gate-Regeln 12/13
+- [x] 02-06-PLAN.md: (W2) PHP: Erst-Crawl nach Handshake, Gate-Regeln 12/13
 - [ ] 02-07-PLAN.md: (W2) PHP: Node- und Cache-Ereignisse
 - [ ] 02-08-PLAN.md: (W3) Container: Erfassung per Temp-Download mit Längenprüfung
 - [ ] 02-09-PLAN.md: (W3) Container: Zählung nach Inhalten, /workstock, /coverage
@@ -227,7 +227,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
-| 2. Erfassung aller Dateien | 5/22 | In Progress|  |
+| 2. Erfassung aller Dateien | 6/22 | In Progress|  |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
