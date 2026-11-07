@@ -320,7 +320,9 @@ jobs:
           : > results.txt
           id_of() { sed -n "s/^$1=//p" "${IDS_ENV}" | tail -n 1; }
           ./occ config:app:set audio_video_search sample_visible --value=true --type=boolean
-          for phase in initial read-proof shares access-control upload overwrite copy rename tag move-cross             trash restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user             reattach foreign-change; do
+          for phase in initial read-proof shares access-control upload overwrite copy rename tag move-cross \
+            trash restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user \
+            reattach foreign-change; do
             echo "::group::phase ${phase}"
             ok=1
             bash "${d}/compare.sh" prepare "${phase}" | tee "prepare-${phase}.txt" || ok=0
@@ -330,7 +332,8 @@ jobs:
               initial | read-proof | shares) true ;;
               access-control) bash "${d}/topology.sh" access_control ;;
               upload)
-                bash "${d}/topology.sh" upload_new                   && bash "${d}/compare.sh" appear "$(id_of UPLOAD_ID)" "$(id_of UPLOAD_AT)" 300 ;;
+                bash "${d}/topology.sh" upload_new \
+                  && bash "${d}/compare.sh" appear "$(id_of UPLOAD_ID)" "$(id_of UPLOAD_AT)" 300 ;;
               overwrite) bash "${d}/topology.sh" overwrite ;;
               copy) bash "${d}/topology.sh" copy_in_home ;;
               rename) bash "${d}/topology.sh" rename_in_home ;;
@@ -346,7 +349,8 @@ jobs:
               delete-user) bash "${d}/topology.sh" delete_dan ;;
               reattach) bash "${d}/topology.sh" reattach ;;
               foreign-change)
-                bash "${d}/topology.sh" foreign_change                   && ./occ audio_video_search:rescan --storage="$(id_of STORAGE_SMB_ANA)" ;;
+                bash "${d}/topology.sh" foreign_change \
+                  && ./occ audio_video_search:rescan --storage="$(id_of STORAGE_SMB_ANA)" ;;
             esac
             [ $? = 0 ] || { echo "FAIL ${phase}:operation" >> results.txt; ok=0; }
             bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
