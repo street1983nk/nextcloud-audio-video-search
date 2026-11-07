@@ -28,6 +28,10 @@ Ohne Konfiguration kennt das System alle Audio- und Videodateien der Instanz (al
 ### Ausschluss-Bedeutung und Papierkorb (Owner 07.11.)
 - **D-02-08:** Nutzer ausschließen = die Speicher, die ihm gehören (Home, eigene externe Mounts), werden nicht erfasst, und er bekommt keine Treffer. Dateien, die andere mit ihm teilen, bleiben für die anderen erfasst. Gruppenausschluss gilt für jedes Mitglied.
 - **D-02-09:** Papierkorb: Transkript nur als verwaist vormerken (`orphaned_at`), nicht mehr findbar, bei Wiederherstellung sofort zurück. Endgültiges Löschen in Phase 8. D-02-04 (Löschen beim letzten Verweis) gilt für Ausschlüsse und endgültig gelöschte Dateien.
+- **D-02-11 (Owner 07.11.):** Ein vom Admin angelegter SMB-Mount mit Anmeldedaten je Nutzer gilt beim Ausschluss als Eigentum dieses Nutzers (D-02-08): sein Speicher wird nicht erfasst. Die Kopien anderer Nutzer derselben Freigabe bleiben erfasst.
+
+### Kein Abschaltweg für den Lesebeweis (Owner 07.11.)
+- **D-02-10:** Das Produkt hat KEINEN Weg, den Lesebeweis abzuschalten: kein Env, keine Einstellung, keine Markendatei, kein Debug-Schalter. Die Leck-Positivkontrolle aus D-02-01a läuft über ein eigenes CI-only-Image: der Workflow wendet einen Patch unter `ci/` (nie im ausgelieferten Quellbaum) auf eine Kopie an, der den Lesebeweis entfernt; das Image wird nie in eine öffentliche Registry oder unter einem Tag veröffentlicht und nur im Kontrollbein genutzt. Ein Gate schlägt an, wenn `php/` oder `backend/src` einen Weg enthält, der den Lesebeweis überspringt oder abschaltet. Positivkontrolle B (monkeypatch) bleibt in den Unit-Tests.
 
 ### Zahl im Admin
 - **D-02-06:** Die Fortschrittszahl zählt Inhalte: "X von Y Inhalten transkribiert", Zähler und Nenner beide nach Inhalts-Schlüssel (vor dem Hash nach Vorfilter-Schlüssel), klein daneben die Zahl der Dateien. Quote nie über 100 %. Owner 07.11.: In Phase 2 nur per occ und Abnahmetest, die Admin-Oberfläche kommt in Phase 9 (ehrliche Admin-Zustände). Kein UI-Vertrag für Phase 2.
