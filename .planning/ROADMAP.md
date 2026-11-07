@@ -70,7 +70,7 @@ Plans:
   4. Kopie, Verschieben, Umbenennen, Taggen und dieselbe externe Freigabe bei mehreren Nutzern erzeugen keinen zweiten Rechenauftrag (Inhalts-Schlüssel).
 **Plans**: 22 plans (11 Wellen)
 Plans:
-- [ ] 02-01-PLAN.md: (W1) Abnahme D-02-07 Teil 1: Workflow, Samba/S3/Freigabe-Topologie, Kontrollbein leak-control
+- [x] 02-01-PLAN.md: (W1) Abnahme D-02-07 Teil 1: Workflow, Samba/S3/Freigabe-Topologie, Kontrollbein leak-control
 - [ ] 02-02-PLAN.md: (W1) Container: Schema v2 mit Migration
 - [ ] 02-03-PLAN.md: (W1) PHP: Tabellen, Warteschlange, Mountmenge, Queue-Routen
 - [ ] 02-04-PLAN.md: (W2) Abnahme Teil 2: unabhängige Wahrheit, Ledger, Vergleich, Positivkontrollen
@@ -227,7 +227,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
-| 2. Erfassung aller Dateien | 0/TBD | Not started | - |
+| 2. Erfassung aller Dateien | 1/22 | In Progress|  |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
