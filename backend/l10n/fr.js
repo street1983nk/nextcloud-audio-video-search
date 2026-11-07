@@ -2,7 +2,7 @@ OC.L10N.register(
     "audio_video_search_backend",
     {
     "Audio & Video Search": "Audio & Video Search",
-    "This app is the backend of Audio & Video Search and needs the app \"Audio & Video Search\". The state of both apps is shown under Administration, Audio & Video Search.": "Cette application est le backend d'Audio & Video Search et nécessite l'application « Audio & Video Search ». L'état des deux applications figure dans Administration, Audio & Video Search.",
+    "This app is the backend of Audio & Video Search. Without the app \"Audio & Video Search\" from the App Store, search finds nothing in audio and video files. Once both apps are installed, their state is shown under Administration, Audio & Video Search.": "Cette application est le backend d'Audio & Video Search. Sans l'application « Audio & Video Search » de l'App Store, la recherche ne trouve rien dans les fichiers audio et vidéo. Une fois les deux applications installées, leur état s'affiche sous Administration, Audio & Video Search.",
     "Processing": "Traitement",
     "Process new files automatically": "Traiter automatiquement les nouveaux fichiers",
     "Largest file in MB": "Taille maximale d'un fichier en Mo",

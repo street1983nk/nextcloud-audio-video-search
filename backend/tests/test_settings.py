@@ -53,3 +53,12 @@ def test_the_js_catalogues_match_their_json_source() -> None:
     )
 
     assert result.returncode == 0, result.stdout
+
+
+def test_the_description_works_without_the_php_app() -> None:
+    """PLAT-02, owner 07.11.: the admin page of the PHP app is only promised once both apps are installed."""
+    description = settings.admin_form().description
+
+    assert 'Without the app "Audio & Video Search" from the App Store' in description
+    assert "Once both apps are installed, their state is shown under Administration" in description
+    assert "needs the app" not in description

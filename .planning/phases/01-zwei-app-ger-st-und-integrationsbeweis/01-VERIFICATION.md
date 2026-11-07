@@ -3,12 +3,20 @@ phase: 01-zwei-app-ger-st-und-integrationsbeweis
 verified: 2026-11-07T09:30:00Z
 status: human_needed
 score: 4/5 Erfolgskriterien verifiziert, 1 mit Owner-Entscheid (SC2 Gegenrichtung)
-overrides_applied: 0
+overrides_applied: 1
+overrides:
+  - must_have: "Fehlt die Gegen-App, ist sie nicht erreichbar oder hat sie eine andere Version, sieht der Admin eine klare Meldung statt eines stillen Ausfalls."
+    reason: "Richtung Backend ohne PHP-App: statischer Pflichthinweis in ExApp-Beschreibung und Einstellungen, Container verweigert Arbeit (companion_missing); laut UI-SPEC so entschieden. Owner 07.11.: Hinweis umformuliert (settings.py, l10n de/en/fr), er stimmt jetzt auch ohne PHP-App: ohne die App aus dem App Store findet die Suche nichts, die Seite Verwaltung, Audio & Video Search wird erst für den Fall 'beide Apps installiert' genannt"
+    accepted_by: "street1983nk"
+    accepted_at: "2026-11-07T00:00:00Z"
 gaps: []
 deferred:
   - truth: "PLAT-01 'aus dem Store': signiertes Store-Archiv des Backends"
     addressed_in: "Phase 11 (Store-Release) und extern app-certificate-requests PR 1417"
     evidence: "Phase-11-Ziel: 'Vor dem Store-Release ist belegt ...'; release.yml:57 BACKEND_CERT_PUBKEY_SHA256 pending-certificate, release.yml:230 stoppt die Backend-Hälfte bewusst"
+  - truth: "aktive Admin-Benachrichtigung bei companion_missing (Backend aktiv, PHP-App fehlt)"
+    addressed_in: "Phase 9 (Ehrliche Admin-Zustände und Dreisprachigkeit)"
+    evidence: "Owner-Entscheid 07.11.: in Phase 1 bleibt der statische Hinweis; der dynamische Zustand steht heute nur in /status und im Container-Log"
 human_verification:
   - test: "PHP-App audio_video_search deaktivieren, Backend bleibt aktiv; als Admin die Einstellungsseite der ExApp audio_video_search_backend und die App-Verwaltung öffnen"
     expected: "Der Admin erkennt ohne Logblick, dass die PHP-App fehlt. Heute sieht er nur den statischen Satz 'braucht die App Audio & Video Search' (settings.py:39-42, info.xml summary/description); der dynamische Zustand companion=missing steht nur in /status und als Warnung im Container-Log"

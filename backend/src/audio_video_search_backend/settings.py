@@ -37,8 +37,9 @@ def admin_form() -> SettingsForm:
         section_type="admin",
         title="Audio & Video Search",
         description=(
-            'This app is the backend of Audio & Video Search and needs the app "Audio & Video Search". '
-            "The state of both apps is shown under Administration, Audio & Video Search."
+            "This app is the backend of Audio & Video Search. "
+            'Without the app "Audio & Video Search" from the App Store, search finds nothing in audio and video '
+            "files. Once both apps are installed, their state is shown under Administration, Audio & Video Search."
         ),
         priority=50,
         fields=[

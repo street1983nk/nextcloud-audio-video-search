@@ -223,7 +223,7 @@ Kein Banner nennt Dateinamen, Pfade oder Versionen; die Versionen stehen in der 
 
 ### Backend-App (ExApp) selbst
 
-Die ExApp `audio_video_search_backend` bekommt in Phase 1 keine eigene Oberfläche außer einem statischen Beschreibungssatz in ihren deklarativen Einstellungen (falls das Skelett die Seite rendert), siehe Copy "Backend-Beschreibung".
+Die ExApp `audio_video_search_backend` bekommt in Phase 1 keine eigene Oberfläche außer einem statischen Beschreibungssatz in ihren deklarativen Einstellungen (falls das Skelett die Seite rendert), siehe Copy "Backend-Beschreibung". Der Satz muss auch ohne die PHP-App stimmen: er nennt, dass die Suche ohne die App aus dem App Store nichts findet, und verweist erst für den Fall "beide Apps installiert" auf Verwaltung, Audio & Video Search (Owner-Entscheid 07.11.). Eine aktive Admin-Benachrichtigung bei companion_missing ist zurückgestellt (01-VERIFICATION.md, deferred).
 
 ---
 
@@ -305,7 +305,7 @@ Regeln: Deutsch zuerst; `de` und `de_DE` erhalten **denselben** Text in unpersö
 | Leer: kein Testtreffer | Noch kein Testtreffer angelegt. Anlegen mit: | No test result yet. Create one with: | Aucun résultat de test pour l'instant. Pour en créer un : |
 | Gespeichert | Gespeichert | Saved | Enregistré |
 | Nicht gespeichert | Nicht gespeichert. Erneut versuchen. | Not saved. Try again. | Non enregistré. Réessayez. |
-| Backend-Beschreibung (ExApp-Einstellungen) | Diese App ist das Backend von Audio & Video Search und braucht die App "Audio & Video Search". Der Zustand beider Apps steht unter Verwaltung, Audio & Video Search. | This app is the backend of Audio & Video Search and needs the app "Audio & Video Search". The state of both apps is shown under Administration, Audio & Video Search. | Cette application est le backend d'Audio & Video Search et nécessite l'application « Audio & Video Search ». L'état des deux applications figure dans Administration, Audio & Video Search. |
+| Backend-Beschreibung (ExApp-Einstellungen) | Diese App ist das Backend von Audio & Video Search. Ohne die App „Audio & Video Search“ aus dem App Store findet die Suche nichts in Audio- und Videodateien. Sind beide Apps installiert, steht ihr Zustand unter Verwaltung, Audio & Video Search. | This app is the backend of Audio & Video Search. Without the app "Audio & Video Search" from the App Store, search finds nothing in audio and video files. Once both apps are installed, their state is shown under Administration, Audio & Video Search. | Cette application est le backend d'Audio & Video Search. Sans l'application « Audio & Video Search » de l'App Store, la recherche ne trouve rien dans les fichiers audio et vidéo. Une fois les deux applications installées, leur état s'affiche sous Administration, Audio & Video Search. |
 
 Hinweis für den Planer: Alle Texte gehen in `php/l10n/{de,de_DE,en,fr}.json/.js` (PHP-App) und, für die Backend-Beschreibung, in `backend/l10n/`. Der Dreisprachigkeits-Test (Muster `tests/test_trilingual.py`) und ein Umlaut-/Gedankenstrich-Audit gehören in den Plan.
 
