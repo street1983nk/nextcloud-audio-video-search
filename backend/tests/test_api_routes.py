@@ -516,3 +516,72 @@ async def test_an_endless_stream_stops_at_the_byte_cap() -> None:
 
 def test_the_sample_cap_is_eight_gibibytes() -> None:
     assert sample_api.MAX_SAMPLE_BYTES == 8 * 1024**3
+
+
+# GET /workstock and GET /coverage (plan 02-09).
+
+
+def _seed_refs(client: TestClient) -> None:
+    store = main.APP.state.services.store
+    for file_id, state in ((3, "active"), (5, "unreadable"), (9, "active")):
+        store.upsert_file_ref(
+            file_id, None, storage_id=7, etag="e", size=1, mtime=1, state=state, stage="pending", reason=None
+        )
+
+
+def test_coverage_answers_the_fixed_keys_with_numbers(client: TestClient) -> None:
+    _seed_refs(client)
+
+    answer = client.get("/coverage", headers=signed_headers())
+
+    assert answer.status_code == 200
+    body = answer.json()
+    assert set(body) == {"contents", "transcribed", "files", "byState", "byStage", "dueWork"}
+    assert (body["contents"], body["transcribed"], body["files"], body["dueWork"]) == (2, 0, 2, 3)
+    assert body["byState"]["unreadable"] == 1
+    assert set(body["byStage"]) == {"pending", "probing", "fetching", "keyed", "failed"}
+
+
+def test_workstock_answers_pages_with_the_fixed_fields(client: TestClient) -> None:
+    _seed_refs(client)
+
+    first = client.get("/workstock", params={"limit": 2}, headers=signed_headers()).json()
+    rest = client.get("/workstock", params={"after": first["next"]}, headers=signed_headers()).json()
+    unreadable = client.get("/workstock", params={"state": "unreadable"}, headers=signed_headers()).json()
+
+    assert set(first) == {"files", "next"}
+    assert [f["fileId"] for f in first["files"]] == [3, 5]
+    assert first["next"] == 5
+    assert rest == {
+        "files": [
+            {"fileId": 9, "mediaId": None, "storageId": 7, "state": "active", "stage": "pending", "reason": None}
+        ],
+        "next": None,
+    }
+    assert [f["fileId"] for f in unreadable["files"]] == [5]
+    for entry in first["files"]:
+        assert set(entry) == {"fileId", "mediaId", "storageId", "state", "stage", "reason"}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"limit": 1001}, {"limit": 0}, {"state": "deleted"}, {"state": "ACTIVE"}, {"after": -1}, {"limit": "x"}],
+)
+def test_workstock_refuses_values_outside_the_contract(client: TestClient, params: dict[str, object]) -> None:
+    answer = client.get("/workstock", params=params, headers=signed_headers())
+
+    assert answer.status_code == 422
+
+
+@pytest.mark.parametrize("path", ["/workstock", "/coverage"])
+def test_both_routes_need_a_signature(client: TestClient, path: str) -> None:
+    assert client.get(path).status_code == 401
+
+
+def test_the_workstock_states_are_the_closed_list_of_the_store() -> None:
+    from typing import get_args
+
+    from audio_video_search_backend.api import workstock
+    from audio_video_search_backend.store.repo import STATES
+
+    assert set(get_args(workstock.WorkstockState.__value__)) == STATES

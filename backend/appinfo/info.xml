@@ -91,6 +91,20 @@ Prérequis :
 				<bruteforce_protection>[401]</bruteforce_protection>
 			</route>
 			<route>
+				<url>^/workstock$</url>
+				<verb>GET</verb>
+				<access_level>ADMIN</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401]</bruteforce_protection>
+			</route>
+			<route>
+				<url>^/coverage$</url>
+				<verb>GET</verb>
+				<access_level>ADMIN</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+				<bruteforce_protection>[401]</bruteforce_protection>
+			</route>
+			<route>
 				<url>^/sample$</url>
 				<verb>POST</verb>
 				<access_level>ADMIN</access_level>

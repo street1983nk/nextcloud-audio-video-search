@@ -60,11 +60,13 @@ async def run_locked[T](opened: Services, work: Callable[[], T]) -> T:
 
 def build_router() -> APIRouter:
     """All container routes in one router for main.py."""
-    from audio_video_search_backend.api import excerpt, sample, search, status
+    from audio_video_search_backend.api import coverage, excerpt, sample, search, status, workstock
 
     router = APIRouter()
     router.include_router(search.router)
     router.include_router(excerpt.router)
     router.include_router(sample.router)
     router.include_router(status.router)
+    router.include_router(workstock.router)
+    router.include_router(coverage.router)
     return router

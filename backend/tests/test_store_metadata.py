@@ -148,3 +148,37 @@ def test_environment_variables_carry_the_app_prefix_and_a_default() -> None:
 
 def test_the_file_stays_far_under_the_store_limit() -> None:
     assert INFO_XML.stat().st_size < INFO_XML_MAX_BYTES
+
+
+def test_the_work_stock_and_coverage_routes_are_admin_only() -> None:
+    routes = {text(route, "url"): route for route in info().findall("external-app/routes/route")}
+
+    for url in ("^/workstock$", "^/coverage$"):
+        assert url in routes, url
+        assert text(routes[url], "verb") == "GET"
+        assert text(routes[url], "access_level") == "ADMIN"
+
+
+def test_every_container_route_is_declared_with_its_verb() -> None:
+    """A route HaRP does not know is unreachable; one declared with another verb as well."""
+    from fastapi.routing import APIRoute
+
+    from audio_video_search_backend.api import build_router
+
+    declared = {(text(route, "url"), text(route, "verb")) for route in info().findall("external-app/routes/route")}
+
+    def flat(routes: list[object]) -> list[APIRoute]:
+        found: list[APIRoute] = []
+        for route in routes:
+            if isinstance(route, APIRoute):
+                found.append(route)
+                continue
+            inner = getattr(route, "original_router", None) or route
+            found += flat(list(getattr(inner, "routes", [])))
+        return found
+
+    routes = flat(list(build_router().routes))
+    assert {route.path for route in routes} >= {"/status", "/search", "/workstock", "/coverage"}
+    for route in routes:
+        for verb in route.methods or set():
+            assert (f"^{route.path}$", verb) in declared, (route.path, verb)
