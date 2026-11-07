@@ -115,11 +115,74 @@ export function position(page: Page): () => Promise<number> {
 	return () => media.evaluate((element: HTMLMediaElement) => (element.readyState >= 1 ? element.currentTime : -1));
 }
 
+/** A node of the DevTools protocol DOM tree, as far as the loading panel check reads it. */
+type ProtocolNode = {
+	attributes?: string[];
+	children?: ProtocolNode[];
+	shadowRoots?: ProtocolNode[];
+	shadowRootType?: string;
+	childNodeCount?: number;
+};
+
+function loadingPanels(node: ProtocolNode, found: ProtocolNode[] = []): ProtocolNode[] {
+	const attributes = node.attributes ?? [];
+	const pseudo = attributes.indexOf('pseudo');
+	if (pseudo !== -1 && attributes[pseudo + 1] === '-internal-media-controls-loading-panel') {
+		found.push(node);
+	}
+	for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) {
+		loadingPanels(child, found);
+	}
+	return found;
+}
+
+/**
+ * The state of the loading ring of the native media controls: 'spinning' while
+ * Chromium draws it, 'idle' once it is gone, 'no controls' if the user agent
+ * shadow tree of the medium is not readable (then the check proves nothing).
+ *
+ * The ring lives in the closed user agent shadow tree, out of reach of page
+ * scripts and locators; the DevTools protocol reads it with pierce. Chromium
+ * (media_control_loading_panel_element.cc) fills the shadow root of the panel
+ * when loading starts and empties it in HideAnimation(), so a filled root is
+ * a ring on screen.
+ */
+async function loadingRing(page: Page): Promise<'spinning' | 'idle' | 'no controls'> {
+	const cdp = await page.context().newCDPSession(page);
+	try {
+		const { result } = await cdp.send('Runtime.evaluate', {
+			expression: 'document.getElementById("avs-media")',
+			objectGroup: 'avs-loading-ring',
+		});
+		if (result.objectId === undefined) {
+			return 'no controls';
+		}
+		const { node } = await cdp.send('DOM.describeNode', { objectId: result.objectId, depth: -1, pierce: true });
+		const medium: ProtocolNode = node;
+		if (!(medium.shadowRoots ?? []).some((root) => root.shadowRootType === 'user-agent')) {
+			return 'no controls';
+		}
+		const spinning = loadingPanels(medium).some((panel) =>
+			(panel.shadowRoots ?? []).some((root) => (root.childNodeCount ?? root.children?.length ?? 0) > 0),
+		);
+		return spinning ? 'spinning' : 'idle';
+	} finally {
+		await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'avs-loading-ring' }).catch(() => undefined);
+		await cdp.detach();
+	}
+}
+
 /**
  * The medium is at rest for a screenshot: the seek is done, the frame at the
- * mark is decoded and the browser stopped fetching. Metadata alone is not
- * enough: Chromium reaches readyState 1 with currentTime already on the mark
- * while it is still seeking, and draws its loading spinner over the video.
+ * mark is decoded, the browser stopped fetching and the native controls took
+ * their loading ring away. Metadata alone is not enough: Chromium reaches
+ * readyState 1 with currentTime already on the mark while it is still seeking.
+ * The ring outlives the loading as well: once the medium is ready, Chromium
+ * lets the ring finish its current turn of up to 1333 ms (state kCoolingDown,
+ * animation-iteration-count set to the next turn) and removes it only on
+ * animationend. A picture right after the media checks catches that turn,
+ * whatever the screenshot does with the page's own animations, which never
+ * reach the user agent shadow tree.
  */
 export async function expectMediaSettled(page: Page): Promise<void> {
 	const media = page.locator('#avs-media');
@@ -135,6 +198,7 @@ export async function expectMediaSettled(page: Page): Promise<void> {
 			{ timeout: 15_000 },
 		)
 		.toBe(true);
+	await expect.poll(() => loadingRing(page), { timeout: 15_000 }).toBe('idle');
 }
 
 export async function expectAtMark(page: Page): Promise<void> {
