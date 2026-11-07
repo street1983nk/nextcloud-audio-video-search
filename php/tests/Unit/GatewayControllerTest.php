@@ -8,16 +8,19 @@ use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Controller\GatewayController;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\DataDisplayResponse;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\StreamResponse;
 use OCP\Files\File;
 use OCP\Files\Folder;
+use OCP\Files\ForbiddenException;
 use OCP\Files\IRootFolder;
 use OCP\Files\StorageNotAvailableException;
 use OCP\IRequest;
 use OCP\IUser;
 use OCP\IUserManager;
 use OCP\IUserSession;
+use OCP\Lock\LockedException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -106,7 +109,7 @@ final class GatewayControllerTest extends TestCase {
 		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
 	}
 
-	private static function assertNoPathIn(DataResponse|StreamResponse $response): void {
+	private static function assertNoPathIn(DataResponse|StreamResponse|DataDisplayResponse $response): void {
 		if (!$response instanceof DataResponse) {
 			return;
 		}
@@ -288,5 +291,218 @@ final class GatewayControllerTest extends TestCase {
 		self::assertSame(Http::STATUS_INTERNAL_SERVER_ERROR, $response->getStatus());
 		self::assertSame(['error' => 'Unknown error occurred.'], $response->getData());
 		self::assertNoPathIn($response);
+	}
+
+	/** A memory stream holding $bytes, positioned at the start. */
+	private static function memoryStream(string $bytes) {
+		$stream = fopen('php://memory', 'rb+');
+		self::assertIsResource($stream);
+		fwrite($stream, $bytes);
+		rewind($stream);
+
+		return $stream;
+	}
+
+	/** The logger must never see the path or the user of the file in any call. */
+	private function loggerSeesNoPathOrUser(): void {
+		$check = static function (string $message, array $context = []): void {
+			$encoded = $message . json_encode($context);
+			self::assertStringNotContainsString('Sitzung', $encoded);
+			self::assertStringNotContainsString('alice', $encoded);
+		};
+		foreach (['debug', 'info', 'warning'] as $level) {
+			$this->logger->method($level)->willReturnCallback($check);
+		}
+	}
+
+	public function testAccessControlAtTheOpenIsA403WithItsReasonAndWithoutAPath(): void {
+		$this->fileOpeningAs(static function (): never {
+			throw new ForbiddenException('Access denied by access control', false);
+		});
+		$this->loggerSeesNoPathOrUser();
+		$this->logger->expects(self::never())->method('error');
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame('access_control', $response->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertSame('access_control', $response->getData()['code'] ?? null);
+		self::assertNoPathIn($response);
+	}
+
+	public function testAccessControlAtTheLookupIsA403Too(): void {
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willThrowException(new ForbiddenException('Access denied by access control', false));
+		$this->rootFolder->method('getUserFolder')->willReturn($userFolder);
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame('access_control', $response->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertNull($this->active);
+	}
+
+	public function testALockedFileIsA423WithItsReasonAndWithoutAPath(): void {
+		$this->fileOpeningAs(static function (): never {
+			throw new LockedException('/alice/files/Sitzung 2026-11-03.mp4');
+		});
+		$this->loggerSeesNoPathOrUser();
+		$this->logger->expects(self::never())->method('error');
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_LOCKED, $response->getStatus());
+		self::assertSame('locked', $response->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertNoPathIn($response);
+	}
+
+	public function testAPlainRefusalCarriesNoReasonHeader(): void {
+		$response = $this->controller('some_other_backend')->getFileContents(11, 'alice');
+
+		self::assertArrayNotHasKey('X-AVS-Reason', $response->getHeaders());
+	}
+
+	public function testTheHeadRouteRefusesAForeignCallerBeforeAnyLookup(): void {
+		$this->rootFolder->expects(self::never())->method('getUserFolder');
+
+		$response = $this->controller('findling_backend')->getFileHead(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+	}
+
+	/** @return array<string, array{int, int}> */
+	public static function headSizes(): array {
+		return [
+			'200 KiB' => [204800, 65536],
+			'exactly 64 KiB' => [65536, 65536],
+			'10 KiB' => [10240, 10240],
+			'empty' => [0, 0],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider('headSizes')]
+	public function testTheHeadIsExactlyTheStartOfTheFileUpTo64KiB(int $size, int $expected): void {
+		$bytes = '';
+		for ($i = 0; strlen($bytes) < $size; $i++) {
+			$bytes .= hash('sha256', (string)$i, true);
+		}
+		$bytes = substr($bytes, 0, $size);
+		$stream = self::memoryStream($bytes);
+		$this->fileOpeningAs(static fn () => $stream);
+
+		$response = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertInstanceOf(DataDisplayResponse::class, $response);
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame('application/octet-stream', $response->getHeaders()['Content-Type'] ?? null);
+		self::assertSame($expected, strlen($response->render()));
+		self::assertSame(substr($bytes, 0, $expected), $response->render());
+		// The stream is closed again: the head holds no lock beyond the read.
+		self::assertFalse(is_resource($stream));
+	}
+
+	public function testTheHeadRouteRunsTheLookupAsTheUser(): void {
+		$stream = self::memoryStream('abc');
+		$steps = [];
+		$file = $this->createMock(File::class);
+		$file->method('isReadable')->willReturn(true);
+		$file->method('fopen')->with('r')->willReturnCallback(function () use ($stream, &$steps) {
+			$steps[] = ['fopen', $this->active?->getUID()];
+
+			return $stream;
+		});
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willReturnCallback(function () use ($file, &$steps): File {
+			$steps[] = ['lookup', $this->active?->getUID()];
+
+			return $file;
+		});
+		$this->rootFolder->method('getUserFolder')->willReturn($userFolder);
+
+		$this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertSame([['lookup', 'alice'], ['fopen', null]], $steps);
+	}
+
+	public function testTheHeadRouteGivesTheSame404AsTheGateway(): void {
+		$closed = $this->createMock(File::class);
+		$closed->method('isReadable')->willReturn(false);
+		$closed->expects(self::never())->method('fopen');
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willReturnCallback(
+			static fn (int $fileId): mixed => $fileId === 11 ? $closed : null,
+		);
+		$this->rootFolder->method('getUserFolder')->willReturnCallback(
+			static function (string $uid) use ($userFolder): Folder {
+				if ($uid === 'ghost') {
+					throw new \OC\User\NoUserException('ghost');
+				}
+
+				return $userFolder;
+			},
+		);
+		$controller = $this->controller($this->backendAppId());
+
+		foreach ([[11, 'alice'], [999, 'alice'], [11, 'ghost']] as [$fileId, $uid]) {
+			$head = $controller->getFileHead($fileId, $uid);
+			$full = $controller->getFileContents($fileId, $uid);
+			self::assertInstanceOf(DataResponse::class, $head);
+			self::assertInstanceOf(DataResponse::class, $full);
+			self::assertSame(Http::STATUS_NOT_FOUND, $head->getStatus());
+			self::assertSame($full->getData(), $head->getData());
+		}
+	}
+
+	public function testAHeadThatCannotBeOpenedIs422LikeTheGateway(): void {
+		$this->fileOpeningAs(static fn () => false);
+
+		$response = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_UNPROCESSABLE_ENTITY, $response->getStatus());
+		self::assertSame(['error' => 'File could not be opened for reading.'], $response->getData());
+	}
+
+	public function testTheHeadRouteKnowsAccessControl(): void {
+		$this->fileOpeningAs(static function (): never {
+			throw new ForbiddenException('Access denied by access control', false);
+		});
+
+		$forbidden = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertSame(Http::STATUS_FORBIDDEN, $forbidden->getStatus());
+		self::assertSame('access_control', $forbidden->getHeaders()['X-AVS-Reason'] ?? null);
+	}
+
+	public function testALockedHeadIs423(): void {
+		$this->fileOpeningAs(static function (): never {
+			throw new LockedException('/alice/files/Sitzung 2026-11-03.mp4');
+		});
+
+		$locked = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertSame(Http::STATUS_LOCKED, $locked->getStatus());
+		self::assertSame('locked', $locked->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertNoPathIn($locked);
+	}
+
+	public function testAnotherErrorOfTheHeadIsA500WithoutAPath(): void {
+		$this->fileOpeningAs(static function (): never {
+			throw new StorageNotAvailableException('/alice/files/Sitzung 2026-11-03.mp4');
+		});
+
+		$response = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertSame(Http::STATUS_INTERNAL_SERVER_ERROR, $response->getStatus());
+		self::assertNoPathIn($response);
+	}
+
+	public function testTheHeadLimitAndTheHeaderAreTheOnesOfTheContainer(): void {
+		// backend/src/audio_video_search_backend/nc.py HEAD_BYTES and REASON_HEADER.
+		self::assertSame(65536, GatewayController::HEAD_BYTES);
+		self::assertSame('X-AVS-Reason', GatewayController::REASON_HEADER);
 	}
 }
