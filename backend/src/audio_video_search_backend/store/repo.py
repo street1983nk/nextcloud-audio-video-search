@@ -664,7 +664,7 @@ class Store:
     # Walking-skeleton sample.
 
     def remove_sample(self, file_id: int) -> tuple[str, int | None]:
-        """Remove a seeded sample hit; real transcripts (level > 1) are never touched."""
+        """Remove a seeded sample hit; real transcripts (level > 1) and real references are never touched."""
         with self._transaction():
             ref = self._conn.execute(_FILE_REF, (file_id,)).fetchone()
             if ref is None:
@@ -680,7 +680,9 @@ class Store:
                 self._conn.execute(_DELETE_SAMPLE_WORDS, (media_id,))
                 self._conn.execute(_DELETE_SAMPLE_TRANSCRIPTS, (media_id,))
                 self._conn.execute(_DELETE_OUTBOX, (media_id,))
-            self._conn.execute(_DELETE_FILE_REF, (file_id,))
+            # A reference the discovery made stays: only the sample's own row goes.
+            if ref[1] == "sample":
+                self._conn.execute(_DELETE_FILE_REF, (file_id,))
             if media_id is not None and not self._conn.execute(_MEDIA_STILL_USED, {"m": media_id}).fetchone()[0]:
                 self._conn.execute(_DELETE_MEDIA_KEYS, (media_id,))
                 self._conn.execute(_DELETE_MEDIA, (media_id,))

@@ -126,6 +126,86 @@ def test_routes_need_a_signature(api: TestClient) -> None:
         assert api.post(path, json={}).status_code == 401, path
 
 
+# -- /sample next to the work stock of the discovery (plan 02-02, T-02-07) ----
+#
+# The acceptance test (plan 02-04) seeds samples on files the discovery has
+# already captured, so a sample must never rewrite a real reference: not its
+# state, not its media item, not its stage.
+
+
+def _real_ref(store: Store, file_id: int, media_id: int | None, state: str) -> None:
+    store.upsert_file_ref(
+        file_id,
+        media_id,
+        storage_id=9,
+        etag="e9",
+        size=len(CONTENT),
+        mtime=7,
+        state=state,
+        stage="keyed" if media_id is not None else "failed",
+        reason=None if state == "active" else "read_denied",
+        prefilter_key="c" * 64,
+        reader_uid="ana",
+        proved_at=5,
+    )
+
+
+def _hit_ids(client: TestClient) -> list[object]:
+    return [h["fileId"] for h in _search(client, "Audiosuche")["hits"]]  # type: ignore[union-attr]
+
+
+def test_a_sample_on_a_captured_file_leaves_its_reference_alone(api: TestClient) -> None:
+    store, _index = _services(api)
+    media_id = store.media_for_file_sha256(SHA)
+    _real_ref(store, 42, media_id, "active")
+    before = store.file_ref(42)
+
+    answer = _seed(api)
+
+    assert answer["result"] == "published"
+    assert answer["mediaId"] == media_id
+    assert store.file_ref(42) == before
+    assert _hit_ids(api) == [42]
+
+
+def test_a_sample_whose_bytes_differ_from_the_reference_goes_to_its_own_content(api: TestClient) -> None:
+    store, _index = _services(api)
+    other = store.media_for_file_sha256("e" * 64)
+    _real_ref(store, 42, other, "active")
+    before = store.file_ref(42)
+
+    answer = _seed(api)
+
+    assert answer["mediaId"] == store.media_for_file_sha256(SHA)
+    assert answer["mediaId"] != other
+    assert store.file_ref(42) == before
+    assert _hit_ids(api) == []
+
+
+def test_a_sample_without_a_reference_adds_a_sample_row(api: TestClient) -> None:
+    store, _index = _services(api)
+
+    _seed(api)
+
+    ref = store.file_ref(42)
+    assert ref is not None
+    assert (ref.state, ref.storage_id, ref.stage, ref.reason) == ("sample", 0, "keyed", "sample")
+    assert _hit_ids(api) == [42]
+
+
+@pytest.mark.parametrize(("state", "keyed"), [("trashed", True), ("unreadable", False), ("unreadable", True)])
+def test_a_sample_on_a_reference_without_hits_gives_no_hit(api: TestClient, state: str, keyed: bool) -> None:
+    store, _index = _services(api)
+    _real_ref(store, 42, store.media_for_file_sha256(SHA) if keyed else None, state)
+    before = store.file_ref(42)
+
+    answer = _seed(api)
+
+    assert answer["result"] == "published"
+    assert store.file_ref(42) == before
+    assert _hit_ids(api) == []
+
+
 # -- /search ----------------------------------------------------------------
 
 

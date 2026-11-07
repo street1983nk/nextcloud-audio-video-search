@@ -243,3 +243,20 @@ def test_remove_sample_keeps_media_shared_with_another_file(store: Store, tmp_pa
     assert store.remove_sample(7) == ("removed", media_id)
     assert store.file_ids_for_media(media_id) == [8]
     assert _count(path, "media", media_id) == 1
+
+
+def test_remove_sample_keeps_a_reference_of_the_discovery(store: Store, tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    media_id = store.media_for_file_sha256(SHA_A)
+    store.upsert_file_ref(
+        7, media_id, storage_id=4, etag="e", size=10, mtime=1, state="active", stage="keyed", reason=None, proved_at=3
+    )
+    before = store.file_ref(7)
+    assert store.publish_version(media_id, _sample_prov(SHA_A), _words()).published
+
+    assert store.remove_sample(7) == ("removed", media_id)
+
+    assert store.file_ref(7) == before
+    assert _count(path, "current", media_id) == 0
+    assert _count(path, "transcript", media_id) == 0
+    assert _count(path, "media", media_id) == 1
