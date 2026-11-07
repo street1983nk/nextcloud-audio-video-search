@@ -10,7 +10,7 @@ progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 24
+  completed_plans: 23
   percent: 9
 ---
 
@@ -129,7 +129,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- 02-11: Discovery acceptance lief nie (runner.temp im Job-env, Zeile 414); Korrektur 6e02526 lokal, Push 2 braucht neue Owner-Freigabe
+- 02-11: Discovery acceptance lief bei Push 1 nie (runner.temp im Job-env, Zeile 414); Korrektur 6e02526 mit Push 2 (434a350, Owner-Freigabe 07.11.) auf phase-02, Plan 11 offen bis zur Auswertung
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
