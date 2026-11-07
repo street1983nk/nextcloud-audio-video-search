@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-11-07T09:46:16.815Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-11-07T09:55:52.080Z"
 last_activity: 2026-11-07
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 14
+  completed_plans: 15
   percent: 9
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 1 of 22 (planned, 11 waves)
+Plan: 2 of 22 (planned, 11 waves)
 Status: Ready to execute
 Last activity: 2026-11-07
 
-Progress: [████░░░░░░] 40%
+Progress: [████░░░░░░] 43%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [████░░░░░░] 40%
 | Phase 01 P08 | 15 min | 2 tasks | 11 files |
 | Phase 01 P09 | 55 min | 4 tasks | 10 files |
 | Phase 02 P01 | 60 min | 2 tasks | 5 files |
+| Phase 02 P02 | 40 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,7 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-09: Hoher Kontrast über Prüfnutzerin dora (admin + team), Projekt hc-1280 nur @screenshot; Instanz-Umbauten (@disabled, @unreachable, @nodebug) als eigene Workflow-Schritte
 - [Phase 01]: 01-09: PHP-App vor der ExApp aktiviert, Workflow verlangt companion ok im /status; PLAT-03/PLAY-01/PLAY-02 erst nach grünem Lauf in Plan 11 abhaken
 - [Phase 02]: 02-01: S3-Bein der Abnahme gegen SeaweedFS 4.52 per Digest, weil MinIO kein öffentliches Image mehr hat (Owner-Bestätigung vor Plan 11)
+- [Phase 02]: 02-02: state.db Schema v2, Migration v1 nach v2 in einer Transaktion; Leser migrieren nie; Treffer nur aus active/sample; remove_sample löscht nur Probe-Zeilen
 
 ### Pending Todos
 
@@ -124,6 +126,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-07T09:46:16.794Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-11-07T09:55:52.060Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
