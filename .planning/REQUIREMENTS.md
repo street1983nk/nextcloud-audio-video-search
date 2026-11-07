@@ -9,9 +9,9 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ### Plattform (PLAT)
 
-- [ ] **PLAT-01**: Admin installiert zwei Apps aus dem Store: PHP-App `audio_video_search` und ExApp `audio_video_search_backend`; beide laufen im Lockstep (gleiche Version, Upgrade-Beweis in CI)
-- [ ] **PLAT-02**: Admin sieht eine klare Meldung, wenn die Gegen-App fehlt, nicht erreichbar ist oder eine andere Version hat
-- [ ] **PLAT-03**: Läuft auf Nextcloud 33, 34 und 35 mit AppAPI/HaRP, amd64 und arm64, nur CPU
+- [x] **PLAT-01**: Admin installiert zwei Apps aus dem Store: PHP-App `audio_video_search` und ExApp `audio_video_search_backend`; beide laufen im Lockstep (gleiche Version, Upgrade-Beweis in CI)
+- [x] **PLAT-02**: Admin sieht eine klare Meldung, wenn die Gegen-App fehlt, nicht erreichbar ist oder eine andere Version hat
+- [x] **PLAT-03**: Läuft auf Nextcloud 33, 34 und 35 mit AppAPI/HaRP, amd64 und arm64, nur CPU
 - [ ] **PLAT-04**: Kein Audio, kein Text, keine Telemetrie verlässt den Server; einzige ausgehende Verbindung ist der Modell-Download von einer Host-Allowlist, abschaltbar für Offline-Instanzen
 
 ### Erfassung (DISC)
@@ -71,8 +71,8 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ### Abspielen (PLAY)
 
-- [ ] **PLAY-01**: Klick auf einen Treffer öffnet eine schlichte Abspielansicht, die an der Zeitstelle startet und den Transkript-Ausschnitt zeigt
-- [ ] **PLAY-02**: Abspielansicht funktioniert mit Seek über WebDAV auf NC 33 bis 35, im Browser hell und dunkel, auf drei Breiten
+- [x] **PLAY-01**: Klick auf einen Treffer öffnet eine schlichte Abspielansicht, die an der Zeitstelle startet und den Transkript-Ausschnitt zeigt
+- [x] **PLAY-02**: Abspielansicht funktioniert mit Seek über WebDAV auf NC 33 bis 35, im Browser hell und dunkel, auf drei Breiten
 
 ### Export (EXP)
 
@@ -147,9 +147,9 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PLAT-01 | Phase 1 | Pending |
-| PLAT-02 | Phase 1 | Pending |
-| PLAT-03 | Phase 1 | Pending |
+| PLAT-01 | Phase 1 | Complete |
+| PLAT-02 | Phase 1 | Complete |
+| PLAT-03 | Phase 1 | Complete |
 | PLAT-04 | Phase 5 | Pending |
 | DISC-01 | Phase 2 | Pending |
 | DISC-02 | Phase 2 | Pending |
@@ -188,8 +188,8 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | SRCH-04 | Phase 4 | Pending |
 | SRCH-05 | Phase 4 | Pending |
 | SRCH-06 | Phase 4 | Pending |
-| PLAY-01 | Phase 1 | Pending |
-| PLAY-02 | Phase 1 | Pending |
+| PLAY-01 | Phase 1 | Complete |
+| PLAY-02 | Phase 1 | Complete |
 | EXP-01 | Phase 4 | Pending |
 | EXP-02 | Phase 4 | Pending |
 | EXP-03 | Phase 4 | Pending |

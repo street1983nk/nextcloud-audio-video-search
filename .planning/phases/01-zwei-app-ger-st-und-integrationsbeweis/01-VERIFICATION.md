@@ -1,8 +1,8 @@
 ---
 phase: 01-zwei-app-ger-st-und-integrationsbeweis
 verified: 2026-11-07T09:30:00Z
-status: human_needed
-score: 4/5 Erfolgskriterien verifiziert, 1 mit Owner-Entscheid (SC2 Gegenrichtung)
+status: passed
+score: 5/5 Erfolgskriterien verifiziert (SC2 Gegenrichtung per Owner-Override 07.11.)
 overrides_applied: 1
 overrides:
   - must_have: "Fehlt die Gegen-App, ist sie nicht erreichbar oder hat sie eine andere Version, sieht der Admin eine klare Meldung statt eines stillen Ausfalls."
