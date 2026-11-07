@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-09-PLAN.md
-last_updated: "2026-11-07T11:04:30.193Z"
+stopped_at: "Completed 02-10-PLAN.md (Welle 3 fertig, nächster Schritt Plan 11: Owner-Push)"
+last_updated: "2026-11-07T11:13:33.097Z"
 last_activity: 2026-11-07
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 22
+  completed_plans: 23
   percent: 9
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 9 of 22 (planned, 11 waves)
+Plan: 10 of 22 (planned, 11 waves)
 Status: Ready to execute
 Last activity: 2026-11-07
 
-Progress: [██████░░░░] 63%
+Progress: [███████░░░] 66%
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [██████░░░░] 63%
 | Phase 02 P07 | 35 min | 2 tasks | 6 files |
 | Phase 02 P08 | 70 min | 2 tasks | 8 files |
 | Phase 02 P09 | 40 min | 2 tasks | 10 files |
+| Phase 02 P10 | 50 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-08: Erfassung über eigenen Leser mit Claim-Identität (etag, size, mtime); Grund eines 403 im Header X-AVS-Reason; Wartezeit ab 60 s verdoppelt bis 6 h, fünf Versuche, access_control 300 s
 - [Phase 02]: 02-09: Zählung nur lesend in store/coverage.py, Zähler und Nenner über aktive Verweise; dueWork nur active/unreadable; jede Container-Route per Gate in info.xml
 - [Phase 02]: D-02-14 (Owner 07.11.): S3-Bein der Abnahme mit SeaweedFS 4.52 statt MinIO, nur CI
+- [Phase 02]: 02-10: Gateway 403 access_control und 423 locked mit Header X-AVS-Reason, Kopf-Route über denselben resolve-Weg; occ :files/:status als erster Admin, feste Schlüssel, PHP-Listen per Python-Gate gleich denen des Containers
 
 ### Pending Todos
 
@@ -141,6 +143,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-07T11:04:30.159Z
-Stopped at: Completed 02-09-PLAN.md
+Last session: 2026-11-07T11:13:33.067Z
+Stopped at: Completed 02-10-PLAN.md (Welle 3 fertig, nächster Schritt Plan 11: Owner-Push)
 Resume file: None
