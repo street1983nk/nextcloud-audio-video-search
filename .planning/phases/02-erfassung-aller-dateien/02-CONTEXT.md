@@ -30,6 +30,10 @@ Ohne Konfiguration kennt das System alle Audio- und Videodateien der Instanz (al
 - **D-02-09:** Papierkorb: Transkript nur als verwaist vormerken (`orphaned_at`), nicht mehr findbar, bei Wiederherstellung sofort zurück. Endgültiges Löschen in Phase 8. D-02-04 (Löschen beim letzten Verweis) gilt für Ausschlüsse und endgültig gelöschte Dateien.
 - **D-02-11 (Owner 07.11.):** Ein vom Admin angelegter SMB-Mount mit Anmeldedaten je Nutzer gilt beim Ausschluss als Eigentum dieses Nutzers (D-02-08): sein Speicher wird nicht erfasst. Die Kopien anderer Nutzer derselben Freigabe bleiben erfasst.
 
+### Erneuter Lesebeweis und endgültiges Löschen (Owner 07.11.)
+- **D-02-12:** Periodischer erneuter Lesebeweis: Jeder aktive Verweis auf SMB- und SFTP-Speichern wird beim Abgleich mit dem 64-KiB-Lesebeweis erneut geprüft, mindestens alle 7 Tage, und sofort bei vanished nach active sowie bei Wiederherstellung aus dem Papierkorb. Scheitert der Lesebeweis, verschwinden die Treffer dieses Nutzers sofort.
+- **D-02-13:** Auch endgültiges Löschen (und ein gelöschter Nutzer) wird nur vorgemerkt (`orphaned_at`) und nach 7 Tagen vergessen; das endgültige Löschen baut Phase 8. Taucht innerhalb von 7 Tagen eine Kopie mit gleichem Inhalt auf, hängt sie sich an und behält Transkript und Korrekturen. D-02-04 (sofortiges Löschen beim letzten Verweis) gilt damit nur noch für Ausschlüsse.
+
 ### Kein Abschaltweg für den Lesebeweis (Owner 07.11.)
 - **D-02-10:** Das Produkt hat KEINEN Weg, den Lesebeweis abzuschalten: kein Env, keine Einstellung, keine Markendatei, kein Debug-Schalter. Die Leck-Positivkontrolle aus D-02-01a läuft über ein eigenes CI-only-Image: der Workflow wendet einen Patch unter `ci/` (nie im ausgelieferten Quellbaum) auf eine Kopie an, der den Lesebeweis entfernt; das Image wird nie in eine öffentliche Registry oder unter einem Tag veröffentlicht und nur im Kontrollbein genutzt. Ein Gate schlägt an, wenn `php/` oder `backend/src` einen Weg enthält, der den Lesebeweis überspringt oder abschaltet. Positivkontrolle B (monkeypatch) bleibt in den Unit-Tests.
 

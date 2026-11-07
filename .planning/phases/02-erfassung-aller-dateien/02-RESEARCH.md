@@ -525,14 +525,14 @@ def _cadence_due(self, last_at: int | None) -> bool:
 
 ## Open Questions
 
-1. **D-02-01 mit Lesebeweis (blockierend für den Plan, Owner-Entscheid):**
+1. **(RESOLVED: D-02-01a, D-02-10, D-02-12) D-02-01 mit Lesebeweis:**
    - What we know: D-02-01 wörtlich ist Findlings Weg A; A6 zeigt das Leck auf echtem Samba, auch mit `check_acl`; Findling-Owner hat Weg A deshalb am 28.10. abgelehnt.
    - Recommendation: Vorfilter behalten, je Kopie 64-KiB-Lesebeweis über eigene file_id und Leser plus Kopf-Hash-Vergleich, erst dann anhängen. Voller Download bleibt einmalig. Alternative: jede Kopie voll laden (sicher, n-fache Kosten).
-2. **Semantik Nutzer- und Gruppenausschluss:** Empfehlung A1. Alternative "Gruppe = Gruppenordner dieser Gruppe" wäre eine eigene Regel.
-3. **Löschen in den Papierkorb vs. Ausschluss:** Empfehlung: Ausschluss und gone löschen sofort (D-02-04), Papierkorb setzt nur `orphaned_at`, endgültig in Phase 8. Owner bestätigt, dass D-02-04 nur für Ausschlüsse gilt.
-4. **Anzeige in Phase 2 oder 9 (D-02-06, D-02-03 "Admin sieht"):** Empfehlung: Phase 2 liefert die Zahl und die Liste übersprungener Speicher per occ, die Admin-Seite in Phase 9 (eigener UI-Vertrag, Dreisprachigkeit, Playwright). Falls der Owner "Admin sieht" als Oberfläche liest: eine Zeile in der vorhandenen Admin-Sektion, dann `/gsd:ui-phase 2` vor dem Plan.
-5. **Rescan-Kadenz und Budget:** 24 h je Speicher, 300 s je Lauf als Startwert; im E2E messen und nach Messung festlegen.
-6. **Crawl-Start erst nach Handshake ok:** Empfehlung ja (Fenster für Ausschlüsse vor dem ersten Durchlauf). Dokumentieren, dass Ausschlüsse vor Installation des Backends gesetzt werden können.
+2. **(RESOLVED: D-02-08, D-02-11) Semantik Nutzer- und Gruppenausschluss:** Empfehlung A1. Alternative "Gruppe = Gruppenordner dieser Gruppe" wäre eine eigene Regel.
+3. **(RESOLVED: D-02-09, D-02-13) Löschen in den Papierkorb vs. Ausschluss:** Empfehlung: Ausschluss und gone löschen sofort (D-02-04), Papierkorb setzt nur `orphaned_at`, endgültig in Phase 8. Owner bestätigt, dass D-02-04 nur für Ausschlüsse gilt.
+4. **(RESOLVED: D-02-06, Anzeige per occ in Phase 2, Oberfläche Phase 9) Anzeige in Phase 2 oder 9:** Empfehlung: Phase 2 liefert die Zahl und die Liste übersprungener Speicher per occ, die Admin-Seite in Phase 9 (eigener UI-Vertrag, Dreisprachigkeit, Playwright). Falls der Owner "Admin sieht" als Oberfläche liest: eine Zeile in der vorhandenen Admin-Sektion, dann `/gsd:ui-phase 2` vor dem Plan.
+5. **(RESOLVED: Startwerte 24 h je Speicher und 300 s je Lauf, Messung im CI-Abnahmelauf, per occ erzwingbar) Rescan-Kadenz und Budget:** 24 h je Speicher, 300 s je Lauf als Startwert; im E2E messen und nach Messung festlegen.
+6. **(RESOLVED: Erst-Crawl startet erst nach Backend-Handshake ok, D-02-05) Crawl-Start erst nach Handshake ok:** Empfehlung ja (Fenster für Ausschlüsse vor dem ersten Durchlauf). Dokumentieren, dass Ausschlüsse vor Installation des Backends gesetzt werden können.
 
 ## Environment Availability
 
@@ -592,7 +592,7 @@ def _cadence_due(self, last_at: int | None) -> bool:
 - Vergleich: `occ audio_video_search:status --json` (Y, N) und `occ …:files --json` (Menge der file_ids) gegen die Wahrheit; die file_ids der Wahrheit kommen über `sqlite3 data/owncloud.db` aus `oc_filecache` (storage, path) gegen die `find`-Pfade, also ohne App-Code.
 - "Nie geladen" (D-02-05) und "keine Neuberechnung" (DISC-06): Zugriffslog des Webservers im CI (Zeilen `GET /ocs/v2.php/apps/audio_video_search/files/<id>` und `/head`), nicht ein App-Zähler. Ausgeschlossene IDs dürfen nie auftauchen, Umbenennen/Taggen erzeugt keine neue Zeile. Für Samba zusätzlich `vfs_full_audit` (open je Nutzer) als zweite Wahrheit für die SMB-Dateien.
 - Lesebeweis: Datei mit DENY READ für ben muss in `occ …:files` für bens file_id `unreadable/read_denied` (oder `read_timeout`) zeigen, und eine Suche als ben nach dem Probe-Wort dieses Inhalts liefert keinen Treffer (OCS-Suche wie `deploy-harp.yml:291-316`).
-- **Positivkontrolle:** derselbe Vergleich gegen eine absichtlich um 1 verschobene Erwartung muss rot werden (Skript-Selbsttest im Job), UND ein Lauf mit gesetzter Debug-Variable, die den Lesebeweis überspringt, muss den DENY-Fall als Treffer zeigen und damit rot werden (belegt, dass der Test das Leck sieht). Zusätzlich die Positivkontrolle am Samba-Server aus Findling (ana liest, ben bekommt `NT_STATUS_ACCESS_DENIED`); ohne sie ist der Lauf ungültig.
+- **Positivkontrolle:** derselbe Vergleich gegen eine absichtlich um 1 verschobene Erwartung muss rot werden (Skript-Selbsttest im Job), UND ein Kontrolllauf ohne Lesebeweis muss den DENY-Fall als Treffer zeigen (belegt, dass der Test das Leck sieht). [ÜBERHOLT durch D-02-10: keine Debug-Variable im Produkt; der Kontrolllauf nutzt ein CI-only-Image, gebaut aus einer Kopie mit dem Patch `ci/leak-control/read-proof-off.patch`.] Zusätzlich die Positivkontrolle am Samba-Server aus Findling (ana liest, ben bekommt `NT_STATUS_ACCESS_DENIED`); ohne sie ist der Lauf ungültig.
 
 ### Sampling Rate
 - **Per task commit:** betroffene pytest-Datei; PHP über CI-Lauf des Zweigs.
