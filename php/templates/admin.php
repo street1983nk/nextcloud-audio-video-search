@@ -161,7 +161,7 @@ $banners = [
 				<label for="avs-sample-visible"><?php p($l->t('Show the test result in search')); ?></label>
 				<span id="avs-sample-status" class="avs-admin__status" role="status" data-saved="<?php p($l->t('Saved')); ?>" data-failed="<?php p($l->t('Not saved. Try again.')); ?>"></span>
 			</p>
-			<p id="avs-sample-hint" class="settings-hint"><?php p($l->t('For testing only. The test result only appears while this switch is on and the instance runs in debug mode. Switching it off hides it at once, the test data stays.')); ?></p>
+			<p id="avs-sample-hint" class="settings-hint"><?php p($l->t('For testing only, shown only in debug mode. Switching it off hides it, the data stays.')); ?></p>
 			<?php // Only a count the backend reported as zero means "none yet"; an unknown count (backend down) says nothing. ?>
 			<p id="avs-sample-empty" class="settings-hint"<?php if ($sampleCount !== 0) { ?> hidden<?php } ?>><?php p($l->t('No test result yet. Create one with:')); ?> <code class="avs-admin__command">occ audio_video_search:sample &lt;fileId&gt;</code></p>
 		</div>

@@ -238,7 +238,7 @@ Regeln: Deutsch zuerst; `de` und `de_DE` erhalten **denselben** Text in unpersö
 | Primary CTA | Abspielansicht: native Abspieltaste des Browsers (keine eigene Hauptaktion). Admin: "Apps öffnen" im Fehler-Banner |
 | Empty state heading | Abspielansicht: (kein eigener Titel, Hinweis im Ausschnitt-Block) "Für diese Datei gibt es noch kein Transkript." |
 | Empty state body | Admin, Testtreffer: "Noch kein Testtreffer angelegt. Anlegen mit:" + `occ audio_video_search:sample` |
-| Error state | "Diese Datei ist nicht verfügbar" / "Sie wurde gelöscht oder verschoben, oder die Freigabe besteht nicht mehr. Eine neue Suche zeigt die aktuellen Treffer." |
+| Error state | "Diese Datei ist nicht verfügbar" / "Sie wurde gelöscht, verschoben oder nicht mehr geteilt." |
 | Destructive confirmation | keine: Phase 1 hat keine zerstörende Aktion in der Oberfläche |
 
 ### Fläche 1: Unified Search
@@ -261,16 +261,16 @@ Regeln: Deutsch zuerst; `de` und `de_DE` erhalten **denselben** Text in unpersö
 | Leer: kein Transkript | Für diese Datei gibt es noch kein Transkript. | There is no transcript for this file yet. | Il n'y a pas encore de transcription pour ce fichier. |
 | Ausschnitt nicht abrufbar | Der Ausschnitt ist gerade nicht abrufbar. Die Wiedergabe funktioniert trotzdem. | The excerpt cannot be loaded right now. Playback works regardless. | L'extrait n'est pas disponible pour le moment. La lecture fonctionne quand même. |
 | Nicht verfügbar, Titel | Diese Datei ist nicht verfügbar | This file is not available | Ce fichier n'est pas disponible |
-| Nicht verfügbar, Satz | Sie wurde gelöscht oder verschoben, oder die Freigabe besteht nicht mehr. Eine neue Suche zeigt die aktuellen Treffer. | It was deleted or moved, or it is no longer shared. A new search shows the current results. | Il a été supprimé ou déplacé, ou il n'est plus partagé. Une nouvelle recherche affiche les résultats actuels. |
+| Nicht verfügbar, Satz | Sie wurde gelöscht, verschoben oder nicht mehr geteilt. | It was deleted, moved or is no longer shared. | Il a été supprimé, déplacé ou n'est plus partagé. |
 | Nicht verfügbar, Aktion | Zu Dateien | Go to Files | Aller à Fichiers |
 | Kein Medium, Titel | Diese Datei ist keine Audio- oder Videodatei | This file is not an audio or video file | Ce fichier n'est ni un fichier audio ni un fichier vidéo |
 | Kein Medium, Satz | Die Abspielansicht spielt nur Audio und Video ab. | This view only plays audio and video. | Cette vue ne lit que l'audio et la vidéo. |
-| Download gesperrt, Titel | Abspielen ist für diese Freigabe gesperrt | Playback is blocked for this share | La lecture est bloquée pour ce partage |
-| Download gesperrt, Satz | Die Freigabe erlaubt kein Herunterladen, deshalb spielt diese Instanz die Datei nicht ab. Wer die Datei freigegeben hat, kann das Herunterladen erlauben. Der Treffer bleibt in der Suche sichtbar. | This share does not allow downloads, so this instance does not play the file. The person who shared it can allow downloads. The result stays visible in search. | Ce partage n'autorise pas le téléchargement, cette instance ne lit donc pas le fichier. La personne qui l'a partagé peut autoriser le téléchargement. Le résultat reste visible dans la recherche. |
+| Download gesperrt, Titel | Abspielen für diese Freigabe gesperrt | Playback blocked for this share | Lecture bloquée pour ce partage |
+| Download gesperrt, Satz | Wer die Datei geteilt hat, kann Downloads erlauben. | The person who shared the file can allow downloads. | La personne qui a partagé le fichier peut autoriser les téléchargements. |
 | Verschoben, Titel | Die Datei wurde inzwischen verschoben oder umbenannt | The file was moved or renamed in the meantime | Le fichier a été déplacé ou renommé entre-temps |
 | Verschoben, Satz | Seite neu laden, um sie an ihrem neuen Ort zu finden. | Reload to find it at its new location. | Rechargez la page pour le retrouver à son nouvel emplacement. |
 | Format/defekt, Titel | Die Datei lässt sich hier nicht abspielen | The file cannot be played here | Le fichier ne peut pas être lu ici |
-| Format/defekt, Satz | Der Browser kennt das Format nicht, oder die Datei ist beschädigt. Die Datei herunterladen und mit einem anderen Programm öffnen oder einen anderen Browser versuchen. | The browser does not support the format, or the file is damaged. Download the file and open it in another program, or try another browser. | Le navigateur ne prend pas en charge ce format, ou le fichier est endommagé. Téléchargez le fichier et ouvrez-le avec un autre programme, ou essayez un autre navigateur. |
+| Format/defekt, Satz | Herunterladen und in einem anderen Programm öffnen. | Download it and open it in another program. | Téléchargez-le et ouvrez-le dans un autre programme. |
 | Format/defekt, Aktion | Datei herunterladen | Download file | Télécharger le fichier |
 | Netz, Titel | Die Verbindung zum Server ist abgebrochen | The connection to the server was lost | La connexion au serveur a été interrompue |
 | Netz, Satz | Die Verbindung prüfen und die Seite neu laden. | Check the connection and reload the page. | Vérifiez la connexion et rechargez la page. |
@@ -300,7 +300,7 @@ Regeln: Deutsch zuerst; `de` und `de_DE` erhalten **denselben** Text in unpersö
 | Knopf während Prüfung | Wird geprüft… | Checking… | Vérification… |
 | h3 Debug | Testtreffer | Test result | Résultat de test |
 | Checkbox-Label | Testtreffer in der Suche zeigen | Show the test result in search | Afficher le résultat de test dans la recherche |
-| Checkbox-Hinweis | Nur für Tests. Der Testtreffer erscheint nur, solange dieser Schalter an ist und die Instanz im Debug-Modus läuft. Ausschalten blendet ihn sofort aus, die Testdaten bleiben erhalten. | For testing only. The test result only appears while this switch is on and the instance runs in debug mode. Switching it off hides it at once, the test data stays. | Uniquement pour les tests. Le résultat de test n'apparaît que tant que cette option est activée et que l'instance est en mode débogage. La désactiver le masque immédiatement, les données de test sont conservées. |
+| Checkbox-Hinweis | Nur für Tests, erscheint nur im Debug-Modus. Ausschalten blendet ihn aus, die Daten bleiben. | For testing only, shown only in debug mode. Switching it off hides it, the data stays. | Uniquement pour les tests, visible seulement en mode débogage. La désactiver le masque, les données restent. |
 | Leer: kein Testtreffer | Noch kein Testtreffer angelegt. Anlegen mit: | No test result yet. Create one with: | Aucun résultat de test pour l'instant. Pour en créer un : |
 | Gespeichert | Gespeichert | Saved | Enregistré |
 | Nicht gespeichert | Nicht gespeichert. Erneut versuchen. | Not saved. Try again. | Non enregistré. Réessayez. |
