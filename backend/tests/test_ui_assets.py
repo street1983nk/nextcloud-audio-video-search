@@ -191,6 +191,8 @@ def test_the_admin_section_keeps_its_contract() -> None:
     ):
         assert f"'{state}' =>" in template, state
     assert 'id="avs-recheck-failed"' in template
+    # Nextcloud 34 moved the app management into the app "appstore".
+    assert "linkToRoute('appstore.page.viewApps')" in template
     assert "linkToRoute('settings.AppSettings.viewApps')" in template
     # Banner rules come from play.css, the debug block only in debug mode.
     assert "\\OCP\\Util::addStyle('audio_video_search', 'play')" in template

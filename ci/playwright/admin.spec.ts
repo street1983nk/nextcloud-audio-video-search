@@ -31,6 +31,13 @@ function registeredBackendVersion(): string {
 	return value;
 }
 
+/** The one action of an error banner leads to the app management, on every version. */
+async function expectAppsLink(page: Page, state: string): Promise<void> {
+	const link = page.locator(`[data-state="${state}"] .avs-banner__action`);
+	await expect(link).toBeVisible();
+	await expect(link).toHaveAttribute('href', /\/settings\/apps$/);
+}
+
 /** "Check again", so the banner shows the state of right now. */
 async function recheck(page: Page): Promise<void> {
 	const answer = page.waitForResponse((response) => response.url().includes('/apps/audio_video_search/admin/state'));
@@ -110,6 +117,7 @@ test('Backend deaktiviert: Banner und leere Suche @disabled @screenshot', async 
 	await recheck(page);
 
 	await expect(page.locator('[data-state="backend_disabled"]')).toBeVisible();
+	await expectAppsLink(page, 'backend_disabled');
 	expect(await ocsSearch(users.alice())).toHaveLength(0);
 	await screenshot(page, 'admin-backend_disabled', testInfo);
 });
@@ -119,6 +127,7 @@ test('Backend nicht erreichbar: Banner und leere Suche @unreachable @screenshot'
 	await recheck(page);
 
 	await expect(page.locator('[data-state="backend_unreachable"]')).toBeVisible();
+	await expectAppsLink(page, 'backend_unreachable');
 	expect(await ocsSearch(users.alice())).toHaveLength(0);
 	await screenshot(page, 'admin-backend_unreachable', testInfo);
 });
@@ -138,6 +147,7 @@ test('Versionen weichen in Major.Minor ab: Fehlerbanner mit beiden Versionen, le
 	const banner = page.locator('[data-state="version_drift"]');
 	await expect(banner).toBeVisible();
 	await expect(banner.locator('.avs-version-own')).toHaveText(VERSION);
+	await expectAppsLink(page, 'version_drift');
 	await expect(banner.locator('.avs-version-backend')).toHaveText(registeredBackendVersion());
 	expect(await ocsSearch(users.alice())).toHaveLength(0);
 	await screenshot(page, 'admin-version_drift', testInfo);
@@ -160,6 +170,7 @@ test('Backend nicht installiert: Banner und leere Suche @missing @screenshot', a
 	await recheck(page);
 
 	await expect(page.locator('[data-state="backend_missing"]')).toBeVisible();
+	await expectAppsLink(page, 'backend_missing');
 	expect(await ocsSearch(users.alice())).toHaveLength(0);
 	await screenshot(page, 'admin-backend_missing', testInfo);
 });

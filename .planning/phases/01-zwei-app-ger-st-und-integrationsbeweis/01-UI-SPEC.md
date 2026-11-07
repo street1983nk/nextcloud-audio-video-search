@@ -212,7 +212,7 @@ Eigene Admin-Sektion "Audio & Video Search" (`IIconSection`, ID `audio_video_sea
 | `no_app_api` | Fehler | leer | Link "Apps öffnen" |
 | Neuprüfung gescheitert (Anfrage an die eigene Route schlägt fehl) | Warnung, zusätzlich zum letzten Banner | unverändert | keine |
 
-Kein Banner nennt Dateinamen oder Pfade. Versionen werden genannt (für den Admin nötig, kein Personenbezug). Link "Apps öffnen" zielt auf die App-Verwaltung des Servers (`settings.AppSettings.viewApps`), öffnet im selben Tab, ist der einzige Akzent im Banner.
+Kein Banner nennt Dateinamen oder Pfade. Versionen werden genannt (für den Admin nötig, kein Personenbezug). Link "Apps öffnen" zielt auf die App-Verwaltung des Servers (ab NC 34 `appstore.page.viewApps`, bis NC 33 `settings.AppSettings.viewApps`), öffnet im selben Tab, ist der einzige Akzent im Banner.
 
 ### Debug-Schalter
 

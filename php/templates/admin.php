@@ -48,7 +48,14 @@ $backend = is_string($_['backend'] ?? null) && $_['backend'] !== '' ? $_['backen
 $checkedAtText = is_string($_['checkedAtText'] ?? null) ? $_['checkedAtText'] : '';
 $checkedAtIso = is_string($_['checkedAtIso'] ?? null) ? $_['checkedAtIso'] : '';
 // The app management of the server, the one action of an error banner.
-$appsUrl = \OCP\Server::get(\OCP\IURLGenerator::class)->linkToRoute('settings.AppSettings.viewApps');
+// From Nextcloud 34 on it is the app "appstore"; up to 33 it belongs to
+// settings. An unknown route gives an empty string, so the second name only
+// counts where the first one does not exist.
+$urlGenerator = \OCP\Server::get(\OCP\IURLGenerator::class);
+$appsUrl = $urlGenerator->linkToRoute('appstore.page.viewApps');
+if ($appsUrl === '') {
+	$appsUrl = $urlGenerator->linkToRoute('settings.AppSettings.viewApps');
+}
 $debug = ($_['debug'] ?? false) === true;
 $sampleVisible = ($_['sampleVisible'] ?? false) === true;
 $sampleCount = is_int($_['sampleCount'] ?? null) ? $_['sampleCount'] : null;
