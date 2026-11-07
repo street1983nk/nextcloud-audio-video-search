@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "02-11 Push 1 (ad6a32c) erledigt; Discovery acceptance: ungültige Workflow-Datei, Korrektur 6e02526 lokal, Push 2 wartet auf Owner-Freigabe"
-last_updated: "2026-11-07T12:58:27.629Z"
+stopped_at: 02-11 abgeschlossen (Push 4 80ce5c9 ausgewertet, reason_77 in Plan 13 Task 3); nächster Plan 02-12, nicht begonnen; lokal nicht gepusht bc9a1b0, 0960824 und die Abschluss-Commits
+last_updated: "2026-11-07T16:54:54.910Z"
 last_activity: 2026-11-07
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 23
+  completed_plans: 24
   percent: 9
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 10 of 22 (planned, 11 waves)
+Plan: 12 of 22 (planned, 11 waves)
 Status: Ready to execute
 Last activity: 2026-11-07
 
-Progress: [███████░░░] 66%
+Progress: [███████░░░] 69%
 
 ## Performance Metrics
 
@@ -69,6 +69,7 @@ Progress: [███████░░░] 66%
 | Phase 02 P08 | 70 min | 2 tasks | 8 files |
 | Phase 02 P09 | 40 min | 2 tasks | 10 files |
 | Phase 02 P10 | 50 min | 2 tasks | 11 files |
+| Phase 02 P11 | 60 min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -121,6 +122,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-09: Zählung nur lesend in store/coverage.py, Zähler und Nenner über aktive Verweise; dueWork nur active/unreadable; jede Container-Route per Gate in info.xml
 - [Phase 02]: D-02-14 (Owner 07.11.): S3-Bein der Abnahme mit SeaweedFS 4.52 statt MinIO, nur CI
 - [Phase 02]: 02-10: Gateway 403 access_control und 423 locked mit Header X-AVS-Reason, Kopf-Route über denselben resolve-Weg; occ :files/:status als erster Admin, feste Schlüssel, PHP-Listen per Python-Gate gleich denen des Containers
+- [Phase 02]: 02-11: reason_77 (files_accesscontrol gibt 404 statt 403 access_control) in Plan 13 Task 3 (Owner 07.11.); Gateway unterscheidet, Container deutet 404 nie um
 
 ### Pending Todos
 
@@ -129,7 +131,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; offen Owner-Entscheid zu reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10)
+- 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10) per Owner 07.11. in Plan 13 Task 3
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -144,6 +146,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-07T12:58:27.610Z
-Stopped at: 02-11 Push 1 (ad6a32c) erledigt; Discovery acceptance ungültige Workflow-Datei, Korrektur 6e02526 lokal, Push 2 wartet auf Owner-Freigabe
+Last session: 2026-11-07T16:54:48.966Z
+Stopped at: 02-11 abgeschlossen (Push 4 80ce5c9 ausgewertet, reason_77 in Plan 13 Task 3); nächster Plan 02-12, nicht begonnen; lokal nicht gepusht bc9a1b0, 0960824 und die Abschluss-Commits
 Resume file: None

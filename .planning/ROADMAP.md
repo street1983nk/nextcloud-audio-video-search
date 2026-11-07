@@ -80,7 +80,7 @@ Plans:
 - [x] 02-08-PLAN.md: (W3) Container: Erfassung per Temp-Download mit Längenprüfung
 - [x] 02-09-PLAN.md: (W3) Container: Zählung nach Inhalten, /workstock, /coverage
 - [x] 02-10-PLAN.md: (W3) PHP: Gateway access_control/locked, Kopf-Route, occ :files/:status
-- [ ] 02-11-PLAN.md: (W4) Owner: Push 1 auf phase-02 hinter Freigabedatei, prüfbare CI
+- [x] 02-11-PLAN.md: (W4) Owner: Push 1 auf phase-02 hinter Freigabedatei, prüfbare CI
 - [ ] 02-12-PLAN.md: (W5) PHP: externe Speicher, Klassifikation, Vorfilter-Schlüssel, Leser
 - [ ] 02-13-PLAN.md: (W5) Container: Lesebeweis und erneuter Beweis, Gate ohne Abschaltweg, CI-Patch
 - [ ] 02-14-PLAN.md: (W6) PHP: ExternalRescanJob und occ :rescan
@@ -227,7 +227,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
-| 2. Erfassung aller Dateien | 10/22 | In Progress|  |
+| 2. Erfassung aller Dateien | 11/22 | In Progress|  |
 | 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
