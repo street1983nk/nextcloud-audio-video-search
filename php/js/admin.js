@@ -122,7 +122,8 @@
       checkedAt.setAttribute('datetime', new Date(answer.checkedAt * 1000).toISOString())
     }
     if (emptyHint !== null) {
-      emptyHint.hidden = Number.isInteger(answer.sampleCount) && answer.sampleCount > 0
+      // Only a reported zero means "none yet"; an unknown count says nothing.
+      emptyHint.hidden = answer.sampleCount !== 0
     }
   }
 
