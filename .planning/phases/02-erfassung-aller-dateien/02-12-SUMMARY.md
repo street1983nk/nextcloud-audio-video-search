@@ -124,3 +124,13 @@ Neue bzw. geänderte PHPUnit-Fälle, ungeprüft ausgeführt: ShareKeyTest 9 Meth
 
 - Dateien vorhanden: StorageClassifier.php, StorageStateMapper.php, ShareKeyTest.php, StorageClassifierTest.php, StorageStateMapperTest.php.
 - Commits vorhanden: d81c712, 08ab7f4, 160c4bc, edacfa6, 59ed0d8.
+
+## Push 5, fa3af22 (09.11.2026)
+
+- PHP gates 42581644685 grün: die neuen PHPUnit-Fälle von 02-12 liefen zum ersten Mal und bestehen. Python gates 42581644528 grün.
+- Deploy through HaRP 42581644614 (nach einer Wiederholung mit Owner-Freigabe): alle sechs deploy-harp-Beine und upgrade stable33/stable35 amd64 grün; upgrade stable34 amd64 und stable35 arm64 zweimal rot am Download von frp aus den GitHub-Releases (curl 504, 07:49 und 08:14 UTC), kein Befund am Produkt.
+- Discovery acceptance 42581644556: Aufbau lief durch, Urteil rot wie bei Push 4 (Pläne 13 bis 22); leak-control rot, Patch kommt mit Plan 13.
+- Gegen Push 4 (42387720556): grün geworden sind initial:skipped_session_mount (Ziel dieses Plans) sowie rename/tag/trash/restore unreadable_set und unreadable_count, transcribed in rename/tag/trash/restore und reprove:cem_finds_before (Positivkontrolle greift jetzt).
+- Neu rot, eingeordnet:
+  - reprove:cem_finds_no_revoked_copy (erwartet false, gefunden true): die Positivkontrolle greift erst jetzt, weil die SMB-Datei von cem nun erfasst wird. Nach dem Samba-Entzug findet cem die Kopie noch, weil der erneute Lesebeweis fehlt. Gehört zu Plan 13 (Lesebeweis) und 20, wie reprove:reprove_unreadable schon in Push 4. Nichts davon ist veröffentlicht.
+  - vanish und reattach unreadable_set/unreadable_count (erwartet 1, gefunden 2, zuviel 52): Datei 52 wird jetzt früh als unlesbar erkannt und bleibt es nach dem Verschwinden ihres Speichers. Das Aufräumen verschwundener Speicher ist Plan 19 (classifyAbsent).
