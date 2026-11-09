@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-06)
 
 **Core value:** Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lokal transkribiert und sind in der Nextcloud-Suche mit Zeitmarke findbar, mit der bestmöglichen Transkriptqualität, die auf der vorhandenen Hardware sicher läuft. Kein Inhalt verlässt den Server.
-**Current focus:** Phase 2 — erfassung aller dateien
+**Current focus:** Phase 2 , erfassung aller dateien
 
 ## Current Position
 
@@ -136,6 +136,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
+- 02-12: Push 5 Owner-Freigabe 09.11. ("Go", Claude Code Terminal): 10 Commits 02-11 und 02-12 auf phase-02; Owner bestätigt beide Auslegungen (Klassifikationspflicht nur für externe Speicher; prefilter_key aus sha256(share_key)); CI ist der erste PHPUnit-Beleg für 02-12
 - 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10) per Owner 07.11. in Plan 13 Task 3
 - 02-12: PHPUnit und php -l der neuen PHP-Dateien (StorageClassifier, StorageStateMapper, 7 Testdateien) lokal nicht gelaufen; Beleg erst in CI beim nächsten freigegebenen Push
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
