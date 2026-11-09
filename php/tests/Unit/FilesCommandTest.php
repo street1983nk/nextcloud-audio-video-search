@@ -9,6 +9,7 @@ use OCA\AudioVideoSearch\Command\StatusCommand;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\QueueService;
+use OCA\AudioVideoSearch\Service\StorageClassifier;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
@@ -142,8 +143,11 @@ final class FilesCommandTest extends TestCase {
 		];
 	}
 
-	/** @param array<string, mixed>|null $coverage */
-	private function statusCommand(?array $coverage, bool $queueOk = true): StatusCommand {
+	/**
+	 * @param array<string, mixed>|null $coverage
+	 * @param list<array{mountId: ?int, backend: string, authKind: string, reason: string, users: int}> $skipped
+	 */
+	private function statusCommand(?array $coverage, bool $queueOk = true, array $skipped = []): StatusCommand {
 		$exApp = $this->createMock(ExAppService::class);
 		$exApp->method('coverage')->willReturn($coverage);
 		$queue = $this->createMock(QueueService::class);
@@ -151,7 +155,10 @@ final class FilesCommandTest extends TestCase {
 		$crawl = $this->createMock(CrawlMapper::class);
 		$crawl->method('progress')->willReturn(['finished' => 3, 'open' => 1]);
 
-		return new StatusCommand($exApp, $queue, $crawl);
+		$classifier = $this->createMock(StorageClassifier::class);
+		$classifier->method('skipped')->willReturn($skipped);
+
+		return new StatusCommand($exApp, $queue, $crawl, $classifier);
 	}
 
 	public function testStatusJsonCarriesTheCoverageTheQueueAndTheCrawls(): void {
@@ -162,13 +169,54 @@ final class FilesCommandTest extends TestCase {
 		self::assertSame(Command::SUCCESS, $code);
 		$printed = json_decode($output->fetch(), true);
 		self::assertSame(
-			['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork', 'queue', 'crawl'],
+			['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork', 'queue', 'crawl', 'skippedStorages'],
 			array_keys($printed),
 		);
 		self::assertSame(3, $printed['dueWork']);
 		self::assertTrue($printed['queue']['ok']);
 		self::assertSame(2, $printed['queue']['open']['content']);
 		self::assertSame(['finished' => 3, 'open' => 1], $printed['crawl']);
+		self::assertSame([], $printed['skippedStorages']);
+	}
+
+	/** @return list<array{mountId: ?int, backend: string, authKind: string, reason: string, users: int}> */
+	private static function skipped(): array {
+		return [
+			['mountId' => 2, 'backend' => 'smb', 'authKind' => 'password::sessioncredentials', 'reason' => 'session_credentials', 'users' => 1],
+			['mountId' => 4, 'backend' => 'sftp', 'authKind' => 'password::logincredentials', 'reason' => 'credentials_missing', 'users' => 3],
+		];
+	}
+
+	public function testStatusJsonListsTheSkippedStoragesAsTheAcceptanceTestReadsThem(): void {
+		$output = new BufferedOutput();
+
+		self::runCommand($this->statusCommand(self::coverage(), true, self::skipped()), ['--json' => true], $output);
+
+		$printed = json_decode($output->fetch(), true);
+		self::assertSame(self::skipped(), $printed['skippedStorages']);
+	}
+
+	public function testStatusTextNamesEachSkippedStorageWithoutAPathAndTheHint(): void {
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($this->statusCommand(self::coverage(), true, self::skipped()), [], $output);
+
+		self::assertSame(Command::SUCCESS, $code);
+		$text = $output->fetch();
+		self::assertStringContainsString('Skipped external storages: 2', $text);
+		self::assertStringContainsString('mount 2: backend smb, authentication password::sessioncredentials, reason session_credentials, users 1', $text);
+		self::assertStringContainsString('mount 4: backend sftp, authentication password::logincredentials, reason credentials_missing, users 3', $text);
+		self::assertStringContainsString('Stored credentials (Log-in credentials, save in database) make these storages capturable.', $text);
+	}
+
+	public function testStatusTextWithoutSkippedStoragesSaysNoneAndNoHint(): void {
+		$output = new BufferedOutput();
+
+		self::runCommand($this->statusCommand(self::coverage()), [], $output);
+
+		$text = $output->fetch();
+		self::assertStringContainsString('Skipped external storages: none', $text);
+		self::assertStringNotContainsString('Stored credentials', $text);
 	}
 
 	public function testStatusTextSaysXOfYContentsWithTheFiles(): void {

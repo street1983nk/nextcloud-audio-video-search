@@ -8,6 +8,7 @@ use OCA\AudioVideoSearch\BackgroundJobs\SchedulerJob;
 use OCA\AudioVideoSearch\BackgroundJobs\StorageCrawlJob;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\StorageClassifier;
 use OCA\AudioVideoSearch\Service\StorageService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\IJobList;
@@ -26,6 +27,7 @@ final class SchedulerJobTest extends TestCase {
 	private StorageService&MockObject $storage;
 	private CrawlMapper&MockObject $crawls;
 	private ExAppService&MockObject $exApp;
+	private StorageClassifier&MockObject $classifier;
 	/** @var list<array<string, int>> */
 	private array $added = [];
 
@@ -47,6 +49,7 @@ final class SchedulerJobTest extends TestCase {
 		$this->crawls = $this->createMock(CrawlMapper::class);
 		$this->exApp = $this->createMock(ExAppService::class);
 		$this->exApp->method('firstAdmin')->willReturn('admin');
+		$this->classifier = $this->createMock(StorageClassifier::class);
 	}
 
 	private function runJob(): void {
@@ -56,6 +59,7 @@ final class SchedulerJobTest extends TestCase {
 			$this->storage,
 			$this->crawls,
 			$this->exApp,
+			$this->classifier,
 			$this->createMock(LoggerInterface::class),
 		);
 		(new \ReflectionMethod(SchedulerJob::class, 'run'))->invoke($job, null);
@@ -138,5 +142,96 @@ final class SchedulerJobTest extends TestCase {
 		$this->runJob();
 
 		self::assertSame([], $this->added);
+	}
+
+	/** Storage 4 and 5 are external storages, 3 is a home. */
+	private function external(): void {
+		$this->storage->method('isExternal')->willReturnCallback(static fn (int $storageId): bool => in_array($storageId, [4, 5], true));
+	}
+
+	public function testANotCapturableExternalStorageGetsNoCrawlAndAHomeNeedsNoClassification(): void {
+		$this->state(ExAppService::STATE_OK);
+		$this->external();
+		$asked = [];
+		$this->classifier->method('refresh')->willReturnCallback(function (int $storageId, bool $mayCheck) use (&$asked): array {
+			$asked[] = [$storageId, $mayCheck];
+
+			return ['capturable' => $storageId === 5, 'becameCapturable' => $storageId === 5, 'checked' => true];
+		});
+		$this->crawls->method('upsert')->willReturn(true);
+
+		$this->runJob();
+
+		self::assertSame([[4, true], [5, true]], $asked);
+		self::assertSame([StorageCrawlJob::argument(3, 11), StorageCrawlJob::argument(5, 31)], $this->added);
+	}
+
+	public function testAnExternalStorageThatBecameCapturableCrawlsAgainFromTheStart(): void {
+		$this->state(ExAppService::STATE_OK);
+		$this->external();
+		$this->classifier->method('refresh')->willReturnCallback(static fn (int $storageId): array => [
+			'capturable' => true, 'becameCapturable' => $storageId === 4, 'checked' => true,
+		]);
+		// Every mount has a finished crawl already.
+		$this->crawls->method('upsert')->willReturn(false);
+		$this->crawls->method('find')->willReturnCallback(static fn (int $storageId, int $rootId): array => [
+			'storageId' => $storageId, 'rootId' => $rootId, 'lastFileId' => 9, 'generation' => 0, 'startedAt' => 1, 'finishedAt' => 2,
+		]);
+		$this->crawls->expects(self::once())->method('reset')->with(4, 21);
+		$this->jobList->method('has')->willReturn(false);
+
+		$this->runJob();
+
+		self::assertSame([StorageCrawlJob::argument(4, 21)], $this->added);
+	}
+
+	public function testAClassifierThatThrowsMeansNoCrawlForThatStorageOnly(): void {
+		$this->state(ExAppService::STATE_OK);
+		$this->external();
+		$this->classifier->method('refresh')->willReturnCallback(static function (int $storageId): array {
+			if ($storageId === 4) {
+				throw new \RuntimeException('database gone');
+			}
+
+			return ['capturable' => true, 'becameCapturable' => false, 'checked' => true];
+		});
+		$this->crawls->method('upsert')->willReturn(true);
+
+		$this->runJob();
+
+		self::assertSame([StorageCrawlJob::argument(3, 11), StorageCrawlJob::argument(5, 31)], $this->added);
+	}
+
+	public function testOnceTheBudgetIsSpentTheClassifierOnlyReads(): void {
+		$this->state(ExAppService::STATE_OK);
+		$this->external();
+		$now = 1000;
+		$time = $this->createMock(ITimeFactory::class);
+		$time->method('getTime')->willReturnCallback(function () use (&$now): int {
+			return $now;
+		});
+		$asked = [];
+		$this->classifier->method('refresh')->willReturnCallback(function (int $storageId, bool $mayCheck) use (&$asked, &$now): array {
+			$asked[] = [$storageId, $mayCheck];
+			// The first probe takes the whole budget.
+			$now += SchedulerJob::CLASSIFY_SECONDS;
+
+			return ['capturable' => false, 'becameCapturable' => false, 'checked' => $mayCheck];
+		});
+		$this->crawls->method('upsert')->willReturn(true);
+
+		$job = new SchedulerJob(
+			$time,
+			$this->jobList,
+			$this->storage,
+			$this->crawls,
+			$this->exApp,
+			$this->classifier,
+			$this->createMock(LoggerInterface::class),
+		);
+		(new \ReflectionMethod(SchedulerJob::class, 'run'))->invoke($job, null);
+
+		self::assertSame([[4, true], [5, false]], $asked);
+		self::assertSame([StorageCrawlJob::argument(3, 11)], $this->added);
 	}
 }

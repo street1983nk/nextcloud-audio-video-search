@@ -294,13 +294,20 @@ def composer_namespaces(text: str) -> tuple[dict[str, str], dict[str, str]]:
 # these names is a fatal error the moment phpunit loads the class.
 FINAL_TESTCASE_METHODS = frozenset(
     {
+        "any",
+        "atLeast",
+        "atLeastOnce",
+        "atMost",
         "count",
         "dataName",
+        "exactly",
         "dataSetAsString",
         "groups",
         "name",
         "nameWithDataSet",
+        "never",
         "numberOfAssertionsPerformed",
+        "once",
         "providedData",
         "result",
         "run",
@@ -446,6 +453,9 @@ def test_self_rule9_fires_on_a_lost_backslash() -> None:
 def test_self_rule10_fires_on_a_helper_named_status() -> None:
     assert helpers_shadowing_final_methods("\tprivate function status(array $value): IResponse {") == ["status"]
     assert helpers_shadowing_final_methods("\tprivate function statusResponse(array $value): IResponse {") == []
+    # The matcher factories are final and static: a data provider of that name is a fatal error.
+    assert helpers_shadowing_final_methods("	public static function never(): array {") == ["never"]
+    assert helpers_shadowing_final_methods("	public static function neverCapturable(): array {") == []
 
 
 def test_self_rule11_fires_on_a_hidden_rule_without_an_id() -> None:

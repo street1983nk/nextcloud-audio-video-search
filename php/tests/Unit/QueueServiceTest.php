@@ -155,6 +155,68 @@ final class QueueServiceTest extends TestCase {
 		self::assertFalse($service->admissible(3, self::WEBM, ''));
 	}
 
+	public function testAnExternalStorageWithoutAClassificationIsNeverAdmissible(): void {
+		$this->states->method('find')->willReturn(null);
+
+		self::assertFalse($this->service()->admissible(7, self::WEBM, 'a.webm'));
+		self::assertFalse($this->service()->storageCapturable(7));
+	}
+
+	public function testAnExternalStorageIsAdmissibleOnlyWhenItsClassificationSaysCapturable(): void {
+		$this->states->method('find')->willReturnCallback(static fn (int $storageId): ?array => match ($storageId) {
+			7 => self::state(7, true),
+			8 => self::state(8, false, reason: 'session_credentials'),
+			default => null,
+		});
+		$service = $this->service();
+
+		self::assertTrue($service->admissible(7, self::WEBM, 'a.webm'));
+		self::assertFalse($service->admissible(8, self::WEBM, 'a.webm'));
+		self::assertFalse($service->admissible(7, 9, 'a.txt'));
+	}
+
+	public function testHomesAndTeamFoldersNeedNoClassification(): void {
+		$this->states->expects(self::never())->method('find');
+		$service = $this->service();
+
+		self::assertTrue($service->admissible(3, self::WEBM, 'a.webm'));
+		self::assertTrue($service->admissible(5, self::WEBM, 'a.webm'));
+	}
+
+	public function testARowOfANotCapturableStorageIsDroppedAtTheHandOver(): void {
+		$this->states->method('find')->willReturn(self::state(8, false, reason: 'unavailable'));
+		$this->fileAccess->method('getByFileId')->willReturn($this->entry(8, 'video/webm', 'a.webm'));
+		$this->mapper->expects(self::once())->method('drop')->with(self::TOKEN, [4])->willReturn(1);
+
+		self::assertSame(['items' => [], 'dropped' => 1], $this->service()->describe(self::TOKEN, [$this->row(4, QueueMapper::KIND_CONTENT, 60, 8)]));
+	}
+
+	public function testTheReaderOfAnExternalStorageBuiltPerUserIsThatUser(): void {
+		$external = 'OCA\Files_External\Config\ConfigAdapter';
+		$this->mounts([['ben', $external], ['ben', $external]]);
+		$this->rootFolder->expects(self::never())->method('getUserFolder');
+
+		self::assertSame('ben', $this->service()->readerUid(7, 42));
+	}
+
+	public function testTheReaderOfAnExternalStorageOfSeveralUsersIsTheFirstWhoMayRead(): void {
+		$external = 'OCA\Files_External\Config\ConfigAdapter';
+		$this->mounts([['ana', $external], ['cem', $external]]);
+		$this->folders(['cem']);
+
+		self::assertSame('cem', $this->service()->readerUid(8, 42));
+		self::assertSame(['ana:ana', 'cem:cem'], $this->askedAs);
+		self::assertNull($this->active);
+	}
+
+	public function testATeamFolderWithOneMemberStillAsksWhetherTheMemberMayRead(): void {
+		$this->mounts([['ben', 'OCA\GroupFolders\Mount\MountProvider']]);
+		$this->folders([]);
+
+		self::assertNull($this->service()->readerUid(5, 42));
+		self::assertSame(['ben:ben'], $this->askedAs);
+	}
+
 	public function testDescribeGivesExactlyTheNineKeys(): void {
 		$this->fileAccess->method('getByFileId')->with(42)->willReturn($this->entry(3, 'video/webm', 'files/a.webm'));
 		$this->mounts([['ana', 'OC\Files\Mount\LocalHomeMountProvider']]);

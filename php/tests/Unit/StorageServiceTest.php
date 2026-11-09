@@ -40,28 +40,47 @@ final class StorageServiceTest extends TestCase {
 		return $entry;
 	}
 
-	/** A home on storage 3 (walk root 11 = files) and a team folder on storage 5 (walk root 20). */
+	/**
+	 * A home on storage 3 (walk root 11 = files), a team folder on storage 5
+	 * (walk root 20) and an external storage on storage 7 (walk root 30).
+	 */
 	private function withMounts(): void {
-		$this->fileAccess->method('getDistinctMounts')->willReturnCallback(static function (): \Generator {
-			yield ['storage_id' => 3, 'root_id' => 10, 'overridden_root' => 11];
-			yield ['storage_id' => 5, 'root_id' => 20, 'overridden_root' => 20];
+		$this->fileAccess->method('getDistinctMounts')->willReturnCallback(static function (array $providers): \Generator {
+			if ($providers !== [StorageService::EXTERNAL_STORAGE_MOUNT_PROVIDER]) {
+				yield ['storage_id' => 3, 'root_id' => 10, 'overridden_root' => 11];
+				yield ['storage_id' => 5, 'root_id' => 20, 'overridden_root' => 20];
+			}
+			yield ['storage_id' => 7, 'root_id' => 30, 'overridden_root' => 30];
 		});
 		$this->fileAccess->method('getByFileIdInStorage')->willReturnCallback(
 			fn (int $fileId, int $storageId): ?ICacheEntry => match ([$fileId, $storageId]) {
 				[11, 3] => $this->entry('files'),
-				[20, 5] => $this->entry(''),
+				[20, 5], [30, 7] => $this->entry(''),
 				default => null,
 			},
 		);
 	}
 
-	public function testTheMountSetIsHomesAndTeamFoldersWithoutExternalStorage(): void {
+	public function testTheMountSetIsHomesTeamFoldersAndExternalStoragesAbWerk(): void {
 		$providers = $this->service()->providers();
 
 		self::assertContains('OC\Files\Mount\LocalHomeMountProvider', $providers);
 		self::assertContains('OC\Files\Mount\ObjectHomeMountProvider', $providers);
 		self::assertContains('OCA\GroupFolders\Mount\MountProvider', $providers);
-		self::assertNotContains('OCA\Files_External\Config\ConfigAdapter', $providers);
+		self::assertContains('OCA\Files_External\Config\ConfigAdapter', $providers);
+		self::assertSame('OCA\Files_External\Config\ConfigAdapter', StorageService::EXTERNAL_STORAGE_MOUNT_PROVIDER);
+	}
+
+	public function testOnlyTheStoragesOfFilesExternalAreExternal(): void {
+		$this->withMounts();
+		$service = $this->service();
+
+		self::assertTrue($service->isExternal(7));
+		self::assertFalse($service->isExternal(3));
+		self::assertFalse($service->isExternal(5));
+		self::assertFalse($service->isExternal(9));
+		self::assertTrue($service->inMountSet(7));
+		self::assertSame('Sitzung/a.webm', $service->mountRelativePath(7, 'Sitzung/a.webm'));
 	}
 
 	public function testGetMountsAsksForUserFilesMountsOfTheMountSet(): void {
