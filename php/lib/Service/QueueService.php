@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Service;
 
 use OCA\AudioVideoSearch\Db\QueueMapper;
+use OCA\AudioVideoSearch\Db\StorageStateMapper;
 use OCP\Files\Cache\IFileAccess;
 use OCP\Files\Config\IUserMountCache;
 use OCP\Files\File;
@@ -44,6 +45,7 @@ class QueueService {
 		private IRootFolder $rootFolder,
 		private ReaderContext $readerContext,
 		private LoggerInterface $logger,
+		private StorageStateMapper $storageStates,
 	) {
 	}
 
@@ -147,12 +149,24 @@ class QueueService {
 		$item['etag'] = (string)$entry->getEtag();
 		$item['size'] = (int)$entry->getSize();
 		$item['mtime'] = (int)$entry->getStorageMTime();
-		// The prefilter key needs the share key of plan 02-12; until then no
-		// copy is grouped, which is correct and only costs a hash per copy.
-		$item['prefilterKey'] = null;
+		$item['prefilterKey'] = $this->prefilterKey($storageId, (string)$entry->getPath(), (int)$entry->getSize(), (int)$entry->getStorageMTime());
 		$item['readerUid'] = $this->readerUid($storageId, $fileId);
 
 		return $item;
+	}
+
+	/**
+	 * The prefilter key of a file on a grouped share (SMB, SFTP), from the
+	 * share key hash and root prefix the classification stored; null for
+	 * every other storage. Built here, so no path reaches the container.
+	 */
+	private function prefilterKey(int $storageId, string $internalPath, int $size, int $storageMtime): ?string {
+		$state = $this->storageStates->find($storageId);
+		if ($state === null || $state['shareKeyHash'] === null) {
+			return null;
+		}
+
+		return StorageService::prefilterKey($state['shareKeyHash'], $state['rootPrefix'] ?? '', $internalPath, $size, $storageMtime);
 	}
 
 	/**

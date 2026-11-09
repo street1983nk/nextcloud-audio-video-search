@@ -177,4 +177,98 @@ class StorageService {
 
 		return $ids;
 	}
+
+	/**
+	 * The share key of a storage id string and the root of its configuration
+	 * inside the share, or null when copies on this storage are never grouped.
+	 *
+	 * Only SMB and SFTP are grouped: their id names login, host, share and
+	 * root, so the copies of all users of one share meet on one key once the
+	 * login is cut off. The host is the text after the last @ before the first
+	 * //, so a login name with its own @ stays out (Findling countingKey). The
+	 * root moves into the path: two configurations of the same share with
+	 * different roots meet as well. Everything else (S3, local, WebDAV, homes,
+	 * object stores, a failed storage) is never grouped, which is correct and
+	 * only costs a hash per copy.
+	 *
+	 * $storageId must be the full string of the storage object
+	 * (IStorage::getId() after the setup of its user), never oc_storages.id:
+	 * that column keeps an md5 above 64 characters (02-RESEARCH.md Befund 6).
+	 * The share key names a host; it is kept as shareKeyHash() only.
+	 *
+	 * @return array{0: string, 1: string}|null [share key, root prefix]
+	 */
+	public static function shareKey(string $storageId): ?array {
+		if (str_contains($storageId, "\0")) {
+			return null;
+		}
+		foreach (['smb::', 'sftp::'] as $prefix) {
+			if (!str_starts_with($storageId, $prefix)) {
+				continue;
+			}
+			$rest = substr($storageId, strlen($prefix));
+			$split = strpos($rest, '//');
+			if ($split === false || $split === 0) {
+				return null;
+			}
+			$login = substr($rest, 0, $split);
+			$at = strrpos($login, '@');
+			$host = $at === false ? '' : substr($login, $at + 1);
+			if ($host === '') {
+				return null;
+			}
+			// smb: "<share>/<root>", sftp: "<root>"
+			$tail = substr($rest, $split + 2);
+			if ($prefix === 'smb::') {
+				$slash = strpos($tail, '/');
+				$share = $slash === false ? $tail : substr($tail, 0, $slash);
+				$root = $slash === false ? '' : substr($tail, $slash);
+				if ($share === '') {
+					return null;
+				}
+
+				return ['smb::' . $host . '//' . $share, trim($root, '/')];
+			}
+
+			return ['sftp::' . $host, trim($tail, '/')];
+		}
+
+		return null;
+	}
+
+	/** What avs_storage keeps of a share key: its sha256, hex. */
+	public static function shareKeyHash(string $shareKey): string {
+		return hash('sha256', $shareKey);
+	}
+
+	/**
+	 * The prefilter key of one file: sha256 over the hash of the share key,
+	 * the path inside the share (root of the configuration plus internal
+	 * path), the size and the storage mtime, with a zero byte between the
+	 * fields. The container sees only this hash, never a path (T-02-40).
+	 *
+	 * storage mtime and not mtime: the time of the external server is the same
+	 * for every user of the share, the mtime can be set per request. The etag
+	 * is no part of it: Nextcloud gives every cache row of every user its own.
+	 *
+	 * null for a zero byte in a field, a share key hash that is no sha256, an
+	 * unknown size or an empty path: then the copy is not grouped.
+	 */
+	public static function prefilterKey(string $shareKeyHash, string $rootPrefix, string $internalPath, int $size, int $storageMtime): ?string {
+		if (preg_match('/^[0-9a-f]{64}$/', $shareKeyHash) !== 1 || $size < 0) {
+			return null;
+		}
+		if (str_contains($rootPrefix, "\0") || str_contains($internalPath, "\0")) {
+			return null;
+		}
+		$parts = array_values(array_filter(
+			[trim($rootPrefix, '/'), trim($internalPath, '/')],
+			static fn (string $part): bool => $part !== '',
+		));
+		if ($parts === [] || trim($internalPath, '/') === '') {
+			return null;
+		}
+
+		return hash('sha256', implode("\0", [$shareKeyHash, implode('/', $parts), (string)$size, (string)$storageMtime]));
+	}
 }
