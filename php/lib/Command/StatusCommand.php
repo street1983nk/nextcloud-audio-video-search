@@ -7,6 +7,7 @@ namespace OCA\AudioVideoSearch\Command;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\QueueService;
+use OCA\AudioVideoSearch\Service\StorageClassifier;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -18,12 +19,17 @@ use Symfony\Component\Console\Output\OutputInterface;
  * "X of Y contents transcribed (N files)" (D-02-06): both numbers count
  * contents by content key, the file count stands beside them. Below them the
  * parts: due work and the work stock by state and by stage in the container,
- * the PHP queue by kind, and how many first crawls are finished. Numbers and
- * codes only. The admin page shows the same numbers from phase 9 on.
+ * the PHP queue by kind, and how many first crawls are finished. Then the
+ * external storages that are skipped (D-02-03): per mount configuration its
+ * id, backend, authentication, reason and number of users, and the sentence
+ * that stored credentials make them capturable. Numbers, ids and codes only,
+ * never a mount point, a host, a share or a path (T-02-44). The admin page
+ * shows the same numbers from phase 9 on.
  *
  * --json: the fields of GET /coverage of the container (contents,
  * transcribed, files, byState, byStage, dueWork) plus queue {ok, open} and
- * crawl {finished, open} of the PHP app; the acceptance test reads it
+ * crawl {finished, open} and skippedStorages [{mountId, backend, authKind,
+ * reason, users}] of the PHP app; the acceptance test reads it
  * (ci/discovery/compare.sh). Texts are English, as every occ text.
  */
 class StatusCommand extends Command {
@@ -31,6 +37,7 @@ class StatusCommand extends Command {
 		private ExAppService $exAppService,
 		private QueueService $queueService,
 		private CrawlMapper $crawlMapper,
+		private StorageClassifier $classifier,
 	) {
 		parent::__construct();
 	}
@@ -38,7 +45,7 @@ class StatusCommand extends Command {
 	protected function configure(): void {
 		$this
 			->setName('audio_video_search:status')
-			->setDescription('Show how many contents are transcribed, with the work stock, the queue and the first crawls. Numbers only.')
+			->setDescription('Show how many contents are transcribed, with the work stock, the queue, the first crawls and the skipped external storages. Numbers only.')
 			->addOption('json', null, InputOption::VALUE_NONE, 'Print JSON');
 	}
 
@@ -51,9 +58,10 @@ class StatusCommand extends Command {
 
 		$queue = $this->queueService->stats();
 		$crawl = $this->crawlMapper->progress();
+		$skipped = $this->classifier->skipped();
 
 		if ($input->getOption('json')) {
-			$output->writeln((string)json_encode($coverage + ['queue' => $queue, 'crawl' => $crawl], JSON_UNESCAPED_SLASHES));
+			$output->writeln((string)json_encode($coverage + ['queue' => $queue, 'crawl' => $crawl, 'skippedStorages' => $skipped], JSON_UNESCAPED_SLASHES));
 			return Command::SUCCESS;
 		}
 
@@ -68,6 +76,22 @@ class StatusCommand extends Command {
 		$output->writeln('By stage: ' . self::listed($coverage['byStage']));
 		$output->writeln(($queue['ok'] ? 'Queue: ' : 'Queue (could not be read): ') . self::listed($queue['open']));
 		$output->writeln(sprintf('First crawls: %d finished, %d open', $crawl['finished'], $crawl['open']));
+		if ($skipped === []) {
+			$output->writeln('Skipped external storages: none');
+		} else {
+			$output->writeln(sprintf('Skipped external storages: %d', count($skipped)));
+			foreach ($skipped as $entry) {
+				$output->writeln(sprintf(
+					'  mount %s: backend %s, authentication %s, reason %s, users %d',
+					$entry['mountId'] === null ? 'unknown' : (string)$entry['mountId'],
+					$entry['backend'],
+					$entry['authKind'],
+					$entry['reason'],
+					$entry['users'],
+				));
+			}
+			$output->writeln(StorageClassifier::HINT);
+		}
 
 		return Command::SUCCESS;
 	}

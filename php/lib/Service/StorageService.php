@@ -18,9 +18,10 @@ use OCP\IDBConnection;
  * all ask here, so "what lies in this mount" has one answer (RESEARCH,
  * Pitfall 10).
  *
- * The mount set of this plan is homes and team folders. External storages join
- * it in plan 02-12 together with their classification (D-02-03); until then a
- * storage of files_external is never admissible.
+ * The mount set is homes, team folders and external storages (DISC-02, ab
+ * Werk). An external storage is in the mount set, but admissible only once
+ * StorageClassifier has found it capturable (QueueService::admissible,
+ * D-02-03).
  */
 class StorageService {
 	/**
@@ -36,6 +37,9 @@ class StorageService {
 	/** Team folders: one storage and one file id per file for all members. */
 	private const TEAM_FOLDER_MOUNT_PROVIDER = 'OCA\GroupFolders\Mount\MountProvider';
 
+	/** External storages of files_external: built per user from a mount configuration. */
+	public const EXTERNAL_STORAGE_MOUNT_PROVIDER = 'OCA\Files_External\Config\ConfigAdapter';
+
 	/** How many file ids one slice carries at most. */
 	public const MAX_SLICE = 1000;
 
@@ -44,6 +48,9 @@ class StorageService {
 
 	/** @var array<int, list<array{rootId: int, rootPath: string}>>|null */
 	private ?array $roots = null;
+
+	/** @var array<int, true>|null */
+	private ?array $external = null;
 
 	public function __construct(
 		private IFileAccess $fileAccess,
@@ -57,7 +64,23 @@ class StorageService {
 	 * @return list<string>
 	 */
 	public function providers(): array {
-		return [...self::HOME_MOUNT_PROVIDERS, self::TEAM_FOLDER_MOUNT_PROVIDER];
+		return [...self::HOME_MOUNT_PROVIDERS, self::TEAM_FOLDER_MOUNT_PROVIDER, self::EXTERNAL_STORAGE_MOUNT_PROVIDER];
+	}
+
+	/**
+	 * Is this storage an external storage of the mount set? Read once per
+	 * instance of this service, like mountRoots().
+	 */
+	public function isExternal(int $storageId): bool {
+		if ($this->external === null) {
+			$external = [];
+			foreach ($this->fileAccess->getDistinctMounts([self::EXTERNAL_STORAGE_MOUNT_PROVIDER], true) as $mount) {
+				$external[(int)$mount['storage_id']] = true;
+			}
+			$this->external = $external;
+		}
+
+		return isset($this->external[$storageId]);
 	}
 
 	/**

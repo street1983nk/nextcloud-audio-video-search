@@ -17,8 +17,10 @@ use Psr\Log\LoggerInterface;
  * What goes into the work stock and what comes out of it.
  *
  * admissible() is the one pre-check of the discovery: event, crawl, reconcile
- * and the hand over all ask it, so they cannot disagree about a file. Plan 02-12
- * adds the capturability of a storage, plan 02-16 the exclusions, both here.
+ * and the hand over all ask it, so they cannot disagree about a file. It holds
+ * the capturability of external storages (plan 02-12: no avs_storage row or
+ * capturable 0 means never queued and never handed out); plan 02-16 adds the
+ * exclusions here.
  *
  * describe() asks again when a claimed row is handed to the container, because
  * minutes may lie between queueing and claiming; a row whose file is no longer
@@ -64,7 +66,25 @@ class QueueService {
 			return false;
 		}
 
-		return $this->storageService->inMountSet($storageId);
+		if (!$this->storageService->inMountSet($storageId)) {
+			return false;
+		}
+
+		return $this->storageCapturable($storageId);
+	}
+
+	/**
+	 * May the files of a storage of the mount set be captured? Homes and team
+	 * folders always; an external storage only with a row in avs_storage that
+	 * says capturable. Without a row it never is (T-02-43).
+	 */
+	public function storageCapturable(int $storageId): bool {
+		if (!$this->storageService->isExternal($storageId)) {
+			return true;
+		}
+		$state = $this->storageStates->find($storageId);
+
+		return $state !== null && $state['capturable'];
 	}
 
 	public function enqueue(string $kind, ?int $fileId, int $storageId): void {
@@ -161,6 +181,9 @@ class QueueService {
 	 * every other storage. Built here, so no path reaches the container.
 	 */
 	private function prefilterKey(int $storageId, string $internalPath, int $size, int $storageMtime): ?string {
+		if (!$this->storageService->isExternal($storageId)) {
+			return null;
+		}
 		$state = $this->storageStates->find($storageId);
 		if ($state === null || $state['shareKeyHash'] === null) {
 			return null;
@@ -172,24 +195,37 @@ class QueueService {
 	/**
 	 * The user the container reads this file as.
 	 *
-	 * A home has one user, its owner. A team folder is one storage for all
-	 * members, and ACLs may hide a file from some of them, so the first member
-	 * for whom FileAccess::readableFile says yes inside ReaderContext::actAs is
-	 * the reader, at most MAX_READER_TRIES members per file. Nobody found: null,
-	 * and the container cannot read the file.
+	 * A home has one user, its owner. An external storage built per user (one
+	 * user in oc_mounts, e.g. SMB with the login of each user) belongs to that
+	 * user, who is its reader (D-02-11). A team folder and an external storage
+	 * mounted for several users are one storage for all of them, and ACLs or
+	 * the external server may hide a file from some, so the first user for
+	 * whom FileAccess::readableFile says yes inside ReaderContext::actAs is the
+	 * reader, at most MAX_READER_TRIES users per file. Nobody found: null, and
+	 * the container cannot read the file.
 	 */
 	public function readerUid(int $storageId, int $fileId): ?string {
 		$mounts = $this->userMountCache->getMountsForStorageId($storageId);
 		$uids = [];
+		$external = true;
 		foreach ($mounts as $mount) {
 			$uid = $mount->getUser()->getUID();
-			if ($uid === '' || in_array($uid, $uids, true)) {
+			if ($uid === '') {
 				continue;
 			}
-			if (in_array($mount->getMountProvider(), StorageService::HOME_MOUNT_PROVIDERS, true)) {
+			$provider = $mount->getMountProvider();
+			if (in_array($provider, StorageService::HOME_MOUNT_PROVIDERS, true)) {
 				return $uid;
 			}
-			$uids[] = $uid;
+			if ($provider !== StorageService::EXTERNAL_STORAGE_MOUNT_PROVIDER) {
+				$external = false;
+			}
+			if (!in_array($uid, $uids, true)) {
+				$uids[] = $uid;
+			}
+		}
+		if ($external && count($uids) === 1) {
+			return $uids[0];
 		}
 
 		foreach (array_slice($uids, 0, self::MAX_READER_TRIES) as $uid) {
