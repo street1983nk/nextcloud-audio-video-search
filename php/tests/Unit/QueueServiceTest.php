@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\Db\QueueMapper;
+use OCA\AudioVideoSearch\Db\StorageStateMapper;
 use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCA\AudioVideoSearch\Service\StorageService;
@@ -35,6 +36,7 @@ final class QueueServiceTest extends TestCase {
 	private const WEBM = 5;
 
 	private QueueMapper&MockObject $mapper;
+	private StorageStateMapper&MockObject $states;
 	private StorageService&MockObject $storage;
 	private IFileAccess&MockObject $fileAccess;
 	private IMimeTypeLoader&MockObject $mimeTypes;
@@ -53,10 +55,17 @@ final class QueueServiceTest extends TestCase {
 		$this->mapper = $this->createMock(QueueMapper::class);
 		$this->storage = $this->createMock(StorageService::class);
 		$this->storage->method('allowedMimeIds')->willReturn([self::WEBM]);
-		$this->storage->method('inMountSet')->willReturnCallback(static fn (int $storageId): bool => in_array($storageId, [3, 5], true));
+		// 3 is a home, 5 a team folder, 7 and 8 are external storages.
+		$this->storage->method('inMountSet')->willReturnCallback(static fn (int $storageId): bool => in_array($storageId, [3, 5, 7, 8], true));
+		$this->storage->method('isExternal')->willReturnCallback(static fn (int $storageId): bool => in_array($storageId, [7, 8], true));
 		$this->storage->method('mountRelativePath')->willReturnCallback(
-			static fn (int $storageId, string $path): ?string => str_starts_with($path, 'files/') ? substr($path, 6) : null,
+			static fn (int $storageId, string $path): ?string => match (true) {
+				in_array($storageId, [7, 8], true) => $path,
+				str_starts_with($path, 'files/') => substr($path, 6),
+				default => null,
+			},
 		);
+		$this->states = $this->createMock(StorageStateMapper::class);
 		$this->fileAccess = $this->createMock(IFileAccess::class);
 		$this->mimeTypes = $this->createMock(IMimeTypeLoader::class);
 		$this->mimeTypes->method('exists')->willReturn(true);
@@ -90,6 +99,7 @@ final class QueueServiceTest extends TestCase {
 			$this->rootFolder,
 			new ReaderContext($this->session, $users),
 			$this->createMock(LoggerInterface::class),
+			$this->states,
 		);
 	}
 
@@ -189,6 +199,54 @@ final class QueueServiceTest extends TestCase {
 		]);
 
 		self::assertSame(['items' => [], 'dropped' => 4], $described);
+	}
+
+	/**
+	 * @return array{storageId: int, mountId: ?int, provider: string, shareKeyHash: ?string, rootPrefix: ?string, authKind: ?string, capturable: bool, reason: ?string, users: int, checkedAt: ?int}
+	 */
+	private static function state(int $storageId, bool $capturable, ?string $shareKeyHash = null, ?string $rootPrefix = null, ?string $reason = null): array {
+		return [
+			'storageId' => $storageId,
+			'mountId' => 2,
+			'provider' => 'OCA\Files_External\Config\ConfigAdapter',
+			'shareKeyHash' => $shareKeyHash,
+			'rootPrefix' => $rootPrefix,
+			'authKind' => 'password::logincredentials',
+			'capturable' => $capturable,
+			'reason' => $reason,
+			'users' => 1,
+			'checkedAt' => 1,
+		];
+	}
+
+	public function testAFileOnAnSmbShareCarriesThePrefilterKeyAndNeverThePath(): void {
+		$hash = StorageService::shareKeyHash('smb::nas.local//Medien');
+		$this->states->method('find')->willReturnCallback(static fn (int $storageId): ?array => $storageId === 7 ? self::state(7, true, $hash, 'gemeinsam') : null);
+		$this->fileAccess->method('getByFileId')->with(42)->willReturn($this->entry(7, 'video/webm', 'Sitzung/z.webm'));
+		$this->mounts([['ana', 'OCA\Files_External\Config\ConfigAdapter']]);
+		$this->mapper->method('drop')->willReturn(0);
+
+		$item = $this->service()->describe(self::TOKEN, [$this->row(7, QueueMapper::KIND_CONTENT, 42, 7)])['items'][0];
+
+		self::assertSame(StorageService::prefilterKey($hash, 'gemeinsam', 'Sitzung/z.webm', 4096, 1700000000), $item['prefilterKey']);
+		self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', (string)$item['prefilterKey']);
+		self::assertSame(QueueService::ITEM_KEYS, array_keys($item));
+		foreach ($item as $value) {
+			self::assertStringNotContainsString('Sitzung', (string)$value);
+			self::assertStringNotContainsString('nas.local', (string)$value);
+			self::assertStringNotContainsString('gemeinsam', (string)$value);
+		}
+	}
+
+	public function testAStorageWithoutAShareKeyGetsNoPrefilterKey(): void {
+		$this->states->method('find')->willReturn(self::state(8, true));
+		$this->fileAccess->method('getByFileId')->willReturn($this->entry(8, 'video/webm', 'l1.webm'));
+		$this->mounts([['ana', 'OCA\Files_External\Config\ConfigAdapter']]);
+		$this->mapper->method('drop')->willReturn(0);
+
+		$item = $this->service()->describe(self::TOKEN, [$this->row(1, QueueMapper::KIND_CONTENT, 50, 8)])['items'][0];
+
+		self::assertNull($item['prefilterKey']);
 	}
 
 	public function testRemovalsAreHandedOutWithoutLookingTheFileUp(): void {
