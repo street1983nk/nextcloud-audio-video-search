@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: 02-11 abgeschlossen (Push 4 80ce5c9 ausgewertet, reason_77 in Plan 13 Task 3); nächster Plan 02-12, nicht begonnen; lokal nicht gepusht bc9a1b0, 0960824 und die Abschluss-Commits
-last_updated: "2026-11-07T16:54:54.910Z"
-last_activity: 2026-11-07
+stopped_at: 02-12 abgeschlossen (d81c712 bis 59ed0d8, lokal auf main, nicht gepusht; PHPUnit und php -l lokal nicht gelaufen, Beleg beim nächsten freigegebenen Push); nächster Plan 02-13, nicht begonnen
+last_updated: "2026-11-09T07:36:52.420Z"
+last_activity: 2026-11-09
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 24
+  completed_plans: 25
   percent: 9
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 12 of 22 (planned, 11 waves)
+Plan: 13 of 22 (planned, 11 waves)
 Status: Ready to execute
-Last activity: 2026-11-07
+Last activity: 2026-11-09
 
-Progress: [███████░░░] 69%
+Progress: [███████░░░] 71%
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [███████░░░] 69%
 | Phase 02 P09 | 40 min | 2 tasks | 10 files |
 | Phase 02 P10 | 50 min | 2 tasks | 11 files |
 | Phase 02 P11 | 60 min | 3 tasks | 4 files |
+| Phase 02 P12 | 75 min | 2 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,10 @@ Recent decisions affecting current work:
 - [Phase 02]: D-02-14 (Owner 07.11.): S3-Bein der Abnahme mit SeaweedFS 4.52 statt MinIO, nur CI
 - [Phase 02]: 02-10: Gateway 403 access_control und 423 locked mit Header X-AVS-Reason, Kopf-Route über denselben resolve-Weg; occ :files/:status als erster Admin, feste Schlüssel, PHP-Listen per Python-Gate gleich denen des Containers
 - [Phase 02]: 02-11: reason_77 (files_accesscontrol gibt 404 statt 403 access_control) in Plan 13 Task 3 (Owner 07.11.); Gateway unterscheidet, Container deutet 404 nie um
+- [Phase 02]: 02-12: Klassifikationspflicht (avs_storage capturable 1) nur für ConfigAdapter-Speicher; Homes und Gruppenordner ohne Zeile zulässig
+- [Phase 02]: 02-12: prefilter_key = sha256(sha256(share_key), Pfad in der Freigabe, Größe, storage_mtime); avs_storage hält nur den Hash des Freigabe-Schlüssels
+- [Phase 02]: 02-12: occ :status meldet Sitzungs-Konfigurationen direkt aus oc_external_mounts, weil files_external im Hintergrund gescheiterte Mounts aus oc_mounts streicht
+- [Phase 02]: 02-12: Neuprüfung neu sofort, credentials_missing und session_credentials jeden Lauf, sonst alle 24 h; 60 s Budget je SchedulerJob-Lauf
 
 ### Pending Todos
 
@@ -132,6 +137,7 @@ Recent decisions affecting current work:
 ### Blockers/Concerns
 
 - 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10) per Owner 07.11. in Plan 13 Task 3
+- 02-12: PHPUnit und php -l der neuen PHP-Dateien (StorageClassifier, StorageStateMapper, 7 Testdateien) lokal nicht gelaufen; Beleg erst in CI beim nächsten freigegebenen Push
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -146,6 +152,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-07T16:54:48.966Z
-Stopped at: 02-11 abgeschlossen (Push 4 80ce5c9 ausgewertet, reason_77 in Plan 13 Task 3); nächster Plan 02-12, nicht begonnen; lokal nicht gepusht bc9a1b0, 0960824 und die Abschluss-Commits
+Last session: 2026-11-09T07:36:42.005Z
+Stopped at: 02-12 abgeschlossen (d81c712 bis 59ed0d8, lokal auf main, nicht gepusht; PHPUnit und php -l lokal nicht gelaufen, Beleg beim nächsten freigegebenen Push); nächster Plan 02-13, nicht begonnen
 Resume file: None
