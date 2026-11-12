@@ -168,15 +168,18 @@ WHERE media_id = :m AND orphaned_at IS NULL
 # stage fetching, so a reference the intake changed in the meantime (pending
 # again with new values) is never overwritten with the result of old bytes.
 #
-# Due work: a new or deferred reference (pending, next_try_at empty or past)
-# and a failed one whose retry time has come. vanished and trashed references
-# are never fetched; a sample is no reference (D-02-15). New references come before retries.
+# Due work: a new or deferred reference (pending, next_try_at empty or past),
+# a failed one whose retry time has come, and an attached one whose read proof
+# is due again (probing with a media_id, set by restore and by the reconcile,
+# D-02-12). vanished and trashed references are never fetched; a sample is no
+# reference (D-02-15). New references come before retries.
 _CLAIM_CAPTURE: Final = """
 UPDATE file_ref SET stage = 'fetching', updated_at = :now
 WHERE file_id = (
     SELECT file_id FROM file_ref
     WHERE state IN ('active', 'unreadable')
       AND ((stage = 'pending' AND (next_try_at IS NULL OR next_try_at <= :now))
+        OR (stage = 'probing' AND media_id IS NOT NULL AND (next_try_at IS NULL OR next_try_at <= :now))
         OR (stage = 'failed' AND next_try_at IS NOT NULL AND next_try_at <= :now))
     ORDER BY COALESCE(next_try_at, 0), file_id
     LIMIT 1)
@@ -189,7 +192,7 @@ _CLAIMED: Final = """
 SELECT media_id FROM file_ref
 WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
 """
-# The one place besides attach_by_proof (plan 13) that gives a reference its media_id.
+# The one place besides attach_by_proof (plan 02-13) that gives a reference its media_id.
 _KEY_REF: Final = """
 UPDATE file_ref SET media_id = :media_id, state = 'active', stage = 'keyed', reason = NULL, attempts = 0,
     next_try_at = NULL, proved_at = :now, updated_at = :now
@@ -211,6 +214,59 @@ WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :siz
 """
 _DELETE_CLAIMED: Final = """
 DELETE FROM file_ref
+WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
+"""
+# After a full download the copies with the same prefilter key that only wait
+# (deferred, not failed) are due at once: their read proof has a content to be
+# made against now. They are found by the key and written by their file id.
+_WAITING_SIBLINGS: Final = """
+SELECT s.file_id FROM file_ref s
+WHERE s.prefilter_key = (SELECT prefilter_key FROM file_ref WHERE file_id = :file_id)
+  AND s.file_id <> :file_id AND s.media_id IS NULL AND s.stage = 'pending' AND s.next_try_at > :now
+"""
+_MAKE_DUE: Final = """
+UPDATE file_ref SET next_try_at = NULL, updated_at = :now
+WHERE file_id = :file_id AND media_id IS NULL AND stage = 'pending'
+"""
+
+# The read proof (plan 02-13, D-02-01a). A sibling is a reference with the same
+# prefilter key that gives hits and hangs at a content with a head: only
+# against such a one a further copy may prove that it reads the same bytes.
+_PREFILTER_SIBLING: Final = """
+SELECT s.media_id, m.head_sha256 FROM file_ref s JOIN media m ON m.media_id = s.media_id
+WHERE s.prefilter_key = :prefilter_key AND s.state = 'active' AND s.stage = 'keyed'
+  AND m.head_sha256 IS NOT NULL
+ORDER BY s.file_id LIMIT 1
+"""
+_MEDIA_HEAD: Final = "SELECT head_sha256 FROM media WHERE media_id = ?"
+# Asked again inside the transaction of the attach: the content the proof was
+# made against is still held by a keyed sibling of this very copy.
+_SIBLING_HOLDS: Final = """
+SELECT 1 FROM file_ref s JOIN media m ON m.media_id = s.media_id
+WHERE s.media_id = :media_id AND s.file_id <> :file_id AND s.state = 'active' AND s.stage = 'keyed'
+  AND m.head_sha256 IS NOT NULL
+  AND s.prefilter_key = (SELECT prefilter_key FROM file_ref WHERE file_id = :file_id)
+"""
+# The one place besides mark_keyed that gives a reference its media_id. It is
+# conditional: the claimed reference, the etag the proof was made for, and no
+# content yet. Never by the prefilter key (tests/test_read_proof_gate.py).
+_ATTACH_REF: Final = """
+UPDATE file_ref SET media_id = :media_id, state = 'active', stage = 'keyed', reason = NULL, attempts = 0,
+    next_try_at = NULL, proved_at = :now, updated_at = :now
+WHERE file_id = :file_id AND etag = :etag AND media_id IS NULL AND stage = 'fetching'
+"""
+# The renewed proof (D-02-12) of a reference that hangs at a content already.
+_CONFIRM_REF: Final = """
+UPDATE file_ref SET state = 'active', stage = 'keyed', reason = NULL, attempts = 0, next_try_at = NULL,
+    proved_at = :now, updated_at = :now
+WHERE file_id = :file_id AND etag = :etag AND media_id IS NOT NULL AND stage = 'fetching'
+RETURNING media_id
+"""
+_CLEAR_ORPHAN: Final = "UPDATE media SET orphaned_at = NULL WHERE media_id = ?"
+# A renewed proof read other bytes than the content has: the reference lets go
+# of it and is read in full like a new one.
+_RELEASE_REF: Final = """
+UPDATE file_ref SET media_id = NULL, proved_at = NULL, updated_at = :now
 WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
 """
 
@@ -719,6 +775,9 @@ class Store:
             self._conn.execute(_KEY_REF, values)
             if previous is not None and previous != media_id:
                 self._conn.execute(_MARK_ORPHANED, {"m": previous, "now": moment})
+            waiting = self._conn.execute(_WAITING_SIBLINGS, values).fetchall()
+            for (sibling,) in waiting:
+                self._conn.execute(_MAKE_DUE, {"file_id": int(sibling), "now": moment})
         _LOG.info("reference keyed", extra={"file_id": claimed.file_id, "media_id": media_id})
         return media_id
 
@@ -794,6 +853,83 @@ class Store:
             if row[0] is not None:
                 self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": moment})
         _LOG.info("reference deleted", extra={"file_id": claimed.file_id, "reason": "excluded"})
+        return True
+
+    # The read proof (plan 02-13), called only from worker/capture.py.
+
+    def prefilter_sibling(self, prefilter_key: str) -> tuple[int, str] | None:
+        """(media_id, head_sha256) of a keyed, active reference with this prefilter key, or None.
+
+        Only what a read proof can be made against: the sibling gives hits and
+        its content has a head. Finding one attaches nothing.
+        """
+        _require_hex64(prefilter_key, "prefilter_key")
+        row = self._conn.execute(_PREFILTER_SIBLING, {"prefilter_key": prefilter_key}).fetchone()
+        return None if row is None else (int(row[0]), str(row[1]))
+
+    def media_head(self, media_id: int) -> str | None:
+        """The sha256 of the first 64 KiB of a content, None when it has none."""
+        row = self._conn.execute(_MEDIA_HEAD, (media_id,)).fetchone()
+        return None if row is None or row[0] is None else str(row[0])
+
+    def attach_by_proof(self, file_id: int, media_id: int, expected_etag: str, now: int | None = None) -> bool:
+        """Hang a claimed copy at the content of its sibling, after its own read proof said ok.
+
+        Conditional: the reference is claimed, still has the etag the proof was
+        made for and no content yet, and a keyed, active sibling with its
+        prefilter key still holds ``media_id``. Otherwise nothing is written
+        and the answer is False. Sets proved_at.
+        """
+        moment = _now() if now is None else now
+        values = {"file_id": file_id, "media_id": media_id, "etag": expected_etag, "now": moment}
+        with self._transaction():
+            if self._conn.execute(_SIBLING_HOLDS, values).fetchone() is None:
+                return False
+            attached = self._conn.execute(_ATTACH_REF, values).rowcount == 1
+        if attached:
+            _LOG.info("reference attached by proof", extra={"file_id": file_id, "media_id": media_id})
+        return attached
+
+    def confirm_proof(self, file_id: int, expected_etag: str, now: int | None = None) -> bool:
+        """Note a renewed read proof that said ok: active, keyed, proved now (D-02-12).
+
+        Conditional on the claim, the etag and a content; the orphan mark of
+        that content goes, since it has an active reference again. False when
+        the reference changed in the meantime.
+        """
+        moment = _now() if now is None else now
+        values = {"file_id": file_id, "etag": expected_etag, "now": moment}
+        with self._transaction():
+            row = self._conn.execute(_CONFIRM_REF, values).fetchone()
+            if row is None:
+                return False
+            self._conn.execute(_CLEAR_ORPHAN, (int(row[0]),))
+        _LOG.info("read proof confirmed", extra={"file_id": file_id, "media_id": int(row[0])})
+        return True
+
+    def fail_proof(
+        self, claimed: FileRef, reason: str, *, retry_at: int | None, bump: bool = True, now: int | None = None
+    ) -> bool:
+        """Note a renewed read proof that failed: unreadable at once, so its hits are gone (D-02-12).
+
+        The reference keeps its content, so the next try is a proof again and
+        not a download; the content is marked orphaned when this was its last
+        active reference. False when stale.
+        """
+        return self.mark_failed(claimed, reason, retry_at=retry_at, bump=bump, state="unreadable", now=now)
+
+    def release_media(self, claimed: FileRef, now: int | None = None) -> bool:
+        """Let a claimed reference go of its content, because its own bytes are other ones. False when stale."""
+        moment = _now() if now is None else now
+        values = self._claim_values(claimed) | {"now": moment}
+        with self._transaction():
+            row = self._conn.execute(_CLAIMED, values).fetchone()
+            if row is None:
+                return False
+            self._conn.execute(_RELEASE_REF, values)
+            if row[0] is not None:
+                self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": moment})
+        _LOG.info("reference released", extra={"file_id": claimed.file_id})
         return True
 
     def file_ref(self, file_id: int) -> FileRef | None:

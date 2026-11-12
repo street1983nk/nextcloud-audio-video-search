@@ -45,6 +45,7 @@ __all__ = [
     "AppAPIAuthMiddleware",
     "AsyncNextcloudApp",
     "FetchResult",
+    "HeadResult",
     "HttpClient",
     "NextcloudException",
     "SettingsField",
@@ -53,6 +54,7 @@ __all__ = [
     "close_nc",
     "fetch_file_sha256",
     "fetch_handshake",
+    "fetch_head",
     "fetch_to_tempfile",
     "nc_app",
     "new_queue_client",
@@ -478,6 +480,98 @@ async def fetch_to_tempfile(
         return _refused(file_id, DISK_FULL, None)
     finally:
         await asyncio.to_thread(_unlink, part)
+
+
+# The read proof of a further copy (plan 02-13, D-02-01a): the first 64 KiB of
+# a file through its own file id and its own reader. The bytes are hashed on
+# the way and never kept. PHP cannot interrupt a hanging smbclient (Findling
+# measurement A6), so the limits live here: connect 10 s, 30 s of silence
+# between two blocks, 45 s for the whole head.
+HEAD_PATH_SUFFIX: Final = "/head"
+HEAD_TIMEOUT: Final = httpx.Timeout(30.0, connect=10.0)
+HEAD_DEADLINE_SECONDS: Final = 45.0
+# More than 64 KiB is no head: the answer is refused, never hashed.
+HEAD_TOO_LONG: Final = "head_too_long"
+
+
+@dataclass(frozen=True, slots=True)
+class HeadResult:
+    """The sha256 and the length of the head of a file, or an error code.
+
+    ``error`` is a code of :data:`FETCH_ERRORS` or ``head_too_long``; with an
+    error there is never a hash. ``status`` is the HTTP status of the answer.
+    """
+
+    sha256: str | None
+    length: int
+    error: str | None
+    status: int | None = None
+
+
+def head_url(file_id: int) -> str:
+    """Absolute URL of the head route of the gateway for one file id."""
+    return gateway_url(file_id) + HEAD_PATH_SUFFIX
+
+
+def new_head_client() -> httpx.AsyncClient:
+    """A client for the head route. Redirects are not followed: they would carry the credential away."""
+    return httpx.AsyncClient(verify=_certificate_setting(), timeout=HEAD_TIMEOUT, follow_redirects=False)
+
+
+def _head_refused(file_id: int, error: str, status: int | None) -> HeadResult:
+    # A code, the file id and a status; never the user, a name, a path or the body.
+    LOGGER.info("head read refused", extra={"file_id": file_id, "reason": error, "status": status})
+    return HeadResult(sha256=None, length=0, error=error, status=status)
+
+
+async def _read_head(client: httpx.AsyncClient, file_id: int, user_id: str) -> HeadResult:
+    digest = hashlib.sha256()
+    length = 0
+    async with client.stream(
+        "GET", head_url(file_id), params={"userId": user_id}, headers=app_api_headers()
+    ) as response:
+        if response.status_code != _STATUS_OK:
+            # The body is not read: it may be an OCS document or a proxy page.
+            code = refusal_code(response.status_code, response.headers.get(REASON_HEADER, ""))
+            return _head_refused(file_id, code, response.status_code)
+        declared = response.headers.get("Content-Length", "")
+        if declared.isdigit() and int(declared) > HEAD_BYTES:
+            return _head_refused(file_id, HEAD_TOO_LONG, response.status_code)
+        async for chunk in response.aiter_bytes(HEAD_BYTES):
+            length += len(chunk)
+            if length > HEAD_BYTES:
+                return _head_refused(file_id, HEAD_TOO_LONG, response.status_code)
+            digest.update(chunk)
+    return HeadResult(sha256=digest.hexdigest(), length=length, error=None, status=_STATUS_OK)
+
+
+async def fetch_head(file_id: int, user_id: str, *, client: httpx.AsyncClient | None = None) -> HeadResult:
+    """Read the first 64 KiB of one file through the head route of the gateway and hash them.
+
+    The route answers through the same permission path as the full content, so
+    this asks exactly the question the capture asks, as the named reader. Only
+    a 200 with at most 65536 bytes is a result; the caller compares its length
+    and its hash. Every other outcome is an error code and never a hash:
+
+    - 403 ``read_denied`` (or ``access_control`` / ``excluded`` by the reason
+      header), 422 ``read_denied``, 423 ``locked``, 404 ``not_found``;
+    - a timeout or the deadline of 45 s: ``read_timeout``;
+    - more than 65536 bytes: ``head_too_long``;
+    - any other status, a network error or a stream that breaks off: ``gateway_failed``.
+
+    Logs carry the file id, a status and a code; never the user, a name or a path.
+    """
+    try:
+        async with asyncio.timeout(HEAD_DEADLINE_SECONDS):
+            if client is not None:
+                return await _read_head(client, file_id, user_id)
+            async with new_head_client() as owned:
+                return await _read_head(owned, file_id, user_id)
+    except (TimeoutError, httpx.TimeoutException):
+        return _head_refused(file_id, READ_TIMEOUT, None)
+    except httpx.HTTPError as error:
+        LOGGER.warning("head stream broke off", extra={"file_id": file_id, "error_type": type(error).__name__})
+        return _head_refused(file_id, GATEWAY_FAILED, None)
 
 
 def remove_stale_parts(tmp_dir: Path) -> int:

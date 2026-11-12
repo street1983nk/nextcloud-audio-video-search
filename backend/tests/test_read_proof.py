@@ -18,7 +18,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -121,7 +121,7 @@ async def test_one_byte_more_than_the_head_is_refused_by_its_declared_length() -
 async def test_one_byte_more_than_the_head_is_refused_in_a_stream_without_a_length() -> None:
     data = _bytes(nc.HEAD_BYTES + 1)
 
-    async def body() -> Any:
+    async def body() -> AsyncIterator[bytes]:
         yield data[: 40 * KIB]
         yield data[40 * KIB :]
 
@@ -184,7 +184,7 @@ async def test_a_head_that_hangs_ends_at_the_deadline(monkeypatch: pytest.Monkey
 async def test_a_head_that_trickles_ends_at_the_deadline_too(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nc, "HEAD_DEADLINE_SECONDS", 0.2)
 
-    async def body() -> Any:
+    async def body() -> AsyncIterator[bytes]:
         for _ in range(200):
             yield b"x"
             await asyncio.sleep(0.05)
@@ -1101,7 +1101,7 @@ async def test_three_timeouts_pause_every_due_reference_of_the_storage_without_a
 
     steps = [await stage.step() for _ in range(4)]
 
-    paused = {step.file_id: step for step in steps if step.reason == read_proof.STORAGE_PAUSED}
+    paused = [step.file_id or 0 for step in steps if step.reason == read_proof.STORAGE_PAUSED]
     assert sorted(paused) == [14, 15, 16]
     for file_id in (14, 15, 16):
         ref = stage.ref(file_id)

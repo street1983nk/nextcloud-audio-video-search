@@ -5,12 +5,17 @@ into a temporary file under the volume, both hashes come out of the stream, the
 length has to be exactly the size of the reference, and every refusal of the
 gateway is its own code, never a hash. Part 2 tests the stage itself
 (worker/capture.py) with a fake fetch against a real state.db.
+
+The read proof of a copy with the prefilter key of a keyed sibling (plan
+02-13) has its own file, tests/test_read_proof.py. Here the head route is a
+fake that fails the proof loudly, so a test that reaches it without meaning to
+does not pass by accident.
 """
 
 import asyncio
 import hashlib
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
@@ -436,7 +441,30 @@ def _intake(
     store.apply_intake([IntakeItem(queue_id=file_id, kind="content", file_id=file_id, **values)])
 
 
+_UNEXPECTED_PROOFS: list[int] = []
+
+
+async def _no_head(file_id: int, _user_id: str) -> nc.HeadResult:
+    """The head route of a test that expects no read proof; never the network."""
+    _UNEXPECTED_PROOFS.append(file_id)
+    raise AssertionError(f"unexpected read proof for file {file_id}")
+
+
+@pytest.fixture(autouse=True)
+def no_unexpected_read_proof() -> Iterator[None]:
+    """The read proof swallows a broken head route as a failed proof; this makes the test fail anyway."""
+    _UNEXPECTED_PROOFS.clear()
+    yield
+    assert _UNEXPECTED_PROOFS == []
+
+
+async def _other_head(_file_id: int, _user_id: str) -> nc.HeadResult:
+    """A head of the right length with other bytes: the copy is sent to its own full download."""
+    return nc.HeadResult(sha256=_sha(b"other bytes"), length=100, error=None, status=200)
+
+
 def _capture(store: Store, fetch: Any, tmp_dir: Path, clock: Clock, **kwargs: Any) -> Capture:
+    kwargs.setdefault("head", _no_head)
     return Capture(_services(store), directory=tmp_dir, fetch=fetch, clock=clock, **kwargs)
 
 
@@ -502,9 +530,10 @@ async def test_two_copies_of_the_same_bytes_are_downloaded_twice_and_share_one_m
     data = _bytes(70 * KIB)
     fetch = FakeFetch()
     fetch.contents[10] = fetch.contents[11] = data
-    # Same prefilter key as well: this plan never attaches by it.
+    # A copy under another path has another prefilter key: no read proof, its
+    # own download, and the content key brings both to one content.
     _intake(store, 10, len(data), prefilter_key=PREFILTER)
-    _intake(store, 11, len(data), prefilter_key=PREFILTER, reader="ben")
+    _intake(store, 11, len(data), prefilter_key="d" * 64, reader="ben")
     capture = _capture(store, fetch, tmp_dir, Clock())
 
     first = await capture.run_once()
@@ -613,7 +642,9 @@ async def test_every_read_failure_of_the_own_reader_is_unreadable_at_once(
     assert media_id is not None
     _intake(store, 11, 100, prefilter_key=PREFILTER, reader="ben")
 
-    step = await _capture(store, _gateway_fetch(handler), tmp_dir, Clock()).run_once()
+    # The read proof of the copy finds other bytes (plan 02-13), so the copy is
+    # read in full, and that read fails.
+    step = await _capture(store, _gateway_fetch(handler), tmp_dir, Clock(), head=_other_head).run_once()
 
     assert step.outcome == CaptureOutcome.UNREADABLE
     assert step.reason == reason

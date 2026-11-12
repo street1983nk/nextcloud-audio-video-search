@@ -578,19 +578,20 @@ def _validated_returns_the_fetched_hash(tree: ast.AST) -> bool:
             if len(parameters) != 2:
                 return False
             result = parameters[1]
-            pairs = [
-                statement
-                for statement in ast.walk(node)
-                if isinstance(statement, ast.Assign)
-                and isinstance(statement.targets[0], ast.Tuple)
-                and isinstance(statement.value, ast.Tuple)
-            ]
-            tuples = [r for r in ast.walk(node) if isinstance(r, ast.Return) and isinstance(r.value, ast.Tuple)]
+            pairs: list[tuple[ast.Tuple, ast.Tuple]] = []
+            tuples: list[ast.Tuple] = []
+            for statement in ast.walk(node):
+                if isinstance(statement, ast.Assign):
+                    target, value = statement.targets[0], statement.value
+                    if isinstance(target, ast.Tuple) and isinstance(value, ast.Tuple):
+                        pairs.append((target, value))
+                elif isinstance(statement, ast.Return) and isinstance(statement.value, ast.Tuple):
+                    tuples.append(statement.value)
             if len(pairs) != 1 or len(tuples) != 1:
                 return False
-            targets = [_tail(target) for target in pairs[0].targets[0].elts]
-            values = pairs[0].value.elts
-            returned = [_tail(element) for element in tuples[0].value.elts]
+            targets = [_tail(target) for target in pairs[0][0].elts]
+            values = pairs[0][1].elts
+            returned = [_tail(element) for element in tuples[0].elts]
             return (
                 len(values) == 2
                 and _is_attr(values[0], result, "sha256")
