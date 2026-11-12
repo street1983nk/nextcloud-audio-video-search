@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\BackgroundJobs\ExternalRescanJob;
+use OCA\AudioVideoSearch\Command\RescanCommand;
 use OCA\AudioVideoSearch\Db\StorageStateMapper;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCA\AudioVideoSearch\Service\RescanService;
@@ -24,11 +25,15 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
  * The rescan of external storages (DISC-04, 02-RESEARCH.md Befund 5): which
  * storages are due and in which order, the time budget, the reader, and that
- * a storage which may not be captured is never scanned.
+ * a storage which may not be captured is never scanned. Below that the timed
+ * job and occ audio_video_search:rescan, both against a double of the service.
  *
  * Everything is a double. The scanner is a small stand-in that plays a list
  * of hook calls the way the scanner of Nextcloud raises them during a walk,
@@ -36,6 +41,7 @@ use Psr\Log\LoggerInterface;
  */
 #[CoversClass(RescanService::class)]
 #[CoversClass(ExternalRescanJob::class)]
+#[CoversClass(RescanCommand::class)]
 final class RescanServiceTest extends TestCase {
 	private const NOW = 2_000_000;
 	private const MOUNT = 2;
@@ -726,5 +732,178 @@ final class RescanServiceTest extends TestCase {
 			[['warning', 'Audio & Video Search: the rescan of external storages stopped early', ['class' => \RuntimeException::class]]],
 			$this->logged,
 		);
+	}
+
+	// -- occ audio_video_search:rescan ----------------------------------------------------
+
+	private const DEADLINE = self::NOW + RescanService::BUDGET_SECONDS;
+
+	private function rescanService(): RescanService&MockObject {
+		$service = $this->createMock(RescanService::class);
+		$service->method('deadline')->willReturn(self::DEADLINE);
+
+		return $service;
+	}
+
+	/** @return array{storageId: int, status: string, seconds: int, new: int, changed: int} */
+	private static function outcome(int $storageId, string $status, int $seconds = 12, int $new = 3, int $changed = 1): array {
+		return ['storageId' => $storageId, 'status' => $status, 'seconds' => $seconds, 'new' => $new, 'changed' => $changed];
+	}
+
+	/** @param array<string, mixed> $input */
+	private static function runCommand(RescanService $service, array $input, BufferedOutput $output): int {
+		return (new RescanCommand($service))->run(new ArrayInput($input), $output);
+	}
+
+	public function testStorageScansExactlyThisStorageWithTheBudgetAndPrintsDurationAndCounts(): void {
+		$service = $this->rescanService();
+		$service->expects(self::once())->method('rescan')->with(7, self::DEADLINE)
+			->willReturn(self::outcome(7, RescanService::STATUS_SCANNED));
+		$service->expects(self::never())->method('run');
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--storage' => '7'], $output);
+
+		self::assertSame(Command::SUCCESS, $code);
+		self::assertSame("Storage 7: rescanned in 12 s, 3 new and 1 changed entries.\n", $output->fetch());
+	}
+
+	public function testAStorageThatIsUnknownOrNotCapturableIsAFailureWithOneSentence(): void {
+		$service = $this->rescanService();
+		$service->expects(self::once())->method('rescan')->with(99, self::DEADLINE)
+			->willReturn(self::outcome(99, RescanService::STATUS_NOT_CAPTURABLE, 0, 0, 0));
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--storage' => '99'], $output);
+
+		self::assertSame(Command::FAILURE, $code);
+		self::assertSame("Storage not capturable.\n", $output->fetch());
+	}
+
+	/** @return array<string, array{string, string}> status and the line it prints */
+	public static function unfinished(): array {
+		return [
+			'budget spent' => [RescanService::STATUS_PARTIAL, "Storage 7: time budget spent after 12 s, 3 new and 1 changed entries so far. Run the command again.\n"],
+			'failed' => [RescanService::STATUS_FAILED, "Storage 7: rescan failed after 12 s.\n"],
+		];
+	}
+
+	#[DataProvider('unfinished')]
+	public function testAStorageThatWasNotScannedToItsEndIsAFailure(string $status, string $line): void {
+		$service = $this->rescanService();
+		$service->method('rescan')->willReturn(self::outcome(7, $status));
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--storage' => '7'], $output);
+
+		self::assertSame(Command::FAILURE, $code);
+		self::assertSame($line, $output->fetch());
+	}
+
+	/** @return array<string, array{array<string, mixed>}> */
+	public static function unusableOptions(): array {
+		return [
+			'neither option' => [[]],
+			'both options' => [['--storage' => '7', '--all' => true]],
+			'no number' => [['--storage' => 'medien']],
+			'zero' => [['--storage' => '0']],
+			'negative' => [['--storage' => '-7']],
+			'a fraction' => [['--storage' => '7.5']],
+			'empty' => [['--storage' => '']],
+			'a number with a space' => [['--storage' => ' 7']],
+			'far too long' => [['--storage' => '1234567890123456789012']],
+		];
+	}
+
+	/** @param array<string, mixed> $input */
+	#[DataProvider('unusableOptions')]
+	public function testUnusableOptionsAreInvalidAndNothingIsScanned(array $input): void {
+		$service = $this->rescanService();
+		$service->expects(self::never())->method('rescan');
+		$service->expects(self::never())->method('run');
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, $input, $output);
+
+		self::assertSame(Command::INVALID, $code);
+		self::assertNotSame('', $output->fetch());
+	}
+
+	public function testAllRunsWithoutTheCadenceAndPrintsOneLinePerStorage(): void {
+		$service = $this->rescanService();
+		$service->expects(self::once())->method('run')->with(false)->willReturn([
+			'results' => [
+				self::outcome(4, RescanService::STATUS_SCANNED, 20, 1, 0),
+				self::outcome(5, RescanService::STATUS_SCANNED, 30, 0, 2),
+			],
+			'waiting' => 0,
+		]);
+		$service->expects(self::never())->method('rescan');
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--all' => true], $output);
+
+		self::assertSame(Command::SUCCESS, $code);
+		self::assertSame(
+			"Storage 4: rescanned in 20 s, 1 new and 0 changed entries.\nStorage 5: rescanned in 30 s, 0 new and 2 changed entries.\n",
+			$output->fetch(),
+		);
+	}
+
+	public function testAllWithStoragesLeftOverIsAFailureThatSaysHowManyWait(): void {
+		$service = $this->rescanService();
+		$service->method('run')->willReturn([
+			'results' => [self::outcome(4, RescanService::STATUS_SCANNED, 300, 1, 0)],
+			'waiting' => 2,
+		]);
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--all' => true], $output);
+
+		self::assertSame(Command::FAILURE, $code);
+		self::assertSame(
+			"Storage 4: rescanned in 300 s, 1 new and 0 changed entries.\nTime budget spent, 2 storages not started. Run the command again.\n",
+			$output->fetch(),
+		);
+	}
+
+	public function testAllWithOneStorageThatFailedIsAFailure(): void {
+		$service = $this->rescanService();
+		$service->method('run')->willReturn([
+			'results' => [
+				self::outcome(4, RescanService::STATUS_FAILED, 2, 0, 0),
+				self::outcome(5, RescanService::STATUS_SCANNED, 30, 0, 2),
+			],
+			'waiting' => 0,
+		]);
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--all' => true], $output);
+
+		self::assertSame(Command::FAILURE, $code);
+		$text = $output->fetch();
+		self::assertStringContainsString("Storage 4: rescan failed after 2 s.\n", $text);
+		self::assertStringContainsString('Storage 5: rescanned in 30 s', $text);
+	}
+
+	public function testAllWithoutACapturableExternalStorageSaysSo(): void {
+		$service = $this->rescanService();
+		$service->method('run')->willReturn(['results' => [], 'waiting' => 0]);
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($service, ['--all' => true], $output);
+
+		self::assertSame(Command::SUCCESS, $code);
+		self::assertSame("No capturable external storage.\n", $output->fetch());
+	}
+
+	public function testTheCommandIsRegisteredUnderItsNameWithBothOptions(): void {
+		$command = new RescanCommand($this->rescanService());
+
+		self::assertSame('audio_video_search:rescan', $command->getName());
+		self::assertTrue($command->getDefinition()->hasOption('storage'));
+		self::assertTrue($command->getDefinition()->hasOption('all'));
+		self::assertTrue($command->getDefinition()->getOption('storage')->isValueRequired());
+		self::assertFalse($command->getDefinition()->getOption('all')->acceptValue());
 	}
 }

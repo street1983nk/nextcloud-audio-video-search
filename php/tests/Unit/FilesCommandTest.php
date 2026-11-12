@@ -9,6 +9,7 @@ use OCA\AudioVideoSearch\Command\StatusCommand;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\QueueService;
+use OCA\AudioVideoSearch\Service\RescanService;
 use OCA\AudioVideoSearch\Service\StorageClassifier;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -147,7 +148,7 @@ final class FilesCommandTest extends TestCase {
 	 * @param array<string, mixed>|null $coverage
 	 * @param list<array{mountId: ?int, backend: string, authKind: string, reason: string, users: int}> $skipped
 	 */
-	private function statusCommand(?array $coverage, bool $queueOk = true, array $skipped = []): StatusCommand {
+	private function statusCommand(?array $coverage, bool $queueOk = true, array $skipped = [], string $backgroundRescan = RescanService::BACKGROUND_ON): StatusCommand {
 		$exApp = $this->createMock(ExAppService::class);
 		$exApp->method('coverage')->willReturn($coverage);
 		$queue = $this->createMock(QueueService::class);
@@ -158,7 +159,10 @@ final class FilesCommandTest extends TestCase {
 		$classifier = $this->createMock(StorageClassifier::class);
 		$classifier->method('skipped')->willReturn($skipped);
 
-		return new StatusCommand($exApp, $queue, $crawl, $classifier);
+		$rescan = $this->createMock(RescanService::class);
+		$rescan->method('backgroundRescan')->willReturn($backgroundRescan);
+
+		return new StatusCommand($exApp, $queue, $crawl, $classifier, $rescan);
 	}
 
 	public function testStatusJsonCarriesTheCoverageTheQueueAndTheCrawls(): void {
@@ -169,7 +173,7 @@ final class FilesCommandTest extends TestCase {
 		self::assertSame(Command::SUCCESS, $code);
 		$printed = json_decode($output->fetch(), true);
 		self::assertSame(
-			['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork', 'queue', 'crawl', 'skippedStorages'],
+			['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork', 'queue', 'crawl', 'skippedStorages', 'backgroundRescan'],
 			array_keys($printed),
 		);
 		self::assertSame(3, $printed['dueWork']);
@@ -177,6 +181,29 @@ final class FilesCommandTest extends TestCase {
 		self::assertSame(2, $printed['queue']['open']['content']);
 		self::assertSame(['finished' => 3, 'open' => 1], $printed['crawl']);
 		self::assertSame([], $printed['skippedStorages']);
+		self::assertSame('on', $printed['backgroundRescan']);
+	}
+
+	public function testStatusJsonSaysWhenTheBackgroundRescanIsDisabledByConfiguration(): void {
+		$output = new BufferedOutput();
+
+		$code = self::runCommand($this->statusCommand(self::coverage(), true, [], RescanService::BACKGROUND_DISABLED), ['--json' => true], $output);
+
+		self::assertSame(Command::SUCCESS, $code);
+		self::assertSame('disabled_by_config', json_decode($output->fetch(), true)['backgroundRescan']);
+	}
+
+	public function testStatusTextSaysWhetherTheBackgroundRescanIsOnOrDisabledByConfiguration(): void {
+		$on = new BufferedOutput();
+		$off = new BufferedOutput();
+
+		self::runCommand($this->statusCommand(self::coverage()), [], $on);
+		self::runCommand($this->statusCommand(self::coverage(), true, [], RescanService::BACKGROUND_DISABLED), [], $off);
+
+		$text = $on->fetch();
+		self::assertStringContainsString('Rescan of external storages: background rescan on', $text);
+		self::assertStringNotContainsString('disabled', $text);
+		self::assertStringContainsString('Rescan of external storages: background rescan disabled by configuration', $off->fetch());
 	}
 
 	/** @return list<array{mountId: ?int, backend: string, authKind: string, reason: string, users: int}> */

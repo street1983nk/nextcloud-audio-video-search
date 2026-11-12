@@ -7,6 +7,7 @@ namespace OCA\AudioVideoSearch\Command;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\QueueService;
+use OCA\AudioVideoSearch\Service\RescanService;
 use OCA\AudioVideoSearch\Service\StorageClassifier;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -22,15 +23,18 @@ use Symfony\Component\Console\Output\OutputInterface;
  * the PHP queue by kind, and how many first crawls are finished. Then the
  * external storages that are skipped (D-02-03): per mount configuration its
  * id, backend, authentication, reason and number of users, and the sentence
- * that stored credentials make them capturable. Numbers, ids and codes only,
- * never a mount point, a host, a share or a path (T-02-44). The admin page
- * shows the same numbers from phase 9 on.
+ * that stored credentials make them capturable. Last the background rescan
+ * of external storages (plan 02-14): on, or "background rescan disabled by
+ * configuration" when the admin set files_no_background_scan. Numbers, ids
+ * and codes only, never a mount point, a host, a share or a path (T-02-44).
+ * The admin page shows the same numbers from phase 9 on.
  *
  * --json: the fields of GET /coverage of the container (contents,
  * transcribed, files, byState, byStage, dueWork) plus queue {ok, open} and
- * crawl {finished, open} and skippedStorages [{mountId, backend, authKind,
- * reason, users}] of the PHP app; the acceptance test reads it
- * (ci/discovery/compare.sh). Texts are English, as every occ text.
+ * crawl {finished, open}, skippedStorages [{mountId, backend, authKind,
+ * reason, users}] and backgroundRescan ("on" or "disabled_by_config") of the
+ * PHP app; the acceptance test reads it (ci/discovery/compare.sh). Texts are
+ * English, as every occ text.
  */
 class StatusCommand extends Command {
 	public function __construct(
@@ -38,6 +42,7 @@ class StatusCommand extends Command {
 		private QueueService $queueService,
 		private CrawlMapper $crawlMapper,
 		private StorageClassifier $classifier,
+		private RescanService $rescanService,
 	) {
 		parent::__construct();
 	}
@@ -45,7 +50,7 @@ class StatusCommand extends Command {
 	protected function configure(): void {
 		$this
 			->setName('audio_video_search:status')
-			->setDescription('Show how many contents are transcribed, with the work stock, the queue, the first crawls and the skipped external storages. Numbers only.')
+			->setDescription('Show how many contents are transcribed, with the work stock, the queue, the first crawls, the skipped external storages and the background rescan. Numbers only.')
 			->addOption('json', null, InputOption::VALUE_NONE, 'Print JSON');
 	}
 
@@ -59,9 +64,10 @@ class StatusCommand extends Command {
 		$queue = $this->queueService->stats();
 		$crawl = $this->crawlMapper->progress();
 		$skipped = $this->classifier->skipped();
+		$backgroundRescan = $this->rescanService->backgroundRescan();
 
 		if ($input->getOption('json')) {
-			$output->writeln((string)json_encode($coverage + ['queue' => $queue, 'crawl' => $crawl, 'skippedStorages' => $skipped], JSON_UNESCAPED_SLASHES));
+			$output->writeln((string)json_encode($coverage + ['queue' => $queue, 'crawl' => $crawl, 'skippedStorages' => $skipped, 'backgroundRescan' => $backgroundRescan], JSON_UNESCAPED_SLASHES));
 			return Command::SUCCESS;
 		}
 
@@ -92,6 +98,9 @@ class StatusCommand extends Command {
 			}
 			$output->writeln(StorageClassifier::HINT);
 		}
+		$output->writeln('Rescan of external storages: ' . (
+			$backgroundRescan === RescanService::BACKGROUND_DISABLED ? 'background rescan disabled by configuration' : 'background rescan on'
+		));
 
 		return Command::SUCCESS;
 	}
