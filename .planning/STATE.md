@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: 02-14 abgeschlossen (65de734, c2b3760, 81b9a39, lokal auf main, nicht gepusht); PHP lokal im Container belegt am 2026-11-12 auf 81b9a39 (php:8.2-cli, nextcloud/server stable34 d8ccb99, PHPUnit 11.5.57): php -l 56 Dateien Exit 0, PHPUnit OK (420 tests, 5802 assertions), app:enable samt ExternalRescanJob und occ rescan sauber; damit sind auch die PHP-Belege für 02-12 und 02-13 lokal erbracht, die Abnahme mit Instanz bleibt bei der CI nach einem freigegebenen Push; 02-13, 02-14, 02-15 fertig; als Nächstes 02-16, davor der kleine Zusatzplan zum Lesebeweis nach dem Wiederherstellen (Owner 2026-11-12, siehe deferred-items.md); offen nach Plan 22: Rescan großer Speicher über 300 s
+stopped_at: Zusatzpläne 02-15b und 02-15c abgeschlossen (309fdb9 bis dee0cb1 und 8fd22d4 bis cc0bdca, lokal auf main, nicht gepusht; nur Python, 903 Tests grün): wiederhergestellte Verweise mit Beweispflicht geben bis zum bestandenen, vorgezogenen Lesebeweis keine Treffer (Owner 2026-11-12); POST /excerpt gibt Text nur für Verweise mit state active und antwortet sonst wie für eine unbekannte Datei-ID (Regel Datenschutz zuerst); PHP zuletzt auf 81b9a39 lokal im Container belegt (420 Tests), seither kein PHP geändert; als Nächstes 02-16; offen: Owner-Entscheid zur Probe mit echtem Transkript (deferred-items.md), Rescan großer Speicher über 300 s nach Plan 22
 last_updated: "2026-11-09T07:36:52.420Z"
 last_activity: 2026-11-12
 progress:
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 13, 14, 15 fertig; als Nächstes Zusatzplan Lesebeweis nach Wiederherstellen, dann 16, dann 17
+Plan: 13, 14, 15, 15b, 15c fertig; als Nächstes 16, dann 17
 Status: Ready to execute
 Last activity: 2026-11-12
 
