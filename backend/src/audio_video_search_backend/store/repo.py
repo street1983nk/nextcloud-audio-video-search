@@ -46,8 +46,9 @@ _BUSY_TIMEOUT_MS: Final = 5000
 # name may appear. An empty reason is stored as NULL.
 #
 # state: whether the reference counts and gives hits. Only active does;
-# unreadable (the read proof or the download failed), vanished (the storage is
-# no longer mounted) and trashed never give a hit (T-02-06, _FILE_IDS_FOR_MEDIA).
+# unreadable (the read proof or the download failed, or a proof is owed after
+# a restore from the trash, plan 02-15b), vanished (the storage is no longer
+# mounted) and trashed never give a hit (T-02-06, _FILE_IDS_FOR_MEDIA).
 # The samples of the walking skeleton are not a state here: they live in
 # sample_ref (D-02-15).
 STATES: Final = frozenset({"active", "unreadable", "vanished", "trashed"})
@@ -143,7 +144,7 @@ _FILE_REF: Final = "SELECT media_id, state FROM file_ref WHERE file_id = ?"
 INTAKE_KINDS: Final = frozenset({"exclude_storage", "exclude", "delete", "trash", "restore", "content", "metadata"})
 # Kinds that describe a version of a file: etag, size and mtime are mandatory.
 _VERSION_KINDS: Final = frozenset({"content", "metadata", "restore"})
-_INTAKE_ROW: Final = "SELECT media_id, etag, size, mtime, state, stage FROM file_ref WHERE file_id = ?"
+_INTAKE_ROW: Final = "SELECT media_id, etag, size, mtime, state, stage, prefilter_key FROM file_ref WHERE file_id = ?"
 _INTAKE_NEW: Final = """
 INSERT INTO file_ref (file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage,
                       reason, attempts, next_try_at, proved_at, vanished_since, updated_at)
@@ -165,8 +166,14 @@ WHERE file_id = :file_id
 # The trash (D-02-09): the reference stays with its content but gives no hit,
 # does not count and is never fetched. A download or proof that runs for it
 # loses its claim, so its result is stale and cannot make the reference active.
+# A reference that owed its proof after an earlier restore (unreadable,
+# probing) goes in as failed: probing in the trash means "the last proof held",
+# and a second round through the trash must not turn an owed proof into that.
 _INTAKE_TRASH: Final = """
-UPDATE file_ref SET state = 'trashed', stage = CASE stage WHEN 'fetching' THEN 'pending' ELSE stage END,
+UPDATE file_ref SET state = 'trashed',
+    stage = CASE WHEN stage = 'fetching' THEN 'pending'
+                 WHEN stage = 'probing' AND state <> 'active' THEN 'failed'
+                 ELSE stage END,
     updated_at = :now
 WHERE file_id = :file_id AND state <> 'trashed'
 RETURNING media_id
@@ -201,6 +208,14 @@ WHERE media_id = :m AND orphaned_at IS NULL
 # is due again (probing with a media_id, set by restore and by the reconcile,
 # D-02-12). vanished and trashed references are never fetched; a sample is no
 # reference (D-02-15). New references come before retries.
+#
+# First of all comes the proof a restore from the trash owes (plan 02-15b):
+# unreadable, probing, with a content. Such a reference gives no hit until
+# that proof passed, so it does not wait behind downloads. Only _restore
+# writes this combination, and every verdict of the capture leaves it (keyed,
+# failed or pending), so a reference comes first once per restore; its retries
+# wait in the ordinary order, and a storage that hangs is passed over by the
+# circuit of the capture after three timeouts.
 _CLAIM_CAPTURE: Final = """
 UPDATE file_ref SET stage = 'fetching', updated_at = :now
 WHERE file_id = (
@@ -209,7 +224,8 @@ WHERE file_id = (
       AND ((stage = 'pending' AND (next_try_at IS NULL OR next_try_at <= :now))
         OR (stage = 'probing' AND media_id IS NOT NULL AND (next_try_at IS NULL OR next_try_at <= :now))
         OR (stage = 'failed' AND next_try_at IS NOT NULL AND next_try_at <= :now))
-    ORDER BY COALESCE(next_try_at, 0), file_id
+    ORDER BY CASE WHEN state = 'unreadable' AND stage = 'probing' AND media_id IS NOT NULL THEN 0 ELSE 1 END,
+             COALESCE(next_try_at, 0), file_id
     LIMIT 1)
 RETURNING file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage, reason,
           attempts, next_try_at, proved_at, vanished_since, updated_at
@@ -789,7 +805,8 @@ class Store:
         - new file (content, metadata, restore): active, pending, attempts 0;
         - content or restore with the same (etag, size, mtime): stage, state
           and media stay, only the prefilter key and the reader are refreshed;
-          a reference in the trash comes back, see :meth:`_restore`;
+          a reference in the trash comes back, see :meth:`_restore`: where a
+          read proof is required it gives no hit until that proof passed;
         - content or restore with any difference: pending again without a
           media item, and the previous media item is marked orphaned when no
           active reference points at it any more (D-02-13);
@@ -878,34 +895,39 @@ class Store:
             if row[0] is not None:
                 tally.orphaned += self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": now}).rowcount
         elif str(row[4]) == "trashed":
-            self._restore(values, None if row[0] is None else int(row[0]), str(row[5]))
+            self._restore(values, None if row[0] is None else int(row[0]), str(row[5]), had_key=row[6] is not None)
             counts["restored"] += 1
         else:
             self._conn.execute(_INTAKE_METADATA, values)
             counts["unchanged"] += 1
 
-    def _restore(self, values: dict[str, object], media_id: int | None, stage: str) -> None:
+    def _restore(self, values: dict[str, object], media_id: int | None, stage: str, *, had_key: bool) -> None:
         """Inside the transaction of the intake: a reference comes back from the trash, same bytes.
 
         Never a download (D-02-09):
 
         - it hung at its content with a valid proof (keyed, or a renewed
-          proof was only due): active again, and the content loses its orphan
-          mark. With a prefilter key (SMB, SFTP) the stage is probing, so the
-          capture proves at once that its reader may still read it
-          (D-02-12, T-02-55); without one it is keyed;
-        - it hangs at a content, but its last proof failed or was cut off by
-          the trash: unreadable, so it gives no hit, and its proof is due at
-          once. The trash must not turn a failed proof into a valid one;
+          proof was only due) on a storage without a duty to prove (no
+          prefilter key, neither in the row nor at the reference): active
+          again, keyed, and the content loses its orphan mark;
+        - the same on a storage with that duty (SMB, SFTP): unreadable and
+          probing. It gives no hit until its own read proof passed, and the
+          capture takes that proof first (D-02-01a second addendum, D-02-12,
+          T-02-55, plan 02-15b). Only confirm_proof makes it active again and
+          clears the orphan mark;
+        - it hangs at a content, but its last proof failed, was cut off by
+          the trash or was still owed: unreadable and probing as well, with
+          its reason kept. The trash must not turn a failed proof into a
+          valid one;
         - it has no content yet: the capture starts anew.
         """
+        proved = stage in ("keyed", "probing")
         if media_id is None:
             fields = {"state": "active", "stage": "pending", "keep_reason": 0}
-        elif stage in ("keyed", "probing"):
-            proof_due = values["prefilter_key"] is not None
-            fields = {"state": "active", "stage": "probing" if proof_due else "keyed", "keep_reason": 0}
+        elif proved and values["prefilter_key"] is None and not had_key:
+            fields = {"state": "active", "stage": "keyed", "keep_reason": 0}
         else:
-            fields = {"state": "unreadable", "stage": "probing", "keep_reason": 1}
+            fields = {"state": "unreadable", "stage": "probing", "keep_reason": 0 if proved else 1}
         self._conn.execute(_INTAKE_RESTORE, values | fields)
         if media_id is not None and fields["state"] == "active":
             self._conn.execute(_CLEAR_ORPHAN, (media_id,))
