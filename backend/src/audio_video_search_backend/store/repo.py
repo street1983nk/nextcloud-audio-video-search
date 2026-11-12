@@ -26,6 +26,7 @@ import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from itertools import groupby
 from pathlib import Path
 from typing import Final, Literal
 
@@ -138,10 +139,11 @@ FROM file_ref WHERE file_id = ?
 """
 _FILE_REF: Final = "SELECT media_id, state FROM file_ref WHERE file_id = ?"
 
-# The intake of the PHP work stock (plan 02-05). Only these kinds are written
-# here; every other kind goes back to the PHP queue unlocked, never lost.
-INTAKE_KINDS: Final = frozenset({"content", "metadata"})
-_INTAKE_ROW: Final = "SELECT media_id, etag, size, mtime FROM file_ref WHERE file_id = ?"
+# The intake of the PHP work stock (plan 02-05, every kind since plan 02-15).
+INTAKE_KINDS: Final = frozenset({"exclude_storage", "exclude", "delete", "trash", "restore", "content", "metadata"})
+# Kinds that describe a version of a file: etag, size and mtime are mandatory.
+_VERSION_KINDS: Final = frozenset({"content", "metadata", "restore"})
+_INTAKE_ROW: Final = "SELECT media_id, etag, size, mtime, state, stage FROM file_ref WHERE file_id = ?"
 _INTAKE_NEW: Final = """
 INSERT INTO file_ref (file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage,
                       reason, attempts, next_try_at, proved_at, vanished_since, updated_at)
@@ -159,6 +161,24 @@ UPDATE file_ref SET media_id = NULL, storage_id = :storage_id, prefilter_key = :
     reader_uid = :reader_uid, etag = :etag, size = :size, mtime = :mtime, state = 'active', stage = 'pending',
     reason = NULL, attempts = 0, next_try_at = NULL, proved_at = NULL, vanished_since = NULL, updated_at = :now
 WHERE file_id = :file_id
+"""
+# The trash (D-02-09): the reference stays with its content but gives no hit,
+# does not count and is never fetched. A download or proof that runs for it
+# loses its claim, so its result is stale and cannot make the reference active.
+_INTAKE_TRASH: Final = """
+UPDATE file_ref SET state = 'trashed', stage = CASE stage WHEN 'fetching' THEN 'pending' ELSE stage END,
+    updated_at = :now
+WHERE file_id = :file_id AND state <> 'trashed'
+RETURNING media_id
+"""
+# Back from the trash with the same (etag, size, mtime): no download. Which
+# state and stage it comes back to is decided in apply_intake; the condition
+# is on the file id and the trash alone.
+_INTAKE_RESTORE: Final = """
+UPDATE file_ref SET state = :state, stage = :stage, storage_id = :storage_id, prefilter_key = :prefilter_key,
+    reader_uid = :reader_uid, reason = CASE WHEN :keep_reason THEN reason ELSE NULL END, attempts = 0,
+    next_try_at = NULL, updated_at = :now
+WHERE file_id = :file_id AND state = 'trashed'
 """
 # The orphan rule (D-02-09, D-02-13): a content without an active reference
 # is only marked; it is forgotten later, so a copy that turns up again keeps
@@ -468,11 +488,19 @@ def _log_removal(tally: _Removal, cause: str) -> None:
 
 
 def _check_intake(item: IntakeItem) -> None:
-    """The fields of a content or metadata row, checked before the transaction."""
-    if item.file_id is None or not _is_count(item.file_id) or item.file_id == 0:
-        raise ValueError("invalid intake field: file_id")
+    """The fields of one row, checked before the transaction.
+
+    A whole storage (exclude_storage) needs its storage id, every other kind
+    a file id; a kind that describes a version of a file needs all the rest.
+    """
     if not _is_count(item.storage_id):
         raise ValueError("invalid intake field: storage_id")
+    if item.kind == "exclude_storage":
+        return
+    if item.file_id is None or not _is_count(item.file_id) or item.file_id == 0:
+        raise ValueError("invalid intake field: file_id")
+    if item.kind not in _VERSION_KINDS:
+        return
     if item.etag is None or len(item.etag) > _MAX_ETAG_LENGTH:
         raise ValueError("invalid intake field: etag")
     if not _is_count(item.size) or not _is_count(item.mtime):
@@ -751,61 +779,136 @@ class Store:
             )
 
     def apply_intake(self, items: Sequence[IntakeItem]) -> list[int]:
-        """Write the content and metadata rows of one claimed band in one transaction.
+        """Write the rows of one claimed band in one transaction, in the order of the band.
 
         Returns the queue ids that are written and may be acknowledged; a row
-        of another kind is not written and not returned, so the intake unlocks
-        it. Writing the same band twice ends in the same state (a crash between
+        of a kind outside INTAKE_KINDS is not written and not returned.
+        Writing the same band twice ends in the same state (a crash between
         commit and ack delivers it again).
 
-        - new file: active, pending, attempts 0;
-        - content with the same (etag, size, mtime): stage, state and media stay,
-          only the prefilter key and the reader are refreshed;
-        - content with any difference: pending again without a media item, and
-          the previous media item is marked orphaned when no active reference
-          points at it any more (D-02-13); samples are neither read nor
-          written here (D-02-15);
-        - metadata: only the prefilter key and the reader (DISC-06).
+        - new file (content, metadata, restore): active, pending, attempts 0;
+        - content or restore with the same (etag, size, mtime): stage, state
+          and media stay, only the prefilter key and the reader are refreshed;
+          a reference in the trash comes back, see :meth:`_restore`;
+        - content or restore with any difference: pending again without a
+          media item, and the previous media item is marked orphaned when no
+          active reference points at it any more (D-02-13);
+        - metadata: only the prefilter key and the reader (DISC-06);
+        - exclude, exclude_storage: the references go, and a content that
+          loses its last one is forgotten (D-02-04);
+        - delete: the reference goes, its content is only marked (D-02-13);
+        - trash: the reference is set aside, its content marked when no
+          active reference is left (D-02-09).
 
-        Called only from worker/intake.py (gate in plan 02-20).
+        Samples are neither read nor written here (D-02-15). Called only from
+        worker/intake.py (gate in plan 02-20), which lets the index retire the
+        documents of forgotten contents after the commit.
         """
         usable = [item for item in items if item.kind in INTAKE_KINDS]
         for item in usable:
             _check_intake(item)
         applied: list[int] = []
-        counts = {"new": 0, "unchanged": 0, "changed": 0, "metadata": 0, "orphaned": 0}
+        counts = {"new": 0, "unchanged": 0, "changed": 0, "metadata": 0, "restored": 0}
+        tallies = {"exclude": _Removal(), "delete": _Removal(), "trash": _Removal(), "content": _Removal()}
         now = _now()
         with self._transaction():
-            for item in usable:
-                values = {
-                    "file_id": item.file_id,
-                    "storage_id": item.storage_id,
-                    "prefilter_key": item.prefilter_key,
-                    "reader_uid": item.reader_uid,
-                    "etag": item.etag,
-                    "size": item.size,
-                    "mtime": item.mtime,
-                    "now": now,
-                }
-                row = self._conn.execute(_INTAKE_ROW, (item.file_id,)).fetchone()
-                if row is None:
-                    self._conn.execute(_INTAKE_NEW, values)
-                    counts["new"] += 1
-                elif item.kind == "metadata":
-                    self._conn.execute(_INTAKE_METADATA, values)
-                    counts["metadata"] += 1
-                elif (str(row[1]), int(row[2]), int(row[3])) == (item.etag, item.size, item.mtime):
-                    self._conn.execute(_INTAKE_METADATA, values)
-                    counts["unchanged"] += 1
+            for kind, run in groupby(usable, key=lambda entry: entry.kind):
+                band = list(run)
+                if kind == "exclude_storage":
+                    ids = [entry.storage_id for entry in band]
+                    self._remove(_REMOVE_BY_STORAGE, ids, "exclude", now, tallies["exclude"])
+                elif kind in ("exclude", "delete"):
+                    ids = [entry.file_id for entry in band if entry.file_id is not None]
+                    self._remove(_REMOVE_BY_FILE, ids, kind, now, tallies[kind])
+                elif kind == "trash":
+                    for entry in band:
+                        self._trash(entry, now, tallies["trash"])
                 else:
-                    self._conn.execute(_INTAKE_CHANGED, values)
-                    counts["changed"] += 1
-                    if row[0] is not None:
-                        marked = self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": now})
-                        counts["orphaned"] += marked.rowcount
-                applied.append(item.queue_id)
-        _LOG.info("intake written", extra=counts | {"items": len(items), "applied": len(applied)})
+                    for entry in band:
+                        self._write_version(entry, now, counts, tallies["content"])
+                applied.extend(entry.queue_id for entry in band)
+        for cause, tally in tallies.items():
+            if cause != "content":
+                _log_removal(tally, cause)
+        _LOG.info(
+            "intake written",
+            extra=counts
+            | {
+                "items": len(items),
+                "applied": len(applied),
+                "removed": tallies["exclude"].references + tallies["delete"].references,
+                "trashed": tallies["trash"].references,
+                "forgotten": len(tallies["exclude"].forgotten),
+                "orphaned": sum(tally.orphaned for tally in tallies.values()),
+            },
+        )
         return applied
+
+    def _trash(self, item: IntakeItem, now: int, tally: _Removal) -> None:
+        """Inside the transaction of the intake: one reference into the trash."""
+        row = self._conn.execute(_INTAKE_TRASH, {"file_id": item.file_id, "now": now}).fetchone()
+        if row is None:
+            return
+        tally.references += 1
+        if row[0] is not None:
+            tally.orphaned += self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": now}).rowcount
+
+    def _write_version(self, item: IntakeItem, now: int, counts: dict[str, int], tally: _Removal) -> None:
+        """Inside the transaction of the intake: one content, metadata or restore row."""
+        values = {
+            "file_id": item.file_id,
+            "storage_id": item.storage_id,
+            "prefilter_key": item.prefilter_key,
+            "reader_uid": item.reader_uid,
+            "etag": item.etag,
+            "size": item.size,
+            "mtime": item.mtime,
+            "now": now,
+        }
+        row = self._conn.execute(_INTAKE_ROW, (item.file_id,)).fetchone()
+        if row is None:
+            self._conn.execute(_INTAKE_NEW, values)
+            counts["new"] += 1
+        elif item.kind == "metadata":
+            self._conn.execute(_INTAKE_METADATA, values)
+            counts["metadata"] += 1
+        elif (str(row[1]), int(row[2]), int(row[3])) != (item.etag, item.size, item.mtime):
+            self._conn.execute(_INTAKE_CHANGED, values)
+            counts["changed"] += 1
+            if row[0] is not None:
+                tally.orphaned += self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": now}).rowcount
+        elif str(row[4]) == "trashed":
+            self._restore(values, None if row[0] is None else int(row[0]), str(row[5]))
+            counts["restored"] += 1
+        else:
+            self._conn.execute(_INTAKE_METADATA, values)
+            counts["unchanged"] += 1
+
+    def _restore(self, values: dict[str, object], media_id: int | None, stage: str) -> None:
+        """Inside the transaction of the intake: a reference comes back from the trash, same bytes.
+
+        Never a download (D-02-09):
+
+        - it hung at its content with a valid proof (keyed, or a renewed
+          proof was only due): active again, and the content loses its orphan
+          mark. With a prefilter key (SMB, SFTP) the stage is probing, so the
+          capture proves at once that its reader may still read it
+          (D-02-12, T-02-55); without one it is keyed;
+        - it hangs at a content, but its last proof failed or was cut off by
+          the trash: unreadable, so it gives no hit, and its proof is due at
+          once. The trash must not turn a failed proof into a valid one;
+        - it has no content yet: the capture starts anew.
+        """
+        if media_id is None:
+            fields = {"state": "active", "stage": "pending", "keep_reason": 0}
+        elif stage in ("keyed", "probing"):
+            proof_due = values["prefilter_key"] is not None
+            fields = {"state": "active", "stage": "probing" if proof_due else "keyed", "keep_reason": 0}
+        else:
+            fields = {"state": "unreadable", "stage": "probing", "keep_reason": 1}
+        self._conn.execute(_INTAKE_RESTORE, values | fields)
+        if media_id is not None and fields["state"] == "active":
+            self._conn.execute(_CLEAR_ORPHAN, (media_id,))
 
     # The capture (plan 02-08), called only from worker/capture.py.
 
@@ -921,8 +1024,10 @@ class Store:
     def delete_ref(self, claimed: FileRef, now: int | None = None) -> bool:
         """Delete a claimed reference (the gateway says excluded); False when stale.
 
-        The media item, if any, is only marked orphaned here; forgetting a
-        content on exclusion is plan 15.
+        The media item, if any, is only marked orphaned here. Forgetting a
+        content with its last reference is what the exclude row of the queue
+        does (remove_refs, plan 02-15); whether this path forgets as well is
+        left to plan 16 (deferred-items.md of phase 2).
         """
         moment = _now() if now is None else now
         values = self._claim_values(claimed)

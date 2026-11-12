@@ -10,9 +10,17 @@ retries, so the lock of PHP stays a fixed 900 s however long a medium is.
   after the lock ran out; ``Store.apply_intake`` writes it again to the same
   state.
 - A failed commit acknowledges nothing and unlocks the whole band at once.
-- Kinds the container does not handle yet (delete, trash, restore, exclude,
-  exclude_storage until plan 15) are unlocked, never acknowledged and never
-  lost (T-02-20).
+- Every kind is written in that one transaction (plan 02-15): content,
+  metadata and restore as references, trash as a reference set aside, delete
+  as a removed reference whose content is only marked, exclude and
+  exclude_storage as removed references whose content is forgotten with its
+  last one. No kind is unlocked any more.
+- A forgotten content leaves a retirement mark in the outbox of the index,
+  committed with the deletion. Its documents are deleted right after the
+  commit, under the same lock and before the ack. If the index fails there,
+  the rows are acknowledged all the same: SQLite is the truth, no search
+  answer comes from a content without a current version, and the mark stays
+  for the next round and for the reconcile at start.
 - stats.ok false means PHP could not read its own table: nothing is written
   and the band is unlocked.
 
@@ -21,13 +29,14 @@ Logs carry counts only.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
 from audio_video_search_backend import companion
 from audio_video_search_backend.api import Services, run_locked
 from audio_video_search_backend.nc_queue import QueueClient
+from audio_video_search_backend.store.repo import IntakeItem
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,6 +55,7 @@ class IntakeResult:
     unlocked: int
     malformed: int
     queue_ok: bool
+    retired: int = 0
 
 
 _NOTHING: Final = IntakeResult(claimed=0, applied=0, acked=0, unlocked=0, malformed=0, queue_ok=False)
@@ -78,9 +88,8 @@ class Intake:
             return IntakeResult(claimed=0, applied=0, acked=0, unlocked=0, malformed=0, queue_ok=True)
 
         items = [entry.to_intake() for entry in answer.items]
-        store = self._services.store
         try:
-            applied = await run_locked(self._services, lambda: store.apply_intake(items))
+            applied, retired = await run_locked(self._services, lambda: self._write(items))
         except Exception as exc:
             unlocked = len(ids) if await self._queue.unlock(token, ids) else 0
             LOGGER.exception(
@@ -89,18 +98,27 @@ class Intake:
             )
             return IntakeResult(claimed=len(ids), applied=0, acked=0, unlocked=unlocked, malformed=0, queue_ok=True)
 
-        written = set(applied)
-        rest = [queue_id for queue_id in ids if queue_id not in written]
         acked = len(applied) if applied and await self._queue.ack(token, applied) else 0
-        unlocked = len(rest) if rest and await self._queue.unlock(token, rest) else 0
         result = IntakeResult(
-            claimed=len(ids), applied=len(applied), acked=acked, unlocked=unlocked, malformed=0, queue_ok=True
+            claimed=len(ids), applied=len(applied), acked=acked, unlocked=0, malformed=0, queue_ok=True, retired=retired
         )
         LOGGER.info(
             "intake round",
-            extra={"claimed": result.claimed, "applied": result.applied, "acked": acked, "unlocked": unlocked},
+            extra={"claimed": result.claimed, "applied": result.applied, "acked": acked, "retired": retired},
         )
         return result
+
+    def _write(self, items: Sequence[IntakeItem]) -> tuple[list[int], int]:
+        """Under the services lock: the transaction of the band, then the index lets go of forgotten contents."""
+        store = self._services.store
+        applied = store.apply_intake(items)
+        retired = 0
+        try:
+            if store.retired_media():
+                retired = self._services.index.retire_forgotten(store)
+        except Exception as exc:  # the commit stands; the mark in the outbox is worked off later
+            LOGGER.exception("index retirement failed", extra={"error_type": type(exc).__name__})
+        return applied, retired
 
     def full_band_written(self, result: IntakeResult) -> bool:
         """Claim again at once: the band was full and at least one row of it was written."""
@@ -115,9 +133,9 @@ class Intake:
     ) -> None:
         """Claim while the PHP app is there; a full written band at once, otherwise every ``interval`` seconds.
 
-        A band of only unlocked kinds (until plan 15) waits for the normal
-        interval as well, so the same rows are not claimed in a tight loop.
-        ``rounds`` ends the loop for tests.
+        A band of which nothing was written (a failed commit, an unreadable
+        queue) waits for the normal interval as well, so the same rows are not
+        claimed in a tight loop. ``rounds`` ends the loop for tests.
         """
         done = 0
         while rounds is None or done < rounds:
