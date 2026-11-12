@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: 02-12 abgeschlossen (d81c712 bis 59ed0d8, lokal auf main, nicht gepusht; PHPUnit und php -l lokal nicht gelaufen, Beleg beim nächsten freigegebenen Push); nächster Plan 02-13, nicht begonnen
+stopped_at: 02-13 abgeschlossen (42726a7, 1a060b8, 7c4784f, 570e2eb, lokal auf main, nicht gepusht; 766 Python-Tests grün; PHPUnit und php -l lokal nicht gelaufen, 12 neue PHPUnit-Fälle ungeprüft, Beleg beim nächsten freigegebenen Push; vier Auslegungen zum erneuten Lesebeweis warten auf Owner-Bestätigung, siehe 02-13-SUMMARY.md); als Nächstes 02-15 (nur Python), 02-14 (nur PHP) danach
 last_updated: "2026-11-09T07:36:52.420Z"
-last_activity: 2026-11-09
+last_activity: 2026-11-12
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 25
+  completed_plans: 26
   percent: 9
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 13 of 22 (planned, 11 waves)
+Plan: 14 of 22 (13 fertig; 02-15 vor 02-14, weil 02-14 nur PHP ändert und lokal nicht prüfbar ist)
 Status: Ready to execute
-Last activity: 2026-11-09
+Last activity: 2026-11-12
 
 Progress: [███████░░░] 71%
 
