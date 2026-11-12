@@ -25,9 +25,9 @@ import sqlite3
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from audio_video_search_backend.model import overlay
 from audio_video_search_backend.model.overlay import Correction, Word
@@ -83,7 +83,15 @@ _OWN_META_KEYS: Final = frozenset({"schema_version", "index_generation"})
 _META_KEY: Final = re.compile(r"[a-z][a-z_]{0,63}")
 
 _MEDIA_FOR_KEY: Final = "SELECT media_id FROM media_key WHERE kind = 'file_sha256' AND value = ?"
-_INSERT_MEDIA: Final = "INSERT INTO media (created_at) VALUES (?)"
+# A media id is never handed out again while the index still has work for it:
+# the documents of a forgotten content carry its id until the retirement mark
+# in index_outbox is worked off (plan 02-15), and SQLite alone would give the
+# highest id to the next content.
+_INSERT_MEDIA: Final = """
+INSERT INTO media (media_id, created_at)
+VALUES (MAX((SELECT COALESCE(MAX(media_id), 0) FROM media),
+            (SELECT COALESCE(MAX(media_id), 0) FROM index_outbox)) + 1, ?)
+"""
 _INSERT_MEDIA_KEY: Final = "INSERT INTO media_key (kind, value, media_id) VALUES ('file_sha256', ?, ?)"
 _MEDIA_EPOCH: Final = "SELECT epoch FROM media WHERE media_id = ?"
 _BUMP_EPOCH: Final = "UPDATE media SET epoch = epoch + 1 WHERE media_id = ? RETURNING epoch"
@@ -270,6 +278,39 @@ UPDATE file_ref SET media_id = NULL, proved_at = NULL, updated_at = :now
 WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :size AND mtime = :mtime
 """
 
+# Removing references (plan 02-15). The ids travel as one JSON text, so a band
+# of any size is one statement; what the statement hands back are the contents
+# of the removed references, the only ones looked at afterwards (T-02-56).
+RemoveCause = Literal["exclude", "delete", "gone", "vanished_expired"]
+REMOVE_CAUSES: Final = frozenset({"exclude", "delete", "gone", "vanished_expired"})
+_REMOVE_BY_FILE: Final = "DELETE FROM file_ref WHERE file_id IN (SELECT value FROM json_each(?)) RETURNING media_id"
+_REMOVE_BY_STORAGE: Final = """
+DELETE FROM file_ref WHERE storage_id IN (SELECT value FROM json_each(?)) RETURNING media_id
+"""
+# Forgetting a content (D-02-04), in the order of the foreign keys: corrections,
+# the current pointer, words, transcripts, keys, the media item. :everything is
+# 0 while a sample (D-02-15) points at the content: then the rows of the sample
+# and the media item stay, they go only through remove_sample.
+_MEDIA_HAS_REF: Final = "SELECT 1 FROM file_ref WHERE media_id = ? LIMIT 1"
+_MEDIA_HAS_SAMPLE: Final = "SELECT 1 FROM sample_ref WHERE media_id = ? LIMIT 1"
+_FORGET_CORRECTIONS: Final = "DELETE FROM correction WHERE media_id = ?"
+_FORGET_CURRENT: Final = """
+DELETE FROM current WHERE media_id = :m AND version_id IN (
+    SELECT version_id FROM transcript WHERE media_id = :m AND (:everything OR engine <> 'sample'))
+"""
+_FORGET_WORDS: Final = """
+DELETE FROM word WHERE version_id IN (
+    SELECT version_id FROM transcript WHERE media_id = :m AND (:everything OR engine <> 'sample'))
+"""
+_FORGET_TRANSCRIPTS: Final = "DELETE FROM transcript WHERE media_id = :m AND (:everything OR engine <> 'sample')"
+# The retirement mark: revisions of the index start at 1, so a row with
+# revision 0 in index_outbox says "delete every document of this content".
+RETIRED_REV: Final = 0
+_RETIRED_MEDIA: Final = "SELECT media_id FROM index_outbox WHERE index_rev = 0 ORDER BY media_id"
+_CLEAR_RETIRED: Final = """
+DELETE FROM index_outbox WHERE index_rev = 0 AND media_id IN (SELECT value FROM json_each(?))
+"""
+
 _INSERT_TRANSCRIPT: Final = """
 INSERT INTO transcript (media_id, engine, model_sha256, config_version, profile, level, epoch, language,
                         input_file_sha256, created_at)
@@ -384,6 +425,46 @@ class IntakeItem:
     mtime: int | None
     prefilter_key: str | None
     reader_uid: str | None
+
+
+@dataclass(slots=True)
+class _Removal:
+    """What one removal did, counted for the log line after the commit."""
+
+    references: int = 0
+    forgotten: list[int] = field(default_factory=list)
+    orphaned: int = 0
+    transcripts: int = 0
+    words: int = 0
+    corrections: int = 0
+
+
+def _id_list(ids: Sequence[int], minimum: int, name: str) -> list[int]:
+    """The ids of a removal as a list, each a whole number of at least ``minimum``."""
+    checked = list(ids)
+    if any(not _is_count(value) or value < minimum for value in checked):
+        raise ValueError(f"invalid removal field: {name}")
+    return checked
+
+
+def _log_removal(tally: _Removal, cause: str) -> None:
+    """Counts and the cause, never an id of a file."""
+    if tally.forgotten:
+        _LOG.info(
+            "media forgotten",
+            extra={
+                "media": len(tally.forgotten),
+                "references": tally.references,
+                "cause": cause,
+                "transcripts": tally.transcripts,
+                "words": tally.words,
+                "corrections": tally.corrections,
+            },
+        )
+    if tally.orphaned:
+        _LOG.info("media orphaned", extra={"media": tally.orphaned, "references": tally.references, "cause": cause})
+    if tally.references and not tally.forgotten and not tally.orphaned:
+        _LOG.info("references removed", extra={"references": tally.references, "cause": cause})
 
 
 def _check_intake(item: IntakeItem) -> None:
@@ -931,6 +1012,119 @@ class Store:
                 self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": moment})
         _LOG.info("reference released", extra={"file_id": claimed.file_id})
         return True
+
+    # Removing references, forgetting and marking contents (plan 02-15).
+
+    def _forget(self, media_id: int, now: int, tally: _Removal) -> bool:
+        """Inside a transaction: delete what is known about a content no reference points at.
+
+        False, and nothing deleted, while any reference of the discovery still
+        holds the content, also one that gives no hit (a copy in the trash may
+        come back). While a sample points at the content its media item, its
+        keys and the rows of the sample stay (D-02-15); everything real goes.
+        The index learns of it through the retirement mark in the outbox,
+        committed with the deletion.
+        """
+        if self._conn.execute(_MEDIA_HAS_REF, (media_id,)).fetchone() is not None:
+            return False
+        sampled = self._conn.execute(_MEDIA_HAS_SAMPLE, (media_id,)).fetchone() is not None
+        values = {"m": media_id, "everything": 0 if sampled else 1}
+        corrections = self._conn.execute(_FORGET_CORRECTIONS, (media_id,)).rowcount
+        self._conn.execute(_FORGET_CURRENT, values)
+        words = self._conn.execute(_FORGET_WORDS, values).rowcount
+        transcripts = self._conn.execute(_FORGET_TRANSCRIPTS, values).rowcount
+        gone = 0
+        if sampled:
+            self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": now})
+        else:
+            self._conn.execute(_DELETE_MEDIA_KEYS, (media_id,))
+            gone = self._conn.execute(_DELETE_MEDIA, (media_id,)).rowcount
+        if self._conn.execute(_HAS_CURRENT, (media_id,)).fetchone() is None:
+            # Nothing of this content may be published any more; with a
+            # transcript there may be documents, and they have to go.
+            self._conn.execute(_DELETE_OUTBOX, (media_id,))
+            if transcripts:
+                self._conn.execute(_INSERT_OUTBOX, (media_id, RETIRED_REV))
+        if not (corrections or transcripts or gone):
+            return False
+        tally.forgotten.append(media_id)
+        tally.transcripts += transcripts
+        tally.words += words
+        tally.corrections += corrections
+        return True
+
+    def _remove(self, statement: str, ids: Sequence[int], cause: str, now: int, tally: _Removal) -> None:
+        """Inside a transaction: delete the references and judge only the contents they pointed at."""
+        rows = self._conn.execute(statement, (json.dumps(ids),)).fetchall()
+        tally.references += len(rows)
+        for media_id in sorted({int(row[0]) for row in rows if row[0] is not None}):
+            if cause == "exclude" and self._forget(media_id, now, tally):
+                continue
+            tally.orphaned += self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": now}).rowcount
+
+    def remove_refs(
+        self,
+        *,
+        file_ids: Sequence[int] | None = None,
+        storage_ids: Sequence[int] | None = None,
+        cause: RemoveCause,
+        now: int | None = None,
+    ) -> list[int]:
+        """Remove references by file id or by storage id; returns the media ids that were forgotten.
+
+        The cause decides what happens to a content that loses its last
+        reference this way:
+
+        - ``exclude`` (D-02-04): it is forgotten at once, with words,
+          transcripts, corrections, keys and, through the retirement mark, its
+          index documents. While any reference still holds it, nothing of it
+          is deleted;
+        - every other cause (D-02-09, D-02-13): it is only marked orphaned,
+          when no active reference is left; forgetting it later is phase 8.
+
+        One transaction, the ids as one JSON text. Only contents of the
+        removed references are looked at (T-02-56).
+        """
+        if cause not in REMOVE_CAUSES:
+            raise ValueError("invalid removal field: cause")
+        if (file_ids is None) == (storage_ids is None):
+            raise ValueError("invalid removal field: file_ids or storage_ids")
+        if file_ids is not None:
+            statement, ids = _REMOVE_BY_FILE, _id_list(file_ids, 1, "file_ids")
+        else:
+            statement, ids = _REMOVE_BY_STORAGE, _id_list(storage_ids or (), 0, "storage_ids")
+        moment = _now() if now is None else now
+        tally = _Removal()
+        with self._transaction():
+            self._remove(statement, ids, cause, moment, tally)
+        _log_removal(tally, cause)
+        return tally.forgotten
+
+    def forget_media(self, media_id: int) -> bool:
+        """Forget one content no reference points at any more; False when one does or nothing is known of it."""
+        tally = _Removal()
+        with self._transaction():
+            forgotten = self._forget(media_id, _now(), tally)
+        _log_removal(tally, "forget")
+        return forgotten
+
+    def orphan_media(self, media_id: int, now: int | None = None) -> bool:
+        """Mark a content orphaned when it has no active reference and no mark yet; True when it was marked."""
+        moment = _now() if now is None else now
+        with self._transaction():
+            marked = self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": moment}).rowcount == 1
+        if marked:
+            _LOG.info("media orphaned", extra={"media": 1, "references": 0, "cause": "orphan"})
+        return marked
+
+    def retired_media(self) -> list[int]:
+        """The forgotten contents whose documents the index still has to delete."""
+        return [int(row[0]) for row in self._conn.execute(_RETIRED_MEDIA)]
+
+    def mark_retired(self, media_ids: Sequence[int]) -> None:
+        """The index deleted the documents of these contents: their retirement marks go."""
+        with self._transaction():
+            self._conn.execute(_CLEAR_RETIRED, (json.dumps(list(media_ids)),))
 
     def file_ref(self, file_id: int) -> FileRef | None:
         """The reference of one file, None when the file has never been seen."""

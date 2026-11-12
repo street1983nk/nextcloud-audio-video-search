@@ -11,6 +11,10 @@ fixed by the planner:
    and committed.
 4. ``store.mark_indexed`` removes the outbox row.
 
+A content the store forgot (an exclusion took its last reference, plan 02-15)
+leaves an outbox row with revision 0, the retirement mark, in the transaction
+that deletes it. ``retire_forgotten`` deletes its documents and then the mark.
+
 Between 2 and 3 both revisions stand; the search route keeps per media item the
 highest revision that ``current`` admits (api/search.py). A crash anywhere leaves
 an outbox row or a stale document, and ``reconcile`` at the next start repairs
@@ -233,6 +237,33 @@ class SearchIndex:
                 )
             )
             self._commit(writer)
+
+    def retire_forgotten(self, store: Store) -> int:
+        """Delete every document of the contents the store forgot; returns how many contents.
+
+        The store leaves a retirement mark in the outbox in the transaction
+        that forgets a content (revision 0, plan 02-15). All marked contents
+        go in one commit of the index, then their marks. A crash in between
+        leaves the marks, and this method or ``reconcile`` deletes again.
+        """
+        marked = store.retired_media()
+        if not marked:
+            return 0
+        # A mark next to a current version: the content was published again
+        # (a sample on a media item that stayed); the normal way handles it.
+        live = [media_id for media_id in marked if store.current(media_id) is not None]
+        gone = [media_id for media_id in marked if media_id not in live]
+        if gone:
+            with self._lock:
+                writer = self._require_writer()
+                for media_id in gone:
+                    writer.delete_documents_by_query(self._term(FIELD_MEDIA_ID, media_id))
+                self._commit(writer)
+            store.mark_retired(gone)
+        for media_id in live:
+            self._index_current(store, media_id)
+        _LOG.info("index documents retired", extra={"media": len(marked)})
+        return len(marked)
 
     def search(self, term: str, limit: int) -> list[IndexHit]:
         """Candidates for a term over the three body fields; a broken query is an empty list."""
