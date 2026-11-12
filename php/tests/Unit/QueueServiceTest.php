@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\Db\QueueMapper;
 use OCA\AudioVideoSearch\Db\StorageStateMapper;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCA\AudioVideoSearch\Service\StorageService;
@@ -43,15 +44,39 @@ final class QueueServiceTest extends TestCase {
 	private \OCP\Files\Config\IUserMountCache&MockObject $mountCache;
 	private IRootFolder&MockObject $rootFolder;
 	private IUserSession&MockObject $session;
+	private ExclusionService&MockObject $exclusions;
 	private ?IUser $active = null;
 	/** @var list<string> */
 	private array $askedAs = [];
+	/** @var list<array{int, string}> storage id and folder below the walk root a rule leaves out */
+	private array $excludedFolders = [];
+	/** @var list<int> storages a rule leaves out as a whole */
+	private array $excludedStorages = [];
+	/** @var list<array{int, string}> storage id and path of every question to the exclusions */
+	private array $askedExclusions = [];
 
 	protected function setUp(): void {
 		parent::setUp();
 
 		$this->active = null;
 		$this->askedAs = [];
+		$this->excludedFolders = [];
+		$this->excludedStorages = [];
+		$this->askedExclusions = [];
+		$this->exclusions = $this->createMock(ExclusionService::class);
+		$this->exclusions->method('isExcluded')->willReturnCallback(function (int $storageId, string $mountRelativePath): bool {
+			$this->askedExclusions[] = [$storageId, $mountRelativePath];
+			if (in_array($storageId, $this->excludedStorages, true)) {
+				return true;
+			}
+			foreach ($this->excludedFolders as [$storage, $folder]) {
+				if ($storage === $storageId && str_starts_with($mountRelativePath, $folder . '/')) {
+					return true;
+				}
+			}
+
+			return false;
+		});
 		$this->mapper = $this->createMock(QueueMapper::class);
 		$this->storage = $this->createMock(StorageService::class);
 		$this->storage->method('allowedMimeIds')->willReturn([self::WEBM]);
@@ -100,6 +125,7 @@ final class QueueServiceTest extends TestCase {
 			new ReaderContext($this->session, $users),
 			$this->createMock(LoggerInterface::class),
 			$this->states,
+			$this->exclusions,
 		);
 	}
 
@@ -153,6 +179,58 @@ final class QueueServiceTest extends TestCase {
 		self::assertFalse($service->admissible(3, 9, 'a.txt'));
 		self::assertFalse($service->admissible(4, self::WEBM, 'a.webm'));
 		self::assertFalse($service->admissible(3, self::WEBM, ''));
+	}
+
+	public function testAnExcludedFileIsNeverAdmissible(): void {
+		$this->excludedFolders = [[3, 'privat']];
+		$service = $this->service();
+
+		self::assertFalse($service->admissible(3, self::WEBM, 'privat/a.webm'));
+		self::assertTrue($service->admissible(3, self::WEBM, 'privatsache/a.webm'));
+		self::assertTrue($service->admissible(5, self::WEBM, 'privat/a.webm'));
+		// The exclusions get the storage and the path below the walk root, as they came.
+		self::assertSame([[3, 'privat/a.webm'], [3, 'privatsache/a.webm'], [5, 'privat/a.webm']], $this->askedExclusions);
+	}
+
+	public function testAnExcludedStorageIsRefusedBeforeItsClassificationIsLookedUp(): void {
+		$this->excludedStorages = [7];
+		$this->states->expects(self::never())->method('find');
+
+		self::assertFalse($this->service()->admissible(7, self::WEBM, 'a.webm'));
+	}
+
+	public function testWhatIsNoMediaFileOfTheMountSetIsRefusedWithoutAskingTheExclusions(): void {
+		$service = $this->service();
+
+		self::assertFalse($service->admissible(3, 9, 'a.txt'));
+		self::assertFalse($service->admissible(4, self::WEBM, 'a.webm'));
+		self::assertFalse($service->admissible(3, self::WEBM, ''));
+		self::assertSame([], $this->askedExclusions);
+	}
+
+	public function testARowWhoseFileWasExcludedAfterItWasQueuedIsDroppedAtTheHandOver(): void {
+		// Second check of three: the rule did not exist when the rows were queued.
+		$this->excludedFolders = [[3, 'privat']];
+		$this->excludedStorages = [7];
+		$this->states->method('find')->willReturn(self::state(7, true));
+		$this->fileAccess->method('getByFileId')->willReturnCallback(fn (int $fileId): ?ICacheEntry => match ($fileId) {
+			42 => $this->entry(3, 'video/webm', 'files/privat/a.webm'),
+			43 => $this->entry(7, 'video/webm', 'Sitzung/b.webm'),
+			44 => $this->entry(3, 'video/webm', 'files/offen/c.webm'),
+			default => null,
+		});
+		$this->mounts([['ana', 'OC\Files\Mount\LocalHomeMountProvider']]);
+		$this->mapper->expects(self::once())->method('drop')->with(self::TOKEN, [1, 2])->willReturn(2);
+
+		$described = $this->service()->describe(self::TOKEN, [
+			$this->row(1, QueueMapper::KIND_CONTENT, 42),
+			$this->row(2, QueueMapper::KIND_RESTORE, 43, 7),
+			$this->row(3, QueueMapper::KIND_METADATA, 44),
+		]);
+
+		self::assertSame(2, $described['dropped']);
+		self::assertSame([3], array_column($described['items'], 'queueId'));
+		self::assertSame([[3, 'privat/a.webm'], [7, 'Sitzung/b.webm'], [3, 'offen/c.webm']], $this->askedExclusions);
 	}
 
 	public function testAnExternalStorageWithoutAClassificationIsNeverAdmissible(): void {

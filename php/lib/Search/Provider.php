@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\Search;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCP\Files\File;
@@ -41,8 +42,12 @@ use Psr\Log\LoggerInterface;
  * AND the switch sample_visible on, decided here on the server, and it carries
  * the word "Test result" in its subline so it never looks like a real hit.
  *
+ * An excluded user gets no hits at all (D-02-08, T-02-58): the group is empty
+ * before the container is asked anything, and the answer is the one of a
+ * search that found nothing.
+ *
  * Nothing a user typed or owns is logged: the reasons for an empty group are
- * debug lines without term and without path.
+ * debug lines without term, without path and without the user.
  */
 final class Provider implements IFilteringProvider {
 	/** The wall clock of the whole result group, as in Findling. */
@@ -73,6 +78,7 @@ final class Provider implements IFilteringProvider {
 		private IAppConfig $appConfig,
 		private IMimeTypeDetector $mimeTypeDetector,
 		private LoggerInterface $logger,
+		private ExclusionService $exclusions,
 	) {
 	}
 
@@ -121,13 +127,20 @@ final class Provider implements IFilteringProvider {
 			return SearchResult::complete($this->getName(), []);
 		}
 
+		// Before the first call that could reach the container: an excluded
+		// user, by name or through a group, never gets a hit.
+		$uid = $user->getUID();
+		if ($this->exclusions->isExcludedUser($uid)) {
+			$this->logger->debug('Audio & Video Search: no search, the user is excluded');
+			return SearchResult::complete($this->getName(), []);
+		}
+
 		if (!$this->exAppService->searchAllowed()) {
 			$this->logger->debug('Audio & Video Search: no search, the two halves drifted apart');
 			return SearchResult::complete($this->getName(), []);
 		}
 
 		$startedAt = hrtime(true);
-		$uid = $user->getUID();
 		$hits = $this->exAppService->search($uid, $term, self::SEARCH_LIMIT);
 		if ($hits === null) {
 			$this->logger->debug('Audio & Video Search: the backend gave no usable answer');

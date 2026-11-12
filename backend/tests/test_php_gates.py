@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The thirteen rules:
+The fourteen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -36,6 +36,14 @@ The thirteen rules:
     ``name``, ``mountPoint`` or ``host``: not the rows of
     ``QueueService::describe``, not the answers of an ExApp route, not a body
     ``ExAppService`` sends (T-02-23).
+14. The exclusions are decided in ``ExclusionService.php`` only: no other file
+    under ``php/lib`` defines a method whose name begins with ``isExcluded``
+    or names one of the four list keys, so no rule is compared a second way.
+    And the three checks stay where plan 02-16 put them (T-02-57, T-02-58):
+    ``QueueService::admissible`` asks ``isExcluded`` and the hand over goes
+    through ``admissible``, both gateway routes ask ``isExcludedFile`` before
+    they resolve or open anything, and ``Provider::search`` asks
+    ``isExcludedUser`` before the first call that could reach the container.
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -535,3 +543,194 @@ def test_self_rule13_fires_on_a_path_key_in_queue_service() -> None:
         assert len(forbidden_keys(sources[name] + "\n" + line)) == 1, line
     # A comparison or a variable of that name is no key.
     assert forbidden_keys("if ($row['path'] === $x) { $path = 1; }") == []
+
+
+# -- rule 14 ------------------------------------------------------------------------
+
+EXCLUSION_HOME = "ExclusionService.php"
+EXCLUSION_LISTS = ("excluded_users", "excluded_groups", "excluded_folders", "excluded_mounts")
+EXCLUSION_QUESTIONS = ("isExcluded", "isExcludedFile", "isExcludedUser")
+QUEUE_SERVICE = "php/lib/Service/QueueService.php"
+GATEWAY = "php/lib/Controller/GatewayController.php"
+SEARCH_PROVIDER = "php/lib/Search/Provider.php"
+_EXCLUSION_DEFINITION = re.compile(r"function\s+(isExcluded\w*)\s*\(")
+# Per method: the question to the exclusions and what must not come before it.
+EXCLUSION_CHECKS = (
+    (QUEUE_SERVICE, "admissible", "$this->exclusions->isExcluded(", ("->storageCapturable(", "->find(")),
+    (GATEWAY, "getFileContents", "$this->exclusions->isExcludedFile(", ("->resolve(", "fopen(", "->actAs(")),
+    (GATEWAY, "getFileHead", "$this->exclusions->isExcludedFile(", ("->resolve(", "fopen(", "->actAs(")),
+    (SEARCH_PROVIDER, "search", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->search(", "->entries(")),
+)
+
+
+def php_code(source: str) -> str:
+    """A PHP source without its comments and with every string emptied, so braces can be counted."""
+    out: list[str] = []
+    index = 0
+    while index < len(source):
+        char = source[index]
+        pair = source[index : index + 2]
+        if pair == "//" or (char == "#" and pair != "#["):
+            end = source.find("\n", index)
+            index = len(source) if end < 0 else end
+        elif pair == "/*":
+            end = source.find("*/", index + 2)
+            index = len(source) if end < 0 else end + 2
+        elif char in "'\"":
+            end = index + 1
+            while end < len(source) and source[end] != char:
+                end += 2 if source[end] == "\\" else 1
+            out.append(char + char)
+            index = end + 1
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+def php_method(source: str, method: str) -> str | None:
+    """The body of a method, comments and string contents removed, by counting braces."""
+    code = php_code(source)
+    match = re.search(r"function\s+" + re.escape(method) + r"\s*\(", code)
+    if match is None:
+        return None
+    start = code.find("{", match.end())
+    depth = 0
+    for index in range(max(start, 0), len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[start : index + 1]
+    return None
+
+
+def second_exclusion_deciders(sources: dict[str, str]) -> list[str]:
+    """Files other than ExclusionService.php that define an isExcluded method or name a rule list."""
+    findings = []
+    for name, text in sorted(sources.items()):
+        if Path(name).name == EXCLUSION_HOME:
+            continue
+        findings += [f"{name} defines {found}" for found in _EXCLUSION_DEFINITION.findall(php_code(text))]
+        findings += [f"{name} names {key}" for key in EXCLUSION_LISTS if key in text]
+    return findings
+
+
+def missing_exclusion_checks(sources: dict[str, str]) -> list[str]:
+    """The places of EXCLUSION_CHECKS that do not ask the exclusions first, or not at all."""
+    findings = []
+    for name, method, question, later in EXCLUSION_CHECKS:
+        body = php_method(sources.get(name, ""), method)
+        if body is None:
+            findings.append(f"{name} has no {method}")
+            continue
+        asked = body.find(question)
+        if asked < 0:
+            findings.append(f"{name}::{method} does not ask the exclusions")
+            continue
+        findings += [
+            f"{name}::{method} reaches {needle} before the exclusions"
+            for needle in later
+            if 0 <= body.find(needle) < asked
+        ]
+    describe = php_method(sources.get(QUEUE_SERVICE, ""), "describeRow")
+    if describe is None or "$this->admissible(" not in describe:
+        findings.append(f"{QUEUE_SERVICE}::describeRow does not ask admissible again")
+    return findings
+
+
+def test_rule14_the_exclusions_are_decided_in_one_place_and_asked_at_three() -> None:
+    sources = _lib_sources()
+    home = sources.get(f"php/lib/Service/{EXCLUSION_HOME}", "")
+    public = re.findall(r"public\s+function\s+(isExcluded\w*)\s*\(", php_code(home))
+    assert sorted(public) == sorted(EXCLUSION_QUESTIONS)
+    assert all(key in home for key in EXCLUSION_LISTS), "ExclusionService lost one of its lists"
+    assert second_exclusion_deciders(sources) == []
+    assert missing_exclusion_checks(sources) == []
+
+
+def test_self_rule14_fires_on_a_second_place_that_decides_an_exclusion() -> None:
+    sources = _lib_sources()
+    sources["php/lib/Listener/Other.php"] = (
+        "<?php\n// isExcluded() is asked elsewhere\n"
+        "private function isExcludedHere(string $path): bool { return str_starts_with($path, 'privat/'); }\n"
+    )
+    sources["php/lib/Command/Other.php"] = "<?php\n$list = $this->appConfig->getValueString('x', 'excluded_folders');\n"
+
+    assert second_exclusion_deciders(sources) == [
+        "php/lib/Command/Other.php names excluded_folders",
+        "php/lib/Listener/Other.php defines isExcludedHere",
+    ]
+    # A call is no definition, and a comment is no code.
+    only_asks = {"php/lib/X.php": "<?php\n// function isExcluded(\n$a->isExcluded($b, $c);\n"}
+    assert second_exclusion_deciders(only_asks) == []
+
+
+def _mutated(sources: dict[str, str], name: str, old: str, new: str) -> dict[str, str]:
+    assert sources[name].count(old) >= 1, f"{name} no longer holds {old!r}"
+    return {**sources, name: sources[name].replace(old, new)}
+
+
+def test_self_rule14_fires_when_one_of_the_three_checks_is_gone_or_comes_too_late() -> None:
+    sources = _lib_sources()
+
+    queue = _mutated(sources, QUEUE_SERVICE, "$this->exclusions->isExcluded(", "$this->nothing(")
+    assert missing_exclusion_checks(queue) == [f"{QUEUE_SERVICE}::admissible does not ask the exclusions"]
+
+    # Only named in a comment: the body is read without comments.
+    commented = _mutated(
+        sources,
+        QUEUE_SERVICE,
+        "if ($this->exclusions->isExcluded($storageId, $mountRelativePath)) {",
+        "// $this->exclusions->isExcluded($storageId, $mountRelativePath)\n\t\tif (false) {",
+    )
+    assert missing_exclusion_checks(commented) == [f"{QUEUE_SERVICE}::admissible does not ask the exclusions"]
+
+    handover = _mutated(sources, QUEUE_SERVICE, "!$this->admissible(", "!$this->cheaper(")
+    assert missing_exclusion_checks(handover) == [f"{QUEUE_SERVICE}::describeRow does not ask admissible again"]
+
+    gateway = _mutated(sources, GATEWAY, "$this->exclusions->isExcludedFile(", "$this->nothing(")
+    assert missing_exclusion_checks(gateway) == [
+        f"{GATEWAY}::getFileContents does not ask the exclusions",
+        f"{GATEWAY}::getFileHead does not ask the exclusions",
+    ]
+
+    # Asked, but only after the file was resolved through the user.
+    late = _mutated(sources, GATEWAY, "\t\ttry {\n", "\t\ttry {\n\t\t\t$early = $this->resolve($fileId, $userId);\n")
+    assert missing_exclusion_checks(late) == [
+        f"{GATEWAY}::getFileContents reaches ->resolve( before the exclusions",
+        f"{GATEWAY}::getFileHead reaches ->resolve( before the exclusions",
+    ]
+
+    provider = _mutated(sources, SEARCH_PROVIDER, "$this->exclusions->isExcludedUser(", "$this->nothing(")
+    assert missing_exclusion_checks(provider) == [f"{SEARCH_PROVIDER}::search does not ask the exclusions"]
+
+    asked_late = _mutated(
+        sources,
+        SEARCH_PROVIDER,
+        "\t\t$uid = $user->getUID();\n",
+        "\t\t$uid = $user->getUID();\n\t\t$this->exAppService->searchAllowed();\n",
+    )
+    assert missing_exclusion_checks(asked_late) == [
+        f"{SEARCH_PROVIDER}::search reaches ->searchAllowed( before the exclusions"
+    ]
+
+    assert missing_exclusion_checks({}) == [
+        f"{QUEUE_SERVICE} has no admissible",
+        f"{GATEWAY} has no getFileContents",
+        f"{GATEWAY} has no getFileHead",
+        f"{SEARCH_PROVIDER} has no search",
+        f"{QUEUE_SERVICE}::describeRow does not ask admissible again",
+    ]
+
+
+def test_self_rule14_reads_a_method_body_without_comments_and_strings() -> None:
+    source = (
+        "<?php\nclass X {\n"
+        "\tpublic function one(): string {\n\t\t// } not the end\n\t\treturn '} neither';\n\t}\n"
+        "\tpublic function two(): void {\n\t\t$this->later();\n\t}\n}\n"
+    )
+    assert php_method(source, "one") == "{\n\t\t\n\t\treturn '';\n\t}"
+    assert php_method(source, "two") == "{\n\t\t$this->later();\n\t}"
+    assert php_method(source, "three") is None

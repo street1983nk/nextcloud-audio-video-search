@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Controller;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCP\AppFramework\Http;
@@ -34,6 +35,10 @@ use Psr\Log\LoggerInterface;
  * the OCS body is XML or JSON depending on the request while a header is the
  * same for both (container: nc.py, REASON_HEADER):
  *
+ *   403 excluded        a rule of the admin leaves the file out (plan 02-16).
+ *                       Asked first, from the file cache alone: the file is
+ *                       not opened, no user is set up and its storage is not
+ *                       touched. The container deletes its reference
  *   404                 not visible, not readable, not a file, unknown user
  *   403 access_control  files_accesscontrol refused the read (pitfall 7): a
  *                       file the user sees and only a rule of that app closes,
@@ -49,8 +54,15 @@ use Psr\Log\LoggerInterface;
  * time limit and the circuit per storage live in the container (plan 13);
  * operators of php-fpm set request_terminate_timeout (documentation, plan 21).
  *
- * No branch of either route depends on debug, IConfig or IAppConfig: there is
- * no way to switch the read proof off (D-02-10, gate in plan 13).
+ * The exclusion is the third check of three, after the two in QueueService
+ * (queueing and hand over): hours may lie between the hand over of a row and
+ * the download, and a rule set in between must still keep the bytes from
+ * being read (T-02-57). All three ask ExclusionService.
+ *
+ * No branch of either route depends on a development mode or reads a setting
+ * itself: there is no way to switch the read proof off (D-02-10, gate in plan
+ * 13). An exclusion can only refuse the head of a file, and a refused head is
+ * never a passed proof.
  */
 final class GatewayController extends OCSController {
 	/** The head the read proof compares: the first 64 KiB of the content. */
@@ -59,6 +71,7 @@ final class GatewayController extends OCSController {
 	public const REASON_HEADER = 'X-AVS-Reason';
 	public const REASON_ACCESS_CONTROL = 'access_control';
 	public const REASON_LOCKED = 'locked';
+	public const REASON_EXCLUDED = 'excluded';
 	/** Upper bound of read calls for one head, so a stream that never ends a read cannot spin. */
 	private const MAX_HEAD_READS = 4096;
 
@@ -67,6 +80,7 @@ final class GatewayController extends OCSController {
 		private IRootFolder $rootFolder,
 		private LoggerInterface $logger,
 		private ReaderContext $readerContext,
+		private ExclusionService $exclusions,
 	) {
 		parent::__construct(Application::APP_ID, $request);
 	}
@@ -95,6 +109,11 @@ final class GatewayController extends OCSController {
 		}
 
 		try {
+			// Third check of three, before anything is resolved or opened.
+			if ($this->exclusions->isExcludedFile($fileId)) {
+				return $this->excluded($fileId);
+			}
+
 			$file = $this->resolve($fileId, $userId);
 			// Not visible, not readable and not existing deliberately give the
 			// same answer, so the gateway cannot be used to probe for files.
@@ -136,6 +155,11 @@ final class GatewayController extends OCSController {
 		}
 
 		try {
+			// Third check of three, as above: no head of an excluded file.
+			if ($this->exclusions->isExcludedFile($fileId)) {
+				return $this->excluded($fileId);
+			}
+
 			$file = $this->resolve($fileId, $userId);
 			if ($file === null) {
 				return $this->notFound();
@@ -218,6 +242,20 @@ final class GatewayController extends OCSController {
 
 	private function notFound(): DataResponse {
 		return new DataResponse(['error' => 'Node is not a file or could not be found.'], Http::STATUS_NOT_FOUND);
+	}
+
+	/**
+	 * The answer for a file a rule of the admin leaves out. The file id and
+	 * the reason, never the rule, a path or a user.
+	 */
+	private function excluded(int $fileId): DataResponse {
+		$this->logger->info('Audio & Video Search: an excluded file was asked for, answered 403', ['fileId' => $fileId, 'reason' => self::REASON_EXCLUDED]);
+		$response = new DataResponse(
+			['error' => 'File is excluded.', 'code' => self::REASON_EXCLUDED],
+			Http::STATUS_FORBIDDEN,
+		);
+		$response->addHeader(self::REASON_HEADER, self::REASON_EXCLUDED);
+		return $response;
 	}
 
 	private function notOpened(int $fileId): DataResponse {

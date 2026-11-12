@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Controller\GatewayController;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataDisplayResponse;
@@ -47,14 +48,27 @@ final class GatewayControllerTest extends TestCase {
 	private LoggerInterface&MockObject $logger;
 	private IUserSession&MockObject $session;
 	private IUserManager&MockObject $userManager;
+	private ExclusionService&MockObject $exclusions;
 	private ?IUser $active = null;
+	/** @var list<int> the file ids a rule of the admin leaves out */
+	private array $excludedFiles = [];
+	/** @var list<int> every file id the exclusions were asked about */
+	private array $askedExclusions = [];
 
 	protected function setUp(): void {
 		parent::setUp();
 
 		$this->active = null;
+		$this->excludedFiles = [];
+		$this->askedExclusions = [];
 		$this->rootFolder = $this->createMock(IRootFolder::class);
 		$this->logger = $this->createMock(LoggerInterface::class);
+		$this->exclusions = $this->createMock(ExclusionService::class);
+		$this->exclusions->method('isExcludedFile')->willReturnCallback(function (int $fileId): bool {
+			$this->askedExclusions[] = $fileId;
+
+			return in_array($fileId, $this->excludedFiles, true);
+		});
 
 		// Stateful, so the cases can observe who is active at each step.
 		$this->session = $this->createMock(IUserSession::class);
@@ -94,6 +108,7 @@ final class GatewayControllerTest extends TestCase {
 			$this->rootFolder,
 			$this->logger,
 			new ReaderContext($this->session, $this->userManager),
+			$this->exclusions,
 		);
 	}
 
@@ -690,5 +705,117 @@ final class GatewayControllerTest extends TestCase {
 		// backend/src/audio_video_search_backend/nc.py HEAD_BYTES and REASON_HEADER.
 		self::assertSame(65536, GatewayController::HEAD_BYTES);
 		self::assertSame('X-AVS-Reason', GatewayController::REASON_HEADER);
+	}
+
+	// -- exclusions (plan 02-16): the third check, before anything is opened -----
+
+	/** A readable file of alice that must never be opened. */
+	private function fileThatMustStayClosed(): void {
+		$file = $this->createMock(File::class);
+		$file->method('isReadable')->willReturn(true);
+		$file->expects(self::never())->method('fopen');
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willReturn($file);
+		$this->rootFolder->method('getUserFolder')->willReturn($userFolder);
+	}
+
+	public function testAnExcludedFileIsA403ExcludedAndIsNeitherResolvedNorOpened(): void {
+		$this->excludedFiles = [11];
+		$this->fileThatMustStayClosed();
+		$this->rootFolder->expects(self::never())->method('getUserFolder');
+		$this->userManager->expects(self::never())->method('get');
+		$this->session->expects(self::never())->method('setVolatileActiveUser');
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame(['error' => 'File is excluded.', 'code' => 'excluded'], $response->getData());
+		self::assertSame('excluded', $response->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertSame([11], $this->askedExclusions);
+	}
+
+	public function testTheHeadRouteGivesTheSame403ForAnExcludedFile(): void {
+		$this->excludedFiles = [11];
+		$this->fileThatMustStayClosed();
+		$this->rootFolder->expects(self::never())->method('getUserFolder');
+		$this->session->expects(self::never())->method('setVolatileActiveUser');
+
+		$head = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+		$full = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $head);
+		self::assertInstanceOf(DataResponse::class, $full);
+		self::assertSame(Http::STATUS_FORBIDDEN, $head->getStatus());
+		self::assertSame($full->getData(), $head->getData());
+		self::assertSame('excluded', $head->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertSame([11, 11], $this->askedExclusions);
+	}
+
+	public function testAnExcludedFileIsRefusedForAUserNobodyKnowsAsWell(): void {
+		// The rule is about the file: no user is looked up before the refusal.
+		$this->excludedFiles = [11];
+		$this->userManager->expects(self::never())->method('get');
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'ghost');
+
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame('excluded', $response->getHeaders()['X-AVS-Reason'] ?? null);
+	}
+
+	public function testAnExclusionIsLoggedWithTheFileIdAndTheReasonOnly(): void {
+		$this->excludedFiles = [11];
+		$this->logger->expects(self::once())
+			->method('info')
+			->with(
+				'Audio & Video Search: an excluded file was asked for, answered 403',
+				['fileId' => 11, 'reason' => 'excluded'],
+			);
+		$this->logger->expects(self::never())->method('warning');
+		$this->logger->expects(self::never())->method('error');
+
+		$this->controller($this->backendAppId())->getFileContents(11, 'alice');
+	}
+
+	public function testAForeignCallerGetsTheSameRefusalForAnExcludedFileAsForAnyOther(): void {
+		// The guard comes first: a foreign container learns nothing about a
+		// rule, the exclusions are not even asked.
+		$this->excludedFiles = [11];
+
+		$excluded = $this->controller('some_other_backend')->getFileContents(11, 'alice');
+		$other = $this->controller('some_other_backend')->getFileContents(12, 'alice');
+		$excludedHead = $this->controller('some_other_backend')->getFileHead(11, 'alice');
+		$otherHead = $this->controller('some_other_backend')->getFileHead(12, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $excluded);
+		self::assertInstanceOf(DataResponse::class, $other);
+		self::assertInstanceOf(DataResponse::class, $excludedHead);
+		self::assertInstanceOf(DataResponse::class, $otherHead);
+		foreach ([[$excluded, $other], [$excludedHead, $otherHead]] as [$one, $two]) {
+			self::assertSame($two->getStatus(), $one->getStatus());
+			self::assertSame($two->getData(), $one->getData());
+			self::assertArrayNotHasKey('X-AVS-Reason', $one->getHeaders());
+			self::assertArrayNotHasKey('X-AVS-Reason', $two->getHeaders());
+		}
+		self::assertSame([], $this->askedExclusions);
+	}
+
+	public function testAFileNoRuleCoversIsAskedAboutOnceAndThenServed(): void {
+		$stream = fopen('php://memory', 'rb+');
+		self::assertIsResource($stream);
+		$this->excludedFiles = [12];
+		$this->fileOpeningAs(static fn () => $stream);
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(StreamResponse::class, $response);
+		self::assertSame([11], $this->askedExclusions);
+
+		fclose($stream);
+	}
+
+	public function testTheReasonOfAnExclusionIsTheOneTheContainerReads(): void {
+		// backend/src/audio_video_search_backend/nc.py EXCLUDED.
+		self::assertSame('excluded', GatewayController::REASON_EXCLUDED);
 	}
 }

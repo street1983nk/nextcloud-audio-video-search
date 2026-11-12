@@ -7,6 +7,7 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Search\Provider;
 use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCP\Files\File;
 use OCP\Files\Folder;
@@ -43,6 +44,16 @@ final class ProviderTest extends TestCase {
 	private bool $sampleVisible = false;
 	private bool $allowed = true;
 	private int $searchCalls = 0;
+	private int $allowedCalls = 0;
+
+	/** @var list<string> the users a rule of the admin excludes */
+	private array $excludedUsers = [];
+
+	/** @var list<string> every user the exclusions were asked about */
+	private array $askedUsers = [];
+
+	/** @var list<string> every log line with its context, as one text */
+	private array $logged = [];
 
 	/** @var array<int, File> the files alice may read, by id */
 	private array $readable = [];
@@ -58,6 +69,10 @@ final class ProviderTest extends TestCase {
 		$this->sampleVisible = false;
 		$this->allowed = true;
 		$this->searchCalls = 0;
+		$this->allowedCalls = 0;
+		$this->excludedUsers = [];
+		$this->askedUsers = [];
+		$this->logged = [];
 		$this->readable = [];
 		$this->links = [];
 	}
@@ -76,7 +91,11 @@ final class ProviderTest extends TestCase {
 		);
 
 		$exApp = $this->createMock(ExAppService::class);
-		$exApp->method('searchAllowed')->willReturnCallback(fn (): bool => $this->allowed);
+		$exApp->method('searchAllowed')->willReturnCallback(function (): bool {
+			$this->allowedCalls++;
+
+			return $this->allowed;
+		});
 		$exApp->method('search')->willReturnCallback(function (string $uid, string $term, int $limit): ?array {
 			$this->searchCalls++;
 			self::assertSame('alice', $uid);
@@ -112,6 +131,18 @@ final class ProviderTest extends TestCase {
 		$alice = $this->user();
 		$session->method('getUser')->willReturn($alice);
 
+		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('isExcludedUser')->willReturnCallback(function (string $uid): bool {
+			$this->askedUsers[] = $uid;
+
+			return in_array($uid, $this->excludedUsers, true);
+		});
+
+		$logger = $this->createMock(LoggerInterface::class);
+		$logger->method('debug')->willReturnCallback(function (string|\Stringable $message, array $context = []): void {
+			$this->logged[] = $message . ' ' . json_encode($context);
+		});
+
 		return new Provider(
 			$l10n,
 			$urls,
@@ -121,7 +152,8 @@ final class ProviderTest extends TestCase {
 			$config,
 			$appConfig,
 			$mime,
-			$this->createMock(LoggerInterface::class),
+			$logger,
+			$exclusions,
 		);
 	}
 
@@ -202,6 +234,50 @@ final class ProviderTest extends TestCase {
 
 		self::assertSame([], $this->entries());
 		self::assertSame(0, $this->searchCalls);
+	}
+
+	public function testAnExcludedUserGetsNoHitAndTheContainerIsNeverAsked(): void {
+		$this->excludedUsers = ['alice'];
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 754200)];
+
+		self::assertSame([], $this->entries());
+		self::assertSame(['alice'], $this->askedUsers);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame(0, $this->searchCalls);
+		self::assertSame([], $this->links);
+	}
+
+	public function testTheAnswerForAnExcludedUserIsTheOneOfASearchThatFoundNothing(): void {
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [];
+		$nothingFound = $this->provider()->search($this->user(), $this->query('Haushalt'))->jsonSerialize();
+
+		$this->excludedUsers = ['alice'];
+		$this->hits = [self::hit(11, 754200)];
+		$excluded = $this->provider()->search($this->user(), $this->query('Haushalt'))->jsonSerialize();
+
+		self::assertSame($nothingFound, $excluded);
+		self::assertSame(1, $this->searchCalls);
+	}
+
+	public function testTheLogLineOfAnExclusionNamesNeitherTheUserNorTheTerm(): void {
+		$this->excludedUsers = ['alice'];
+
+		self::assertSame([], $this->entries('Haushaltsgeheimnis'));
+		self::assertCount(1, $this->logged);
+		self::assertStringNotContainsString('alice', $this->logged[0]);
+		self::assertStringNotContainsString('Haushaltsgeheimnis', $this->logged[0]);
+	}
+
+	public function testAUserWhoIsNotExcludedIsAskedAboutOnceAndGetsTheHits(): void {
+		$this->excludedUsers = ['bob'];
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 754200)];
+
+		self::assertCount(1, $this->entries());
+		self::assertSame(['alice'], $this->askedUsers);
+		self::assertSame(1, $this->searchCalls);
 	}
 
 	public function testABackendWithoutAnswerIsAnEmptyGroup(): void {

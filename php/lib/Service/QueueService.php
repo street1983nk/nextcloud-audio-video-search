@@ -18,15 +18,24 @@ use Psr\Log\LoggerInterface;
  *
  * admissible() is the one pre-check of the discovery: event, crawl, reconcile
  * and the hand over all ask it, so they cannot disagree about a file. It holds
- * the capturability of external storages (plan 02-12: no avs_storage row or
- * capturable 0 means never queued and never handed out); plan 02-16 adds the
- * exclusions here.
+ * the exclusions (plan 02-16: an excluded file never enters the work stock,
+ * D-02-05) and the capturability of external storages (plan 02-12: no
+ * avs_storage row or capturable 0 means never queued and never handed out).
  *
  * describe() asks again when a claimed row is handed to the container, because
  * minutes may lie between queueing and claiming; a row whose file is no longer
- * admissible is dropped there and counted, never handed out. What leaves this
- * class is a fixed set of nine keys with ids and numbers only: no path, no file
- * name, no mount point (T-02-09).
+ * admissible is dropped there and counted, never handed out.
+ *
+ * The exclusions are checked three times on purpose, each time through
+ * ExclusionService and with the rules of that moment: here when a file is
+ * queued, here again when its row is handed out, and in the content gateway
+ * when the container asks for the bytes. An admin may set a rule at any time,
+ * and between each two of these steps minutes or hours may pass; a file that
+ * was admissible when it was queued must still not be loaded once a rule
+ * covers it (T-02-57).
+ *
+ * What leaves this class is a fixed set of nine keys with ids and numbers
+ * only: no path, no file name, no mount point (T-02-09).
  */
 class QueueService {
 	/** The keys of one item, in this order, and no other. */
@@ -48,6 +57,7 @@ class QueueService {
 		private ReaderContext $readerContext,
 		private LoggerInterface $logger,
 		private StorageStateMapper $storageStates,
+		private ExclusionService $exclusions,
 	) {
 	}
 
@@ -55,8 +65,10 @@ class QueueService {
 	 * May a file of this storage, with this media type and this path below the
 	 * walk root, enter the work stock? Cheap, no remote access.
 	 *
-	 * $mountRelativePath is the space the folder exclusions of plan 02-16 are
-	 * written in; this plan only needs it to exist.
+	 * $mountRelativePath is the space the folder exclusions are written in.
+	 * First check of three (see the class comment): an excluded file is never
+	 * queued. The exclusions are asked before the classification, so nothing
+	 * is looked up about a storage that is left out anyway.
 	 */
 	public function admissible(int $storageId, int $mimeId, string $mountRelativePath): bool {
 		if ($storageId <= 0 || $mimeId <= 0 || $mountRelativePath === '') {
@@ -67,6 +79,9 @@ class QueueService {
 		}
 
 		if (!$this->storageService->inMountSet($storageId)) {
+			return false;
+		}
+		if ($this->exclusions->isExcluded($storageId, $mountRelativePath)) {
 			return false;
 		}
 
@@ -161,6 +176,8 @@ class QueueService {
 		$mime = $entry->getMimeType();
 		$mimeId = $this->mimeTypeLoader->exists($mime) ? $this->mimeTypeLoader->getId($mime) : 0;
 		$relative = $this->storageService->mountRelativePath($storageId, (string)$entry->getPath());
+		// Second check of three: admissible() asks the exclusions again with
+		// the rules of now, so a row queued before a rule existed is dropped.
 		if ($relative === null || !$this->admissible($storageId, $mimeId, $relative)) {
 			return null;
 		}
