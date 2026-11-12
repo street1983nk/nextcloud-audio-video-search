@@ -11,9 +11,10 @@
 
 	Commands and settings are written on one line each: the schema pattern for
 	a PHP class name allows no surrounding whitespace. The settings block came
-	in together with the classes it names (plan 07). The scheduler of the
-	first crawl (plan 02-06) is the one background job registered here; the
-	crawl jobs it plans are queued jobs and need no entry.
+	in together with the classes it names (plan 07). Two background jobs are
+	registered here: the scheduler of the first crawl (plan 02-06) and the
+	hourly rescan of external storages (plan 02-14). The crawl jobs the
+	scheduler plans are queued jobs and need no entry.
 -->
 <info>
 	<id>audio_video_search</id>
@@ -60,7 +61,7 @@ Prérequis :
 		<php min-version="8.2"/>
 		<nextcloud min-version="33" max-version="35"/>
 	</dependencies>
-	<background-jobs><job>OCA\AudioVideoSearch\BackgroundJobs\SchedulerJob</job></background-jobs>
+	<background-jobs><job>OCA\AudioVideoSearch\BackgroundJobs\SchedulerJob</job><job>OCA\AudioVideoSearch\BackgroundJobs\ExternalRescanJob</job></background-jobs>
 	<commands><command>OCA\AudioVideoSearch\Command\SampleCommand</command><command>OCA\AudioVideoSearch\Command\FilesCommand</command><command>OCA\AudioVideoSearch\Command\StatusCommand</command></commands>
 	<settings><admin>OCA\AudioVideoSearch\Settings\Admin</admin><admin-section>OCA\AudioVideoSearch\Settings\Section</admin-section></settings>
 </info>

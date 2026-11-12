@@ -62,7 +62,7 @@ class StorageStateMapper {
 
 	/**
 	 * Write the classification of one storage, a new row or over the old one.
-	 * rescanned_at is not touched (plan 02-14 owns it).
+	 * rescanned_at is not touched (markRescanned() owns it).
 	 *
 	 * @param array{storageId: int, mountId: ?int, provider: string, shareKeyHash: ?string, rootPrefix: ?string, authKind: ?string, capturable: bool, reason: ?string, users: int, checkedAt: ?int} $state
 	 */
@@ -123,6 +123,46 @@ class StorageStateMapper {
 		$result->closeCursor();
 
 		return $rows;
+	}
+
+	/**
+	 * Every capturable storage with the hash of its share key and the time of
+	 * its last complete rescan (null: never), ordered by storage, for
+	 * RescanService (plan 02-14). Not remembered: the rescan asks once per run.
+	 *
+	 * @return list<array{storageId: int, shareKeyHash: ?string, rescannedAt: ?int}>
+	 */
+	public function rescanCandidates(): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('storage_id', 'share_key_hash', 'rescanned_at')
+			->from(self::TABLE)
+			->where($qb->expr()->eq('capturable', $qb->createNamedParameter(1, IQueryBuilder::PARAM_INT)))
+			->orderBy('storage_id', 'ASC');
+		$result = $qb->executeQuery();
+		$rows = [];
+		while (($row = $result->fetch()) !== false) {
+			$rows[] = [
+				'storageId' => (int)$row['storage_id'],
+				'shareKeyHash' => $row['share_key_hash'] === null ? null : (string)$row['share_key_hash'],
+				'rescannedAt' => $row['rescanned_at'] === null ? null : (int)$row['rescanned_at'],
+			];
+		}
+		$result->closeCursor();
+
+		return $rows;
+	}
+
+	/**
+	 * Note the end of a complete rescan. Only a capturable storage carries
+	 * the mark; the classification itself is not touched.
+	 */
+	public function markRescanned(int $storageId, int $at): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->update(self::TABLE)
+			->set('rescanned_at', $qb->createNamedParameter($at, IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('storage_id', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('capturable', $qb->createNamedParameter(1, IQueryBuilder::PARAM_INT)));
+		$qb->executeStatement();
 	}
 
 	/**

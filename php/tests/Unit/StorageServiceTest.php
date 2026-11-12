@@ -141,6 +141,27 @@ final class StorageServiceTest extends TestCase {
 		self::assertSame([$first], $service->getFileSlice(3, 11, 40, 50_000));
 	}
 
+	public function testAStorageWithoutMediaRowsCountsZeroInTheRealFileCache(): void {
+		// The instance has to know a media type, or the count never asks.
+		\OCP\Server::get(IMimeTypeLoader::class)->getId('audio/mpeg');
+		$service = $this->service(\OCP\Server::get(IDBConnection::class));
+
+		self::assertNotSame([], $service->allowedMimeIds());
+		self::assertSame(0, $service->mediaRows(2_000_000_000));
+	}
+
+	public function testNoMediaTypeMeansNoMediaRowsAndNoQuery(): void {
+		$db = $this->createMock(IDBConnection::class);
+		$db->expects(self::never())->method('getQueryBuilder');
+		$service = $this->getMockBuilder(StorageService::class)
+			->setConstructorArgs([$this->fileAccess, $db])
+			->onlyMethods(['allowedMimeIds'])
+			->getMock();
+		$service->method('allowedMimeIds')->willReturn([]);
+
+		self::assertSame(0, $service->mediaRows(7));
+	}
+
 	public function testNoMediaTypeMeansNoSliceAndNoQuery(): void {
 		$service = $this->getMockBuilder(StorageService::class)
 			->setConstructorArgs([$this->fileAccess, $this->createMock(IDBConnection::class)])

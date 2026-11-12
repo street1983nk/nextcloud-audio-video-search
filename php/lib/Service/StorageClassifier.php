@@ -338,8 +338,10 @@ class StorageClassifier {
 	/**
 	 * Set the mount up as its user and look at the storage object: the same
 	 * numeric storage, no FailedStorage, available. null for anything else.
+	 * Public for RescanService (plan 02-14), which scans only a storage this
+	 * probe hands out.
 	 */
-	private function probe(ICachedMountInfo $info, int $storageId): ?IStorage {
+	public function probe(ICachedMountInfo $info, int $storageId): ?IStorage {
 		try {
 			return $this->readerContext->actAs(
 				$info->getUser()->getUID(),

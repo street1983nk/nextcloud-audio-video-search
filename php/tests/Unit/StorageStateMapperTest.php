@@ -88,6 +88,46 @@ final class StorageStateMapperTest extends TestCase {
 		self::assertSame([8, 9], array_column($this->mapper->skipped(), 'storageId'));
 	}
 
+	public function testRescanCandidatesAreTheCapturableStoragesWithTheirLastCompleteRescan(): void {
+		$hash = hash('sha256', 'smb::nas.local//Medien');
+		$this->mapper->store(self::state(9, true, null));
+		$this->mapper->store(self::state(8, false, 'credentials_missing'));
+		$this->mapper->store(self::state(7, true, null));
+
+		// Not remembered: another mapper of the same process reads the same rows.
+		self::assertCount(2, $this->mapper()->rescanCandidates());
+		self::assertSame(
+			[
+				['storageId' => 7, 'shareKeyHash' => $hash, 'rescannedAt' => null],
+				['storageId' => 9, 'shareKeyHash' => $hash, 'rescannedAt' => null],
+			],
+			$this->mapper->rescanCandidates(),
+		);
+
+		$this->mapper->markRescanned(9, 1_999_500);
+
+		self::assertSame(
+			[
+				['storageId' => 7, 'shareKeyHash' => $hash, 'rescannedAt' => null],
+				['storageId' => 9, 'shareKeyHash' => $hash, 'rescannedAt' => 1_999_500],
+			],
+			$this->mapper->rescanCandidates(),
+		);
+	}
+
+	public function testAClassificationWrittenAgainKeepsTheRescanAndAStorageThatIsNotCapturableGetsNone(): void {
+		$this->mapper->store(self::state(7, true, null));
+		$this->mapper->store(self::state(8, false, 'credentials_missing'));
+		$this->mapper->markRescanned(7, 1_999_500);
+		$this->mapper->markRescanned(8, 1_999_500);
+
+		$this->mapper->store(self::state(7, true, null));
+		$this->mapper->store(self::state(8, true, null));
+
+		self::assertSame([1_999_500, null], array_column($this->mapper->rescanCandidates(), 'rescannedAt'));
+		self::assertSame(self::state(7, true, null), $this->mapper->find(7));
+	}
+
 	public function testAReadIsRememberedForAMinuteAndAWriteForgetsIt(): void {
 		$other = $this->mapper();
 		$this->mapper->store(self::state(7, false, 'credentials_missing'));

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace OCA\AudioVideoSearch\Service;
 
+use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\Files\Cache\ICacheEntry;
 use OCP\Files\Cache\IFileAccess;
 use OCP\IDBConnection;
@@ -199,6 +200,30 @@ class StorageService {
 		$this->mimeIds = $ids;
 
 		return $ids;
+	}
+
+	/**
+	 * How many media rows oc_filecache holds for one storage. A number to
+	 * order the rescan of external storages by (plan 02-14), nothing is read
+	 * from the rows. One query per storage, on the storage column alone, so
+	 * it also works on a sharded file cache.
+	 */
+	public function mediaRows(int $storageId): int {
+		$mimeIds = $this->allowedMimeIds();
+		if ($mimeIds === []) {
+			return 0;
+		}
+
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectAlias($qb->func()->count('*'), 'media_rows')
+			->from('filecache')
+			->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->in('mimetype', $qb->createNamedParameter($mimeIds, IQueryBuilder::PARAM_INT_ARRAY)));
+		$result = $qb->executeQuery();
+		$row = $result->fetch();
+		$result->closeCursor();
+
+		return $row === false ? 0 : (int)$row['media_rows'];
 	}
 
 	/**
