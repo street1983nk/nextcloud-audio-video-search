@@ -682,8 +682,11 @@ def test_a_restore_on_smb_or_sftp_asks_for_the_read_proof_again(store: Store, ki
 
     ref = store.file_ref(10)
     assert ref is not None
-    assert (ref.state, ref.stage, ref.media_id, ref.next_try_at) == ("active", "probing", media_id, None)
-    assert orphaned_at(store, media_id) is None
+    # No hit before its own proof passed (plan 02-15b): unreadable, and the content keeps its mark.
+    assert (ref.state, ref.stage, ref.media_id, ref.next_try_at) == ("unreadable", "probing", media_id, None)
+    assert (ref.reason, ref.attempts) == (None, 0)
+    assert orphaned_at(store, media_id) is not None
+    assert store.file_ids_for_media(media_id) == []
     # Due at once, and as a proof: the reference still hangs at its content.
     claimed = store.next_capture(NOW)
     assert claimed is not None
