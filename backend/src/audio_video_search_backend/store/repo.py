@@ -1263,9 +1263,16 @@ class Store:
         return [int(r[0]) for r in self._conn.execute(_FILE_IDS_FOR_MEDIA, {"m": media_id})]
 
     def media_for_file(self, file_id: int) -> int | None:
-        """The content of a file for its excerpt: the one with a transcript first, the discovery before the sample."""
+        """The content of a file for its excerpt: the one with a transcript first, the discovery before the sample.
+
+        Only what may give a hit (plan 02-15c, D-02-01a): the content of the
+        reference counts while that reference is active, exactly like in
+        _FILE_IDS_FOR_MEDIA. An unreadable, vanished or trashed reference
+        names no content, so its file is answered like one never seen; the
+        sample of such a file is hidden as well (_SAMPLE_VISIBLE).
+        """
         row = self._conn.execute(_FILE_REF, (file_id,)).fetchone()
-        real = None if row is None or row[0] is None else int(row[0])
+        real = None if row is None or row[0] is None or str(row[1]) != "active" else int(row[0])
         visible = self._conn.execute(_SAMPLE_VISIBLE, {"f": file_id}).fetchone()
         sample = None if visible is None else int(visible[0])
         candidates = [m for m in (real, sample) if m is not None]
