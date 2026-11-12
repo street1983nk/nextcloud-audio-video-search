@@ -35,7 +35,11 @@ use Psr\Log\LoggerInterface;
  * same for both (container: nc.py, REASON_HEADER):
  *
  *   404                 not visible, not readable, not a file, unknown user
- *   403 access_control  files_accesscontrol refused the read (pitfall 7)
+ *   403 access_control  files_accesscontrol refused the read (pitfall 7): a
+ *                       file the user sees and only a rule of that app closes,
+ *                       or its exception at the open. The container never
+ *                       reads a 404 as access control; the difference is made
+ *                       here (reason_77, resolve below)
  *   423 locked          the file is locked, for example during an upload (pitfall 8)
  *   422                 fopen failed; the container reads it as read_denied
  *   500                 anything else; the container tries again later
@@ -186,11 +190,29 @@ final class GatewayController extends OCSController {
 	 * The folder and the lookup run with the named user as the active user of
 	 * the request (see ReaderContext): groupfolders builds the mount of a
 	 * member as "in share" when somebody else is active.
+	 *
+	 * One case is no null (reason_77): a file the user sees and that only a
+	 * rule of files_accesscontrol keeps them from reading. Such a rule does
+	 * not throw at the lookup, it takes the read permission out of the cache
+	 * entry (FileAccess::refusedByAccessControl), so without this the answer
+	 * would be the 404 of a file that is gone. The exception thrown here is
+	 * the one that app throws at an open, and failure() turns both into the
+	 * same 403 access_control. Its message is a static sentence without a path.
+	 *
+	 * @throws ForbiddenException
 	 */
 	private function resolve(int $fileId, string $userId): ?File {
 		return $this->readerContext->actAs(
 			$userId,
-			fn (): ?File => FileAccess::readableFile($this->rootFolder->getUserFolder($userId), $fileId),
+			function () use ($fileId, $userId): ?File {
+				$node = FileAccess::nodeById($this->rootFolder->getUserFolder($userId), $fileId);
+				$file = FileAccess::readableNode($node);
+				if ($file === null && FileAccess::refusedByAccessControl($node)) {
+					throw new ForbiddenException('Access denied by access control', false);
+				}
+
+				return $file;
+			},
 		);
 	}
 

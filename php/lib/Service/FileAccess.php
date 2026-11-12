@@ -8,6 +8,7 @@ use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\Files\Node;
+use OCP\Files\Storage\IStorage;
 
 /**
  * The one place that asks whether a user may read a file.
@@ -17,25 +18,46 @@ use OCP\Files\Node;
  * backend/tests/test_php_gates.py (rule 4) holds the node lookup by id to this
  * file.
  *
- * There is deliberately no answer to "reachable, but closed". The ACL wrapper
- * of groupfolders can hide a node entirely, and then the lookup answers
- * exactly what it answers for a file that does not exist. Callers answer both
- * the same way.
+ * There is deliberately no answer to "reachable, but closed" for the pages a
+ * user sees. The ACL wrapper of groupfolders can hide a node entirely, and
+ * then the lookup answers exactly what it answers for a file that does not
+ * exist. Callers answer both the same way.
+ *
+ * The content gateway alone asks one question more, and only the container
+ * hears the answer: whether a file that is listed for the user is closed by a
+ * rule of files_accesscontrol and by nothing else (refusedByAccessControl).
+ * The container then waits for the rule instead of treating the file as gone.
  *
  * Every lookup that runs on behalf of a user other than the active one belongs
  * inside ReaderContext::actAs, see there.
  */
 final class FileAccess {
 	/**
-	 * The file behind $fileId in the tree of $userFolder, or null when it does
-	 * not exist there, is not a file, or is not readable for that user.
+	 * The storage wrapper of the app files_accesscontrol, named as a string:
+	 * the app is optional and this class must load without it.
 	 */
-	public static function readableFile(Folder $userFolder, int $fileId): ?File {
+	private const ACCESS_CONTROL_STORAGE = 'OCA\FilesAccessControl\StorageWrapper';
+	/** Upper bound of the walk down the storage wrappers, far above any real stack. */
+	private const MAX_STORAGE_LAYERS = 32;
+
+	/**
+	 * The node behind $fileId in the tree of $userFolder, readable or not, or
+	 * null when it is not there for that user.
+	 */
+	public static function nodeById(Folder $userFolder, int $fileId): ?Node {
 		if ($fileId <= 0) {
 			return null;
 		}
 
-		return self::readableNode($userFolder->getFirstNodeById($fileId));
+		return $userFolder->getFirstNodeById($fileId);
+	}
+
+	/**
+	 * The file behind $fileId in the tree of $userFolder, or null when it does
+	 * not exist there, is not a file, or is not readable for that user.
+	 */
+	public static function readableFile(Folder $userFolder, int $fileId): ?File {
+		return self::readableNode(self::nodeById($userFolder, $fileId));
 	}
 
 	/**
@@ -47,6 +69,61 @@ final class FileAccess {
 		}
 
 		return $node->isReadable() ? $node : null;
+	}
+
+	/**
+	 * Whether $node is a file the user sees and that a rule of
+	 * files_accesscontrol, and nothing else, keeps them from reading.
+	 *
+	 * How that app refuses (read at stable33, lib/CacheWrapper.php and
+	 * lib/StorageWrapper.php): in web requests it wraps the storage of every
+	 * mount. A rule that matches does not hide the file and does not throw at
+	 * the lookup; the cache wrapper takes the read permission out of the cache
+	 * entry. So the node is found and isReadable() is false, which looks like
+	 * any other closed file. The difference is asked at the storage: the
+	 * wrapper of the app says "not readable" while the storage right below it
+	 * says "readable". The file is not opened for this.
+	 *
+	 * Everything else is false: no node, a folder, a readable file, no such
+	 * wrapper, a file the storage below refuses as well, and any failure while
+	 * asking. False keeps the plain 404 of the gateway.
+	 */
+	public static function refusedByAccessControl(?Node $node): bool {
+		if (!$node instanceof File || $node->isReadable()) {
+			return false;
+		}
+
+		try {
+			$layer = $node->getStorage();
+			if (!$layer instanceof IStorage || !$layer->instanceOfStorage(self::ACCESS_CONTROL_STORAGE)) {
+				return false;
+			}
+			$path = $node->getInternalPath();
+
+			// Down the wrappers to the one of files_accesscontrol: the last
+			// layer that still has it at or below itself.
+			for ($depth = 0; $depth < self::MAX_STORAGE_LAYERS; $depth++) {
+				if (!method_exists($layer, 'getWrapperStorage')) {
+					return false;
+				}
+				$below = $layer->getWrapperStorage();
+				if (!$below instanceof IStorage) {
+					return false;
+				}
+				if (!$below->instanceOfStorage(self::ACCESS_CONTROL_STORAGE)) {
+					return !$layer->isReadable($path) && $below->isReadable($path);
+				}
+				if ($layer instanceof \OC\Files\Storage\Wrapper\Jail) {
+					// Below a jail the path is another one; no guess.
+					return false;
+				}
+				$layer = $below;
+			}
+		} catch (\Throwable) {
+			return false;
+		}
+
+		return false;
 	}
 
 	/**

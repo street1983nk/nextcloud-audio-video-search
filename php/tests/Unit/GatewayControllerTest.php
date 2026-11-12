@@ -500,6 +500,192 @@ final class GatewayControllerTest extends TestCase {
 		self::assertNoPathIn($response);
 	}
 
+	/**
+	 * reason_77 (plan 02-13): on stable33 a rule of files_accesscontrol does
+	 * not hide the file and does not throw at the lookup. Its cache wrapper
+	 * takes the read permission out of the cache entry, so the node is found
+	 * and isReadable() is false. The cases below hold the difference between
+	 * that and every other file the user cannot read.
+	 */
+	private const ACCESS_CONTROL_STORAGE = 'OCA\FilesAccessControl\StorageWrapper';
+	private const INTERNAL_PATH = 'Aufnahmen/Sitzung 2026-11-03.mp4';
+
+	/**
+	 * A storage layer as Nextcloud stacks them: it says whether the wrapper of
+	 * files_accesscontrol is at or below it, whether the path is readable at
+	 * this layer, and hands out the layer below.
+	 */
+	private function storageLayer(bool $holdsAccessControl, bool $readable, ?object $below): \OC\Files\Storage\Wrapper\Wrapper&MockObject {
+		$layer = $this->createMock(\OC\Files\Storage\Wrapper\Wrapper::class);
+		$layer->method('instanceOfStorage')->willReturnCallback(
+			static fn (string $class): bool => $holdsAccessControl && $class === self::ACCESS_CONTROL_STORAGE,
+		);
+		$layer->method('isReadable')->with(self::INTERNAL_PATH)->willReturn($readable);
+		if ($below !== null) {
+			$layer->method('getWrapperStorage')->willReturn($below);
+		}
+
+		return $layer;
+	}
+
+	/** The storage below every wrapper: no access control in it, readable or not. */
+	private function plainStorage(bool $readable): \OC\Files\Storage\Storage&MockObject {
+		$storage = $this->createMock(\OC\Files\Storage\Storage::class);
+		$storage->method('instanceOfStorage')->willReturn(false);
+		$storage->method('isReadable')->with(self::INTERNAL_PATH)->willReturn($readable);
+
+		return $storage;
+	}
+
+	/** File 11 of alice: listed, not readable for her, never opened, on the given storage. */
+	private function listedButClosedFileOn(?object $storage): void {
+		$file = $this->createMock(File::class);
+		$file->method('isReadable')->willReturn(false);
+		$file->method('getPath')->willReturn('/alice/files/Aufnahmen/Sitzung 2026-11-03.mp4');
+		$file->method('getName')->willReturn('Sitzung 2026-11-03.mp4');
+		$file->method('getInternalPath')->willReturn(self::INTERNAL_PATH);
+		$file->method('getStorage')->willReturn($storage);
+		$file->expects(self::never())->method('fopen');
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->with(11)->willReturn($file);
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+	}
+
+	private static function assertPlain404(DataResponse|StreamResponse|DataDisplayResponse $response): void {
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_NOT_FOUND, $response->getStatus());
+		self::assertSame(self::NOT_FOUND, $response->getData());
+		self::assertArrayNotHasKey('X-AVS-Reason', $response->getHeaders());
+	}
+
+	public function testAFileOnlyAccessControlKeepsFromTheUserIsA403AccessControl(): void {
+		$this->listedButClosedFileOn($this->storageLayer(true, false, $this->plainStorage(true)));
+		$this->loggerSeesNoPathOrUser();
+		$this->logger->expects(self::never())->method('error');
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame('access_control', $response->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertSame('access_control', $response->getData()['code'] ?? null);
+		self::assertNoPathIn($response);
+		// The switch to the reader is undone on this way out as well.
+		self::assertNull($this->active);
+	}
+
+	public function testTheHeadRouteGivesTheSame403ForAccessControl(): void {
+		$this->listedButClosedFileOn($this->storageLayer(true, false, $this->plainStorage(true)));
+		$this->loggerSeesNoPathOrUser();
+
+		$response = $this->controller($this->backendAppId())->getFileHead(11, 'alice');
+
+		self::assertInstanceOf(DataResponse::class, $response);
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame('access_control', $response->getHeaders()['X-AVS-Reason'] ?? null);
+		self::assertNoPathIn($response);
+	}
+
+	public function testAccessControlIsLoggedWithTheFileIdAndTheReasonOnly(): void {
+		$this->listedButClosedFileOn($this->storageLayer(true, false, $this->plainStorage(true)));
+		$this->logger->expects(self::once())
+			->method('info')
+			->with(
+				'Audio & Video Search: access control refused a read, answered 403',
+				['fileId' => 11, 'reason' => 'access_control'],
+			);
+
+		$this->controller($this->backendAppId())->getFileContents(11, 'alice');
+	}
+
+	public function testAccessControlBelowAnotherWrapperIsFoundToo(): void {
+		$accessControl = $this->storageLayer(true, false, $this->plainStorage(true));
+		$this->listedButClosedFileOn($this->storageLayer(true, false, $accessControl));
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame('access_control', $response->getHeaders()['X-AVS-Reason'] ?? null);
+	}
+
+	public function testAnUnreadableFileWithoutAccessControlStaysThePlain404(): void {
+		$this->listedButClosedFileOn($this->storageLayer(false, false, $this->plainStorage(false)));
+		$controller = $this->controller($this->backendAppId());
+
+		self::assertPlain404($controller->getFileContents(11, 'alice'));
+		self::assertPlain404($controller->getFileHead(11, 'alice'));
+	}
+
+	public function testAFileTheStorageBelowAccessControlRefusesAsWellStaysThePlain404(): void {
+		// The wrapper is there, but the file is closed for another reason:
+		// the storage below it says no on its own.
+		$this->listedButClosedFileOn($this->storageLayer(true, false, $this->plainStorage(false)));
+		$controller = $this->controller($this->backendAppId());
+
+		self::assertPlain404($controller->getFileContents(11, 'alice'));
+		self::assertPlain404($controller->getFileHead(11, 'alice'));
+	}
+
+	public function testAFileAccessControlWouldLetThroughStaysThePlain404(): void {
+		// The wrapper is there and has no objection; the node is closed anyway.
+		$this->listedButClosedFileOn($this->storageLayer(true, true, $this->plainStorage(true)));
+
+		self::assertPlain404($this->controller($this->backendAppId())->getFileContents(11, 'alice'));
+	}
+
+	public function testWithAccessControlInPlaceAFileTheUserDoesNotSeeStaysThePlain404(): void {
+		// Not visible at all for this user: nothing to ask a storage about.
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willReturn(null);
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+		$controller = $this->controller($this->backendAppId());
+
+		self::assertPlain404($controller->getFileContents(11, 'alice'));
+		self::assertPlain404($controller->getFileHead(11, 'alice'));
+	}
+
+	public function testAFolderUnderAccessControlStaysThePlain404(): void {
+		$folderNode = $this->createMock(Folder::class);
+		$folderNode->method('isReadable')->willReturn(false);
+		$folderNode->expects(self::never())->method('getStorage');
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willReturn($folderNode);
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+
+		self::assertPlain404($this->controller($this->backendAppId())->getFileContents(11, 'alice'));
+	}
+
+	public function testAStorageThatFailsWhileAskedStaysThePlain404(): void {
+		$layer = $this->createMock(\OC\Files\Storage\Wrapper\Wrapper::class);
+		$layer->method('instanceOfStorage')->willThrowException(new StorageNotAvailableException('/alice/files/Aufnahmen'));
+		$this->listedButClosedFileOn($layer);
+		$this->logger->expects(self::never())->method('error');
+
+		self::assertPlain404($this->controller($this->backendAppId())->getFileContents(11, 'alice'));
+	}
+
+	public function testAFileWithoutAStorageStaysThePlain404(): void {
+		$this->listedButClosedFileOn(null);
+
+		self::assertPlain404($this->controller($this->backendAppId())->getFileContents(11, 'alice'));
+	}
+
+	public function testAReadableFileIsServedWithoutAskingItsStorage(): void {
+		$stream = self::memoryStream('abc');
+		$file = $this->createMock(File::class);
+		$file->method('isReadable')->willReturn(true);
+		$file->expects(self::never())->method('getStorage');
+		$file->method('fopen')->with('r')->willReturn($stream);
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->with(11)->willReturn($file);
+		$this->rootFolder->method('getUserFolder')->with('alice')->willReturn($userFolder);
+
+		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');
+
+		self::assertInstanceOf(StreamResponse::class, $response);
+		fclose($stream);
+	}
+
 	public function testTheHeadLimitAndTheHeaderAreTheOnesOfTheContainer(): void {
 		// backend/src/audio_video_search_backend/nc.py HEAD_BYTES and REASON_HEADER.
 		self::assertSame(65536, GatewayController::HEAD_BYTES);

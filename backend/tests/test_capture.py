@@ -29,6 +29,7 @@ from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import Level, Provenance
 from audio_video_search_backend.store.repo import FileRef, IntakeItem, Store
 from audio_video_search_backend.worker import capture as capture_module
+from audio_video_search_backend.worker import read_proof
 from audio_video_search_backend.worker.capture import Capture, CaptureOutcome, retry_at
 
 KIB = 1024
@@ -659,7 +660,71 @@ async def test_every_read_failure_of_the_own_reader_is_unreadable_at_once(
     assert _left(tmp_dir) == []
 
 
+# reason_77 (plan 02-13, Owner 07.11.): files_accesscontrol answered 404 where
+# 403 access_control was meant. The difference is made in the gateway of the
+# PHP app. The container keeps its reading of both answers: a 404 is not_found
+# and waits 60 s, whatever a header says, and only a 403 that names
+# access_control in X-AVS-Reason is access_control and waits 300 s.
+@pytest.mark.parametrize(
+    ("status", "header", "reason", "wait"),
+    [
+        (404, None, nc.NOT_FOUND, 60),
+        (404, "access_control", nc.NOT_FOUND, 60),
+        (404, "excluded", nc.NOT_FOUND, 60),
+        (403, "access_control", nc.ACCESS_CONTROL, 300),
+        (403, None, nc.READ_DENIED, 60),
+        (403, "not_found", nc.READ_DENIED, 60),
+    ],
+)
+async def test_reason_77_the_container_never_reads_a_404_as_access_control(
+    store: Store, tmp_dir: Path, status: int, header: str | None, reason: str, wait: int
+) -> None:
+    headers = {} if header is None else {nc.REASON_HEADER: header}
+    body = b'{"ocs":{"data":{"error":"Access denied by access control.","code":"access_control"}}}'
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        # Even a body that names access control changes nothing: only status and header count.
+        return httpx.Response(status, headers=headers, content=body)
+
+    _intake(store, 77, 100)
+
+    step = await _capture(store, _gateway_fetch(handler), tmp_dir, Clock()).run_once()
+
+    assert (step.outcome, step.reason) == (CaptureOutcome.UNREADABLE, reason)
+    ref = _ref(store, 77)
+    assert (ref.state, ref.stage, ref.reason, ref.attempts) == ("unreadable", "failed", reason, 1)
+    assert ref.next_try_at == NOW + wait
+
+
+@pytest.mark.parametrize(
+    ("status", "header", "outcome"),
+    [
+        (404, None, read_proof.ProofOutcome.READ_DENIED),
+        (404, "access_control", read_proof.ProofOutcome.READ_DENIED),
+        (403, "access_control", read_proof.ProofOutcome.ACCESS_CONTROL),
+        (403, None, read_proof.ProofOutcome.READ_DENIED),
+    ],
+)
+async def test_reason_77_the_head_route_reads_the_two_answers_the_same_way(
+    store: Store, status: int, header: str | None, outcome: read_proof.ProofOutcome
+) -> None:
+    headers = {} if header is None else {nc.REASON_HEADER: header}
+
+    async def head(file_id: int, user_id: str) -> nc.HeadResult:
+        transport = httpx.MockTransport(lambda _request: httpx.Response(status, headers=headers, content=b"x"))
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await nc.fetch_head(file_id, user_id, client=client)
+
+    _intake(store, 77, 100)
+    claimed = store.next_capture(NOW)
+    assert claimed is not None
+
+    # A locked copy of a keyed content: access_control, not read_denied; a 404 stays a refusal without that reason.
+    assert await read_proof.prove_read(claimed, "a" * 64, 100, head) is outcome
+
+
 async def test_a_reference_without_a_reader_is_not_found_without_a_request(store: Store, tmp_dir: Path) -> None:
+
     fetch = FakeFetch()
     _intake(store, 10, 100, reader=None)
 
