@@ -148,13 +148,6 @@ jobs:
           curl -sf "${NC_URL}/status.php"
           ./occ app:enable -vvv -f app_api
 
-      # Background jobs every 15 s instead of the web cron of a quiet instance:
-      # the first crawl, the rescan and the exclusion jobs run in cron.
-      - name: Run cron every 15 seconds
-        run: |
-          ./occ background:cron
-          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
-
       - name: Enable files_external, files_accesscontrol and the PHP app
         run: |
           ./occ app:enable files_external
@@ -163,6 +156,15 @@ jobs:
           mv app-src/php apps/audio_video_search
           ./occ app:enable audio_video_search
           ./occ app:list | grep -A1 "${APP_ID}"
+
+      # Background jobs every 15 s instead of the web cron of a quiet instance:
+      # the first crawl, the rescan and the exclusion jobs run in cron. Only
+      # after the apps are enabled: a cron.php that begins earlier cannot build
+      # the jobs of the app and removes them from the job list (push 7).
+      - name: Run cron every 15 seconds
+        run: |
+          ./occ background:cron
+          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
 
       # A red step when the S3 server does not start, never a skipped one.
       - name: Start the S3 server
@@ -472,11 +474,12 @@ jobs:
           done
           curl -sf "${NC_URL}/status.php"
           ./occ app:enable -vvv -f app_api
-          ./occ background:cron
-          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
           ./occ app:enable files_external
           mv app-src/php apps/audio_video_search
           ./occ app:enable audio_video_search
+          # Cron only after the apps: an earlier cron.php removes their jobs (push 7).
+          ./occ background:cron
+          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
 
       # The patch goes onto a copy under RUNNER_TEMP, never onto the checkout;
       # backend/ of the checkout has to be clean afterwards (D-02-10). Only
