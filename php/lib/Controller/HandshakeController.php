@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Controller;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
+use OCA\AudioVideoSearch\Service\JobRegistry;
 use OCP\App\IAppManager;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
@@ -25,6 +26,7 @@ final class HandshakeController extends OCSController {
 		IRequest $request,
 		private IAppManager $appManager,
 		private LoggerInterface $logger,
+		private JobRegistry $jobs,
 	) {
 		parent::__construct(Application::APP_ID, $request);
 	}
@@ -44,6 +46,14 @@ final class HandshakeController extends OCSController {
 		$foreign = $this->rejectForeignCaller();
 		if ($foreign !== null) {
 			return $foreign;
+		}
+
+		// Only for the own backend: put missing background jobs back
+		// (JobRegistry). Nothing that happens there changes the answer.
+		try {
+			$this->jobs->ensure();
+		} catch (\Throwable $e) {
+			$this->logger->warning('Audio & Video Search: the background jobs could not be checked', ['class' => $e::class]);
 		}
 
 		return new DataResponse(['companionVersion' => $this->appManager->getAppVersion(Application::APP_ID)]);
