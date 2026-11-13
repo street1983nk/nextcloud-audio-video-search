@@ -60,7 +60,7 @@ the read proof; it has to show the leak the main legs must never show
 | leak-control image without the read proof | the same case shows the leak there, so the test can see it | D-02-01a, D-02-10 |
 | `widerruf.webm`, DENY READ for cem later | the renewed read proof removes cem's hits at once | D-02-12 |
 | `klein.ogg`, below 64 KiB | the read proof works on a file shorter than its window | D-02-01a |
-| M2 with session credentials | skipped with a reason, never fetched, no file name in the message | D-02-03 |
+| M2 with session credentials | skipped with a reason, no file name in the message; M2 lies on the share of M1, so its files have the file ids of ana's M1 view and are captured through M1: they are fetched only as a user of such a mount (`sessionShared`), an id that only M2 reaches is never fetched. The access log names user and file id, not the mount | D-02-03 |
 | M3, same share with another root | the prefilter key normalises the root into the path | D-02-01 |
 | M4 local, M5 S3 | external storages are captured out of the box | DISC-02 |
 | team folder `Team`, ben `+read -share` on `frei/`, `-read` on `intern/` | one file reference per team folder file, the reader is a member who may read | D-02-02 |

@@ -130,3 +130,11 @@ gateway_lines() {
 	}
 	tail -c "+$((offset + 1))" "${log}" | grep -cE "${pattern}" || true
 }
+
+# gateway_users LOG ID: the users the gateway and read proof lines for ID
+# name, one per line; "-" stands for a line that names none.
+gateway_users() {
+	[ -f "$1" ] || return 0
+	grep -E "GET /ocs/v2\\.php/apps/audio_video_search/files/$2(/head)?([?[:space:]]|\$)" "$1" \
+		| sed -E -e 's/.*[?&]userId=([^&[:space:]]*).*/\1/' -e 't' -e 's/.*/-/' -e 's/^$/-/' | sort -u || true
+}

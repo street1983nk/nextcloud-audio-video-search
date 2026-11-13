@@ -144,6 +144,17 @@ core_checks() {
 		[ "${count}" = 0 ] || found="${found:+${found},}${id}"
 	done
 	check never_in_log '' "${found}"
+	# Ids of the session mount that a mount with stored credentials reaches
+	# too are fetched, but only as a user of such a mount (truth.sh).
+	local readers user
+	found=''
+	while IFS=$'\t' read -r id readers; do
+		[ -n "${id}" ] || continue
+		for user in $(gateway_users "${log}" "${id}"); do
+			in_list "${user}" "${readers}" || found="${found:+${found},}${id}:${user}"
+		done
+	done < <(jq -r '(.sessionShared // {}) | to_entries[] | "\(.key)\t\(.value | join(","))"' "${truth}")
+	check session_shared_readers '' "${found}"
 }
 
 unreadable_reasons() {
@@ -458,6 +469,8 @@ cmd_self_test() {
 	PHASE=self-test
 	local files="${WORK}/self.files.json" status="${WORK}/self.status.json" truth="${WORK}/self.truth.json"
 	local shifted="${WORK}/self.shifted.json" log="${WORK}/self.access.log" base out never id
+	# An id shared with the session mount that no request names, read by ana.
+	local shared=999999998 foreign="${WORK}/self.foreign.log"
 	occ_files "${files}" || fail "occ audio_video_search:files failed"
 	occ_status "${status}" || fail "occ audio_video_search:status failed"
 	bash "${SCRIPT_DIR}/truth.sh" initial > /dev/null || fail "truth.sh initial failed"
@@ -471,10 +484,11 @@ cmd_self_test() {
 	done
 	# The expectation is the real output itself: the baseline passes the
 	# shifted checks by construction, a shift has to make exactly them fail.
-	jq --slurpfile s "${status}" --argjson never "${never}" '{
+	jq --slurpfile s "${status}" --argjson never "${never}" --arg shared "${shared}" '{
 		files: [.[] | select(.state == "active" or .state == "unreadable") | .fileId],
 		unreadable: [.[] | select(.state == "unreadable") | .fileId],
-		N_active: $s[0].files, Y: $s[0].contents, neverFetched: [$never], sha: {}, unmapped: 0
+		N_active: $s[0].files, Y: $s[0].contents, neverFetched: [$never],
+		sessionShared: {($shared): ["ana"]}, sha: {}, unmapped: 0
 	}' "${files}" > "${truth}"
 	local transcribed
 	transcribed=$(jq -r '.transcribed' "${status}")
@@ -501,6 +515,9 @@ cmd_self_test() {
 	cp "${ACCESS_LOG}" "${log}" 2> /dev/null || : > "${log}"
 	echo "[Sat Nov  7 00:00:00 2026] 127.0.0.1:1 [200]: GET /ocs/v2.php/apps/audio_video_search/files/${never}?userId=x" >> "${log}"
 	shift_one access-log never_in_log "${truth}" "${files}" "${status}" "${transcribed}" "${log}" || result=1
+	cp "${ACCESS_LOG}" "${foreign}" 2> /dev/null || : > "${foreign}"
+	echo "[Sat Nov  7 00:00:00 2026] 127.0.0.1:1 [200]: GET /ocs/v2.php/apps/audio_video_search/files/${shared}?userId=x" >> "${foreign}"
+	shift_one foreign-reader session_shared_readers "${truth}" "${files}" "${status}" "${transcribed}" "${foreign}" || result=1
 	[ "${result}" = 0 ] || fail "compare self-test did not fail"
 	echo "compare self-test passed: every shifted check failed on its own"
 }
