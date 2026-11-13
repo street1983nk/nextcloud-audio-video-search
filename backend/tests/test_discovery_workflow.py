@@ -599,6 +599,8 @@ def script_findings(scripts: dict[str, str]) -> list[str]:
         findings.append("compare.sh does not check transcribed for equality with the ledger")
     if ".dueWork == 0" not in compare:
         findings.append("compare.sh wait does not wait for dueWork")
+    if "((.crawl.finished + .crawl.open) > 0)" not in compare:
+        findings.append("compare.sh wait takes a stock without any first crawl for complete")
     if 'echo "PHASE PASS ${PHASE}"' not in compare:
         findings.append("compare.sh does not write PHASE PASS")
 
@@ -661,6 +663,15 @@ def test_the_script_rule_ignores_comments_but_not_the_backend_module() -> None:
     scripts["ledger.sh"] += "\npython3 -m audio_video_search_backend.store\n"
 
     assert script_findings(scripts) == ["ledger.sh contains audio_video_search_backend"]
+
+
+def test_the_script_rule_fires_on_a_wait_before_the_first_crawl() -> None:
+    scripts = verdict_scripts()
+    planned = "((.crawl.finished + .crawl.open) > 0)"
+    assert planned in scripts["compare.sh"]
+    scripts["compare.sh"] = scripts["compare.sh"].replace(planned, "true")
+
+    assert script_findings(scripts) == ["compare.sh wait takes a stock without any first crawl for complete"]
 
 
 def test_the_script_rule_fires_on_a_missing_self_test_shift() -> None:
