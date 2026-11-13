@@ -261,12 +261,16 @@ cmd_appear() {
 	done
 }
 
+# A stock without any first crawl is not complete: the scheduler plans the
+# first crawls up to five minutes after the backend is ready (run 43359737879
+# judged four phases before that).
 cmd_wait() {
 	local start now status="${WORK}/wait-status.json"
 	start=$(date +%s)
 	while true; do
 		if occ_status "${status}" 2> /dev/null && jq -e '
 			(.crawl.open == 0)
+			and ((.crawl.finished + .crawl.open) > 0)
 			and ([.queue.open // {} | .[]] | all(. == 0))
 			and (.queue.ok != false)
 			and (.dueWork == 0)' "${status}" > /dev/null; then
