@@ -384,8 +384,16 @@ def test_remove_leaves_a_real_transcript_alone(api: TestClient) -> None:
     removed = _post(api, "/sample/remove", {"fileId": 42}).json()
 
     assert removed == {"result": "not_sample", "mediaId": media_id}
+    current = store.current(media_id)
+    assert current is not None
+    assert current.level == Level.PREVIEW
+    # Plan 02-16b: the sample of file 42 no longer opens the real transcript,
+    # so the transcript that was left alone is found through an active
+    # reference of the discovery and through nothing else.
+    assert _search(api, "Audiosuche")["hits"] == []
+    _real_ref(store, 42, media_id, "active")
     hits = _search(api, "Audiosuche")["hits"]
-    assert [h["sample"] for h in hits] == [False]  # type: ignore[union-attr]
+    assert [(h["fileId"], h["sample"]) for h in hits] == [(42, False)]  # type: ignore[union-attr]
 
 
 def test_remove_refuses_a_file_id_below_one(api: TestClient) -> None:

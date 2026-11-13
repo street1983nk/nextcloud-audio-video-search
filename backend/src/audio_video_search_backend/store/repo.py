@@ -114,12 +114,20 @@ ON CONFLICT (file_id) DO UPDATE SET
 # sample (D-02-15) of a file whose reference, if the discovery has one, is
 # active. unreadable, vanished and trashed never reach the search, also not
 # through a sample.
+#
+# A sample counts only while its content stands at the sample level (plan
+# 02-16b, owner 13.11.2026): the sample read its bytes as the user the admin
+# named, so once the content has a real transcript, text goes out through an
+# active reference of the discovery and through nothing else. :sample is
+# Level.SAMPLE; a content without a current version has no text to give. The
+# same condition stands in _SAMPLE_VISIBLE for the excerpt.
 _FILE_IDS_FOR_MEDIA: Final = """
 SELECT file_id FROM file_ref WHERE media_id = :m AND state = 'active'
 UNION
 SELECT s.file_id FROM sample_ref s
 WHERE s.media_id = :m
   AND NOT EXISTS (SELECT 1 FROM file_ref r WHERE r.file_id = s.file_id AND r.state <> 'active')
+  AND NOT EXISTS (SELECT 1 FROM current c WHERE c.media_id = s.media_id AND c.level <> :sample)
 ORDER BY 1
 """
 # The sample layer (D-02-15), written only by api/sample.py and remove_sample;
@@ -132,6 +140,7 @@ _SAMPLE_MEDIA: Final = "SELECT media_id FROM sample_ref WHERE file_id = ?"
 _SAMPLE_VISIBLE: Final = """
 SELECT s.media_id FROM sample_ref s
 WHERE s.file_id = :f AND NOT EXISTS (SELECT 1 FROM file_ref r WHERE r.file_id = :f AND r.state <> 'active')
+  AND NOT EXISTS (SELECT 1 FROM current c WHERE c.media_id = s.media_id AND c.level <> :sample)
 """
 _HAS_CURRENT: Final = "SELECT 1 FROM current WHERE media_id = ?"
 _FILE_REF_ROW: Final = """
@@ -1292,8 +1301,14 @@ class Store:
         return None if row is None else FileRef(*row)
 
     def file_ids_for_media(self, media_id: int) -> list[int]:
-        """The files that may give a hit for this content: active references and visible samples."""
-        return [int(r[0]) for r in self._conn.execute(_FILE_IDS_FOR_MEDIA, {"m": media_id})]
+        """The files that may give a hit for this content: active references and visible samples.
+
+        A sample is visible only while the content stands at the sample level
+        (plan 02-16b): for a content with a real transcript only the active
+        references of the discovery are named.
+        """
+        values = {"m": media_id, "sample": int(Level.SAMPLE)}
+        return [int(r[0]) for r in self._conn.execute(_FILE_IDS_FOR_MEDIA, values)]
 
     def media_for_file(self, file_id: int) -> int | None:
         """The content of a file for its excerpt: the one with a transcript first, the discovery before the sample.
@@ -1302,11 +1317,13 @@ class Store:
         reference counts while that reference is active, exactly like in
         _FILE_IDS_FOR_MEDIA. An unreadable, vanished or trashed reference
         names no content, so its file is answered like one never seen; the
-        sample of such a file is hidden as well (_SAMPLE_VISIBLE).
+        sample of such a file is hidden as well (_SAMPLE_VISIBLE). A sample
+        names its content only while that content stands at the sample level
+        (plan 02-16b), so it never opens the text of a real transcript.
         """
         row = self._conn.execute(_FILE_REF, (file_id,)).fetchone()
         real = None if row is None or row[0] is None or str(row[1]) != "active" else int(row[0])
-        visible = self._conn.execute(_SAMPLE_VISIBLE, {"f": file_id}).fetchone()
+        visible = self._conn.execute(_SAMPLE_VISIBLE, {"f": file_id, "sample": int(Level.SAMPLE)}).fetchone()
         sample = None if visible is None else int(visible[0])
         candidates = [m for m in (real, sample) if m is not None]
         for media_id in candidates:
