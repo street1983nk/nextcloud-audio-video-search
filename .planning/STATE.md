@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Zusatzpläne 02-15b und 02-15c abgeschlossen (309fdb9 bis dee0cb1 und 8fd22d4 bis cc0bdca, lokal auf main, nicht gepusht; nur Python, 903 Tests grün): wiederhergestellte Verweise mit Beweispflicht geben bis zum bestandenen, vorgezogenen Lesebeweis keine Treffer (Owner 2026-11-12); POST /excerpt gibt Text nur für Verweise mit state active und antwortet sonst wie für eine unbekannte Datei-ID (Regel Datenschutz zuerst); PHP zuletzt auf 81b9a39 lokal im Container belegt (420 Tests), seither kein PHP geändert; als Nächstes 02-16; offen: Owner-Entscheid zur Probe mit echtem Transkript (deferred-items.md), Rescan großer Speicher über 300 s nach Plan 22
+stopped_at: 02-16 abgeschlossen (14ca912, 68bee89, 1816871, f8fbaee, 4ae640d, lokal auf main, nicht gepusht; 927 Python-Tests grün); PHP für 02-16 NOCH NICHT geprüft (php -l und PHPUnit im Container stehen aus, erwartet 511 Tests; letzter PHP-Beleg 81b9a39 mit 420 Tests); davor 02-15b und 02-15c fertig; als Nächstes PHP-Prüfung, Zusatzplan Probe (Owner 2026-11-13: Probe gibt nur Text, solange der Inhalt auf Stufe Probe steht), Owner-Entscheid zur Abspielseite für ausgeschlossene Nutzer, dann 02-17; weitere offene Punkte in deferred-items.md (switched_off, ci/discovery/topology.sh, 403 excluded im Lesebeweis bleibt read_denied)
 last_updated: "2026-11-09T07:36:52.420Z"
 last_activity: 2026-11-12
 progress:
   total_phases: 11
   completed_phases: 1
   total_plans: 35
-  completed_plans: 28
+  completed_plans: 29
   percent: 9
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 2
-Plan: 13, 14, 15, 15b, 15c fertig; als Nächstes 16, dann 17
+Plan: 13, 14, 15, 15b, 15c, 16 fertig; als Nächstes PHP-Prüfung für 16, Zusatzplan Probe, dann 17
 Status: Ready to execute
 Last activity: 2026-11-12
 
