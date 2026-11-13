@@ -305,6 +305,82 @@ final class ExclusionServiceTest extends TestCase {
 		self::assertSame([], $this->writes);
 	}
 
+	/**
+	 * Every list, four control characters, three places. The edges are the
+	 * point (plan 02-16b): trim() used to drop the character there before
+	 * anything looked at it, and the entry was stored without it.
+	 *
+	 * @return array<string, array{string, string, string}> the list, the entry and the same entry without the character
+	 */
+	public static function controlCharacters(): array {
+		$clean = [
+			ExclusionService::LIST_USERS => 'eva',
+			ExclusionService::LIST_GROUPS => 'extern',
+			ExclusionService::LIST_FOLDERS => 'privat',
+			ExclusionService::LIST_MOUNTS => '37',
+		];
+		$characters = ['zero byte' => "\0", 'tab' => "\t", 'line feed' => "\n", 'carriage return' => "\r"];
+
+		$sets = [];
+		foreach ($clean as $list => $entry) {
+			foreach ($characters as $name => $character) {
+				$sets[$list . ', ' . $name . ' first'] = [$list, $character . $entry, $entry];
+				$sets[$list . ', ' . $name . ' last'] = [$list, $entry . $character, $entry];
+				$sets[$list . ', ' . $name . ' inside'] = [$list, substr($entry, 0, 1) . $character . substr($entry, 1), $entry];
+			}
+		}
+
+		return $sets;
+	}
+
+	#[DataProvider('controlCharacters')]
+	public function testAnEntryWithAControlCharacterIsRefusedInEveryListAtEveryPlaceAndNeverWritten(string $list, string $entry, string $clean): void {
+		$this->configured = [37];
+		$service = $this->service();
+
+		self::assertSame([ExclusionService::ERROR_INVALID], $service->validate($list, [$entry]));
+		self::assertNull($service->normalise($list, $entry));
+		self::assertSame(ExclusionService::ERROR_INVALID, $service->add($list, $entry));
+		self::assertSame([], $this->writes);
+		// Refused before files_external is asked about a mount id.
+		self::assertSame([], $this->lookedUp);
+
+		// The rule without the character is in force: the entry with it is
+		// not that rule, so it takes nothing out.
+		$this->store($list, [$clean]);
+		$service = $this->service();
+		self::assertSame(ExclusionService::RESULT_ABSENT, $service->remove($list, $entry));
+		self::assertSame([$clean], $service->entries($list));
+		self::assertSame([], $this->writes);
+
+		// Written by occ config:app:set, such an entry makes the list unreadable.
+		$this->store($list, [$clean, $entry]);
+		$service = $this->service();
+		self::assertNull($service->entries($list));
+		self::assertTrue($service->isExcludedUser('ana'));
+	}
+
+	public function testOrdinarySpacesAtTheEdgesAreDroppedInEveryListAndNothingElseIs(): void {
+		$this->configured = [37];
+		$service = $this->service();
+
+		self::assertSame('eva', $service->normalise(ExclusionService::LIST_USERS, '  eva '));
+		self::assertSame('eva maria', $service->normalise(ExclusionService::LIST_USERS, ' eva maria '));
+		self::assertSame('extern', $service->normalise(ExclusionService::LIST_GROUPS, ' extern  '));
+		self::assertSame('privat', $service->normalise(ExclusionService::LIST_FOLDERS, ' privat '));
+		self::assertSame('37', $service->normalise(ExclusionService::LIST_MOUNTS, ' 37 '));
+
+		self::assertSame(ExclusionService::RESULT_ADDED, $service->add(ExclusionService::LIST_MOUNTS, ' 37 '));
+		self::assertSame('["37"]', $this->stored[ExclusionService::LIST_MOUNTS]);
+
+		// White space that is no space is a control character, not an empty entry.
+		foreach (ExclusionService::LISTS as $list) {
+			self::assertSame([ExclusionService::ERROR_INVALID], $service->validate($list, ["\t"]), $list);
+			self::assertSame([ExclusionService::ERROR_INVALID], $service->validate($list, [" \n "]), $list);
+			self::assertSame([ExclusionService::ERROR_EMPTY], $service->validate($list, ['   ']), $list);
+		}
+	}
+
 	public function testAFolderIsStoredInOneSpelling(): void {
 		$service = $this->service();
 

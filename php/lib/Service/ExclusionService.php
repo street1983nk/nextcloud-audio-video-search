@@ -623,17 +623,25 @@ class ExclusionService {
 	 * would leave out something the admin did not name (T-02-59). The value
 	 * only ever reaches str_starts_with, never a file system call.
 	 *
+	 * Ordinary spaces at the edges are dropped, in every list, and nothing
+	 * else is: trim() without a second argument would also drop a zero byte, a
+	 * tab, a line feed and a carriage return there, and the entry would be
+	 * stored as a rule nobody typed. An entry that holds a control character
+	 * anywhere, the edges included, is refused instead of altered (plan
+	 * 02-16b), so encoding and control characters are judged on the entry as
+	 * it came, not on the shortened value.
+	 *
 	 * @return array{0: ?string, 1: ?string}
 	 */
 	private function normalised(string $list, string $entry): array {
-		$value = trim($entry);
+		$value = trim($entry, ' ');
 		if ($value === '') {
 			return [null, self::ERROR_EMPTY];
 		}
 		if (strlen($value) > self::MAX_ENTRY_LENGTH) {
 			return [null, self::ERROR_TOO_LONG];
 		}
-		if (!mb_check_encoding($value, 'UTF-8') || preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
+		if (!mb_check_encoding($entry, 'UTF-8') || preg_match('/[\x00-\x1F\x7F]/', $entry) === 1) {
 			return [null, self::ERROR_INVALID];
 		}
 
