@@ -132,6 +132,14 @@ def leak_findings(text: str, others: dict[str, str]) -> list[str]:
             findings.append(f"leak-control applies the patch outside RUNNER_TEMP: {line.strip()}")
     if PATCH_NAME not in leak:
         findings.append("leak-control does not name the patch")
+    # The PHP app is moved out of the checkout before, so only backend/ can be clean.
+    applied = max((leak.find(line) for line in applies), default=-1)
+    guard = leak.find("git -C app-src diff --quiet -- backend/\n")
+    build = leak.find("docker build ")
+    if guard < 0 or guard < applied or build < 0 or guard > build:
+        findings.append("leak-control builds the image without git diff --quiet -- backend/ after the patch")
+    if re.search(r"^ *git -C app-src diff --quiet$", leak, re.MULTILINE):
+        findings.append("leak-control asks for a clean checkout although the PHP app was moved out of it")
     for name, step in steps_of(leak):
         if "actions/upload-artifact@" in step and re.search(r"\.tar|leak-backend|LEAK_ROOT|image", step):
             findings.append(f"leak-control uploads the image in '{name}'")
@@ -328,6 +336,33 @@ def test_the_leak_rule_fires_on_docker_save() -> None:
     broken = text.replace(marker, marker + '          docker save "${LEAK_IMAGE}" -o leak.tar\n')
 
     assert leak_findings(broken, {}) == ["leak-control contains docker save"]
+
+
+def test_the_leak_rule_fires_on_a_guard_over_the_whole_checkout() -> None:
+    text = source()
+    leak = job_text(text, "leak-control")
+    guard = "          git -C app-src diff --quiet -- backend/\n"
+    assert guard in leak
+    broken = text.replace(leak, leak.replace(guard, guard.replace(" -- backend/", "")))
+
+    assert leak_findings(broken, {}) == [
+        "leak-control builds the image without git diff --quiet -- backend/ after the patch",
+        "leak-control asks for a clean checkout although the PHP app was moved out of it",
+    ]
+
+
+def test_the_leak_rule_fires_on_a_guard_before_the_patch() -> None:
+    text = source()
+    leak = job_text(text, "leak-control")
+    guard = "          git -C app-src diff --quiet -- backend/\n"
+    copy = '          cp -a app-src/backend "${LEAK_ROOT}/backend"\n'
+    assert guard in leak
+    assert copy in leak
+    broken = text.replace(leak, leak.replace(guard, "").replace(copy, copy + guard))
+
+    assert leak_findings(broken, {}) == [
+        "leak-control builds the image without git diff --quiet -- backend/ after the patch"
+    ]
 
 
 def test_the_leak_rule_fires_on_packages_write() -> None:
