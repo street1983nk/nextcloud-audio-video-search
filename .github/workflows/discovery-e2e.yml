@@ -479,7 +479,8 @@ jobs:
           ./occ app:enable audio_video_search
 
       # The patch goes onto a copy under RUNNER_TEMP, never onto the checkout;
-      # the checkout has to be clean afterwards (D-02-10).
+      # backend/ of the checkout has to be clean afterwards (D-02-10). Only
+      # backend/ can be asked: the PHP app was moved out of the checkout above.
       # The runner context exists only inside steps, so LEAK_ROOT is set here.
       - name: Build the control image out of a patched copy
         env:
@@ -489,7 +490,7 @@ jobs:
           cp -a app-src/backend "${LEAK_ROOT}/backend"
           git -C "${LEAK_ROOT}" apply --check "${GITHUB_WORKSPACE}/app-src/ci/leak-control/read-proof-off.patch"
           git -C "${LEAK_ROOT}" apply "${GITHUB_WORKSPACE}/app-src/ci/leak-control/read-proof-off.patch"
-          git -C app-src diff --quiet
+          git -C app-src diff --quiet -- backend/
           docker run -d -p 5000:5000 --name registry registry:2
           docker build -t "${LEAK_IMAGE}" "${LEAK_ROOT}/backend"
           docker push "${LEAK_IMAGE}"
