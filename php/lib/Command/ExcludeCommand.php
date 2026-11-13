@@ -32,7 +32,8 @@ use Symfony\Component\Console\Output\OutputInterface;
  *
  * Exit code: SUCCESS when every change was made or was already in place;
  * INVALID for unusable options or values; FAILURE when a list is full, a
- * mount id names no configuration, or the stored lists cannot be read.
+ * mount id names no configuration, the configurations of files_external
+ * cannot be read, or the stored lists cannot be read.
  */
 class ExcludeCommand extends Command {
 	/** Option name => the list it writes. */
@@ -171,6 +172,10 @@ class ExcludeCommand extends Command {
 				Command::FAILURE,
 			],
 			ExclusionService::ERROR_UNKNOWN_MOUNT => ['<error>No external storage configuration has this mount id.</error>', Command::FAILURE],
+			ExclusionService::ERROR_MOUNTS_UNREADABLE => [
+				'<error>The external storage configurations cannot be read, so the mount id could not be checked and nothing changed. Is the app files_external enabled?</error>',
+				Command::FAILURE,
+			],
 			ExclusionService::ERROR_UNREADABLE => [sprintf('<error>%s</error>', self::unreadable($list)), Command::FAILURE],
 			default => [
 				$list === ExclusionService::LIST_MOUNTS

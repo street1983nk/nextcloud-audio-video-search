@@ -757,13 +757,22 @@ final class ExclusionServiceTest extends TestCase {
 		self::assertSame([], $this->lookedUp);
 	}
 
-	public function testAConfigurationTableThatCannotBeReadKnowsNoMountId(): void {
+	public function testAConfigurationTableThatCannotBeReadIsSaidSoAndIsNotAnUnknownMountId(): void {
 		$db = $this->createMock(IDBConnection::class);
 		$db->method('getQueryBuilder')->willThrowException(new \RuntimeException('no such table: oc_external_mounts'));
 		$service = new ExclusionService(...$this->constructorArguments($db));
 
-		self::assertSame(ExclusionService::ERROR_UNKNOWN_MOUNT, $service->add(ExclusionService::LIST_MOUNTS, '3'));
+		self::assertSame(ExclusionService::ERROR_MOUNTS_UNREADABLE, $service->add(ExclusionService::LIST_MOUNTS, '3'));
 		self::assertSame([], $this->writes);
+		// The class of the failure and nothing of its message.
+		self::assertCount(1, $this->logged);
+		self::assertStringContainsString('RuntimeException', $this->logged[0]);
+		self::assertStringNotContainsString('oc_external_mounts', $this->logged[0]);
+
+		// Taking a rule back never looks the id up, so it still works.
+		$this->store(ExclusionService::LIST_MOUNTS, ['3']);
+		$service = new ExclusionService(...$this->constructorArguments($db));
+		self::assertSame(ExclusionService::RESULT_REMOVED, $service->remove(ExclusionService::LIST_MOUNTS, '3'));
 	}
 
 	public function testANameThatIsNoListIsNeverReadOrWritten(): void {
@@ -887,6 +896,12 @@ final class ExclusionServiceTest extends TestCase {
 			'unusable characters' => ['group', ExclusionService::ERROR_INVALID, '--group holds characters that cannot be used.', Command::INVALID],
 			'no mount id' => ['storage', ExclusionService::ERROR_INVALID, '--storage takes the mount id of an external storage configuration, a positive whole number.', Command::INVALID],
 			'unknown mount id' => ['storage', ExclusionService::ERROR_UNKNOWN_MOUNT, 'No external storage configuration has this mount id.', Command::FAILURE],
+			'configurations unreadable' => [
+				'storage',
+				ExclusionService::ERROR_MOUNTS_UNREADABLE,
+				'The external storage configurations cannot be read, so the mount id could not be checked and nothing changed. Is the app files_external enabled?',
+				Command::FAILURE,
+			],
 			'full' => ['user', ExclusionService::ERROR_TOO_MANY, 'The excluded users are full (64 entries).', Command::FAILURE],
 			'unreadable' => [
 				'folder',

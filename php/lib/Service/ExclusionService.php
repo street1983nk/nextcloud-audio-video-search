@@ -72,6 +72,8 @@ class ExclusionService {
 	public const ERROR_TOO_MANY = 'too_many';
 	public const ERROR_INVALID = 'invalid';
 	public const ERROR_UNKNOWN_MOUNT = 'unknown_mount';
+	/** The mount configurations of files_external cannot be read, so a mount id cannot be looked up. */
+	public const ERROR_MOUNTS_UNREADABLE = 'mounts_unreadable';
 	public const ERROR_UNREADABLE = 'unreadable';
 
 	/** What the fingerprint is taken over while the lists cannot be read. */
@@ -287,7 +289,9 @@ class ExclusionService {
 	/**
 	 * Add one entry to a list: RESULT_ADDED, or the code that refused it.
 	 * Nothing is written unless the answer is RESULT_ADDED. A mount id has to
-	 * name a mount configuration of files_external.
+	 * name a mount configuration of files_external; when those cannot be read
+	 * (the app is not enabled, its table is missing) the answer says so and
+	 * is not "no such mount id".
 	 */
 	public function add(string $list, string $entry): string {
 		$current = $this->entries($list);
@@ -304,8 +308,14 @@ class ExclusionService {
 		if (count($current) >= self::MAX_ENTRIES) {
 			return self::ERROR_TOO_MANY;
 		}
-		if ($list === self::LIST_MOUNTS && !$this->mountConfigured((int)$value)) {
-			return self::ERROR_UNKNOWN_MOUNT;
+		if ($list === self::LIST_MOUNTS) {
+			$configured = $this->mountConfigured((int)$value);
+			if ($configured === null) {
+				return self::ERROR_MOUNTS_UNREADABLE;
+			}
+			if (!$configured) {
+				return self::ERROR_UNKNOWN_MOUNT;
+			}
 		}
 
 		$current[] = $value;
@@ -337,11 +347,12 @@ class ExclusionService {
 	}
 
 	/**
-	 * Does files_external know a mount configuration with this id? false as
-	 * well when its table cannot be read. Protected only so the unit test can
-	 * replace the query.
+	 * Does files_external know a mount configuration with this id? null when
+	 * its table cannot be read: that is not the same as an id nobody
+	 * configured, and the admin is told which of the two it was. Protected
+	 * only so the unit test can replace the query.
 	 */
-	protected function mountConfigured(int $mountId): bool {
+	protected function mountConfigured(int $mountId): ?bool {
 		try {
 			$qb = $this->db->getQueryBuilder();
 			$qb->select('mount_id')
@@ -355,7 +366,7 @@ class ExclusionService {
 		} catch (\Throwable $e) {
 			$this->logger->warning('Audio & Video Search: the external storage configuration could not be read', ['class' => $e::class]);
 
-			return false;
+			return null;
 		}
 	}
 
