@@ -100,7 +100,11 @@ final class JobRegistryTest extends TestCase {
 	}
 
 	public function testTheListIsTheOneOfInfoXml(): void {
-		$info = simplexml_load_file(dirname(__DIR__, 2) . '/appinfo/info.xml');
+		// Read as a string: lib/base.php switches the external entity loader
+		// off, so simplexml_load_file cannot open a file inside the suite.
+		$xml = file_get_contents(dirname(__DIR__, 2) . '/appinfo/info.xml');
+		self::assertIsString($xml);
+		$info = simplexml_load_string($xml);
 		self::assertNotFalse($info);
 		$jobs = [];
 		foreach ($info->{'background-jobs'}->job as $job) {
