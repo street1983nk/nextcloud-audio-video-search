@@ -7,7 +7,8 @@ requires: [02-12, 02-13, 02-14, 02-15, 02-15b, 02-15c, 02-16, 02-16b]
 provides:
   - "Push 6: c1b6375 auf origin/phase-02, PHP gates, Python gates und Deploy through HaRP grün"
   - "Erster CI-Beleg der PHP-Seite von 02-13 bis 02-16b: PHPUnit 569 Tests, 7416 Assertions, php -l 59 Dateien"
-  - "Befund und lokale Korrektur für das Kontrollbein leak-control und für compare.sh wait (ungepusht)"
+  - "Push 7: 25d241b auf origin/phase-02, drei Pflicht-Workflows grün, initial, read-proof, shares, access-control und fünf weitere Phasen grün"
+  - "Offen: Kontrollbein leak-control hat das Leck nicht gezeigt (Cron-Wettlauf im Aufbau), Verschieben über Speichergrenzen verliert den Verweis"
 affects: [02-18, 02-19, 02-20, 02-22]
 tech-stack:
   added: []
@@ -34,6 +35,8 @@ metrics:
 ---
 
 # Phase 2 Plan 17: Zweiter Zwischen-Push nach Welle 7 Summary
+
+**Stand nach Push 7 (25d241b, 13.11.2026), maßgeblich:** Die drei Pflicht-Workflows sind grün. Im Bein discovery sind initial, read-proof, shares und access-control jetzt grün, dazu upload, overwrite, copy, rename und tag (9 von 20). Das Kontrollbein leak-control hat das Leck NICHT gezeigt: es kam nicht bis zur Prüfung, weil der Cron-Lauf im Aufbau den SchedulerJob aus der Jobliste entfernt hat. Dazu ein Produktbefund außerhalb der Pläne 18 bis 20: nach dem Verschieben einer Datei über Speichergrenzen fehlt ihr Verweis. Der Plan ist damit weiter NICHT erfüllt; ein dritter Push ist nicht freigegeben. Einzelheiten im Abschnitt "Push 7" unten; die Abschnitte davor beschreiben Push 6.
 
 Push 6 (c1b6375 auf phase-02) ist durch das Tor gegangen: die drei Pflicht-Workflows sind grün und die PHP-Seite von 02-13 bis 02-16b ist zum ersten Mal in CI belegt; Discovery acceptance ist rot, weil das Kontrollbein an einer Sauberkeitsprüfung über den ganzen Checkout scheitert und die Abnahme vier Phasen vor dem ersten Crawl beurteilt. Beide Ursachen sind lokal korrigiert und nicht gepusht. Der Plan ist damit NICHT erfüllt, der zweite Checkpoint wartet auf den Owner.
 
@@ -214,9 +217,77 @@ Die anderen 13 Phasen hatten M2 nicht in oc_mounts und sind von dieser Korrektur
 - **Zwei Zeilen in deferred-items.md** ergänzt (Befund 3, Takt des SchedulerJob).
 - STATE.md, ROADMAP.md und die Pläne 02-18 bis 02-22 nicht angefasst.
 
+## Push 7, 25d241b (Korrektur-Push, 13.11.2026)
+
+### Freigabe und Tor
+
+- Owner-Entscheid 13.11.2026 zum zweiten Checkpoint: `push-fix`, wörtlich "Diskussion Runde möchte ich und Push" auf die Frage der Hauptsitzung nach dem Korrektur-Push; über die Hauptsitzung übermittelt. Gilt für genau einen Push von 25d241b. Zusätzlich einmalig freigegeben: der manuelle Start von php.yml für diesen SHA.
+- Geprüft über c1b6375..25d241b (8 Commits, kein Merge): Autor und Committer 8 von 8 `street1983nk <k.cherif@outlook.de>`; 0 Treffer für Claude-Session, Co-Authored-By, Schließwort mit Issue-Nummer; 8 Dateien, 0 verdächtige Dateinamen, 0 Treffer für Schlüssel- und Token-Muster in hinzugefügten Zeilen; 2 Zeilen mit "password" oder "token", beide Prosa dieses SUMMARY. Workflow-Diff: nur die eine Zeile `git -C app-src diff --quiet -- backend/` samt Kommentar; kein Trigger, keine Berechtigung, keine Registry geändert. origin/phase-02 = c1b6375 ist Vorfahr, origin/main = ea97b58. Lokale Gates auf 25d241b: ruff, format (71 Dateien), pyright 0 Fehler, vulture, pytest 943 grün.
+- php.yml vor dem Start gelesen: bietet `workflow_dispatch`, `permissions: contents: read`, kein Secret, keine Veröffentlichung.
+- Freigabedatei `approvals/push-25d241b…`; Push `git push origin HEAD:phase-02`, Fast-Forward c1b6375..25d241b um 07:38:17Z. Genau ein Push. Danach genau ein `gh workflow run php.yml --ref phase-02` um 07:39:14Z (phase-02 stand auf 25d241b). Kein anderer Workflow von Hand gestartet, nichts abgebrochen, nichts neu angestoßen.
+
+### Läufe für 25d241b
+
+| Workflow | Lauf | Ergebnis |
+|---|---|---|
+| Python gates | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43387183587 | success |
+| PHP gates (workflow_dispatch) | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43387288928 | success: php -l 59 Dateien, PHPUnit "OK (569 tests, 7416 assertions)", composer |
+| Deploy through HaRP | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43387183613 | success, 10 von 10 |
+| Discovery acceptance | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43387183622 | failure: discovery 9 von 20 Phasen, leak-control rot |
+
+Pflicht-Workflows mit success: 3 von 3. main vorher und nachher ea97b58 (`cmp` grün). ghcr `audio_video_search_backend` vorher und nachher `STATE 404 Package not found`; Paket `audio_video_search` vorher und nachher identisch (39 Zeilen); kein Tag leak-control; Positivkontrolle `findling_backend:1.6.2` vor und nach den Läufen grün.
+
+### Bein discovery (stable33, ubuntu-24.04)
+
+Kontrollen grün: Samba, Selbsttest (fünf Verschiebungen, auch session_shared_readers mit "gefunden=999999998:x"), access-log ("1 gateway line(s) for file 74"). Das Warten endete nach 258 s mit geplantem Erst-Crawl (Korrektur 11db11a wirkt).
+
+| Phase | Ergebnis | Zuordnung |
+|---|---|---|
+| initial | PASS | DISC-02 (externe Speicher, local_captured, s3_captured, skipped_session_mount), Ausschlüsse vor dem ersten Durchlauf |
+| read-proof | PASS | DISC-05 (ana_finds_her_copy, ben_finds_no_denied_copy) |
+| shares | PASS | DISC-05 (ben_finds_share, cem_finds_reshare, dan_finds_smb_share, eva_finds_nothing) |
+| access-control | PASS | DISC-05 (reason_77, sperre_reason) |
+| upload, overwrite, copy, rename, tag | PASS | über den Plan hinaus |
+| move-cross | FAIL: active_set fehlt 80, files_count, contents, move_same_media | **Produktbefund, keinem der Pläne 18 bis 20 zugeordnet** (Befund 5) |
+| trash | FAIL: active_set fehlt 80, files_count, contents | nur Folge von move-cross |
+| restore | FAIL: Folge von move-cross, dazu restore_no_download | 18 (erlaubter Folgefehler) |
+| exclude-user-after | FAIL: Mengen, ben_storage_refs | 18 |
+| exclude-storage-after | FAIL: Mengen, m3_refs, files_fewer | 18 |
+| exclude-after | FAIL: Mengen, transcribed, x_forgotten | 18 |
+| reprove | FAIL: operation, reprove_unreadable, cem_finds_no_revoked_copy | 20 (Befehl `reconcile --reprove` fehlt) |
+| vanish | FAIL: cem_refs_vanished, transcribed_minus_one, Mengen | 19, 20 |
+| delete-user | FAIL: dan_ref_gone, dan_media_orphaned, transcribed_minus_one, Mengen | 19, 20 |
+| reattach | FAIL: transcribed_plus_one, Mengen | 19, 20 |
+| foreign-change | FAIL: Mengen | 20 (erlaubter Folgefehler) |
+
+Sicherheitsaussagen im Hauptlauf: never_in_stock, never_in_log und session_shared_readers sind in allen 20 Phasen grün. neverFetched ist in allen 20 Phasen genau 83, 91, 95 (kein Schwanken mehr); sessionShared hat 11 IDs in 7 Phasen, sonst 0; die erlaubten Leser sind ana und, für die Freigabe aus dem SMB-Ordner, dan. Für 83, 91, 95: 0 Gateway-Zeilen, 0 Zeilen im Vorrat. Kein Abruf und kein Treffer für eine ausgeschlossene Datei, kein Leser ohne Recht. Offen wie in Push 5 und 6: reprove:cem_finds_no_revoked_copy (Plan 20).
+
+Die vom Plan verlangten vier PHASE PASS stehen damit im Log. DISC-02, DISC-03 und DISC-05 bleiben trotzdem unabgehakt, solange das Kontrollbein fehlt.
+
+### Befund 4: Kontrollbein leak-control zeigt das Leck nicht (kam nicht bis zur Prüfung)
+
+Der Bau des Kontrollbilds lief jetzt durch (Korrektur 00928f7 wirkt), das Bild blieb in `localhost:5000`. Der Schritt "The control leg shows the leak" endete mit `FAIL wait: not complete after 900 s` bei `crawl finished 0, open 0` und "the work stock of the control leg did not complete". Die Zeile "LEAK CONTROL SHOWED THE LEAK" steht 0-mal im Log; die Prüfung selbst (findet ben die Kopie) wurde nie ausgeführt.
+
+Ursache aus nextcloud.log des Kontrollbeins: um 07:39:13, fünf Sekunden nach "audio_video_search 0.1.0 enabled" (07:39:08), meldet cron "failed to create instance of background job" für `SchedulerJob` und `ExternalRescanJob` der App. Der Job startet die Cron-Schleife vor dem Aktivieren der App; ein cron.php, das davor begonnen hat, kennt die Klassen der App nicht. `JobList::buildJob` (stable33, gelesen) entfernt einen solchen Job aus der Jobliste ("Remove job from disabled app or old version of an app"). Ohne SchedulerJob wird nie ein Erst-Crawl geplant; das strengere Warten (11db11a) hat das sichtbar gemacht, statt die Prüfung auf einem leeren Vorrat laufen zu lassen. Im Bein discovery steht derselbe Aufbau (Cron-Schritt vor dem Aktivieren); dort traf es in beiden Läufen nur den Job `CredentialsCleanup` von files_external, die Jobs der App blieben.
+
+Wertung: Fehler des Aufbaus der Abnahme (Wettlauf), kein Beleg für oder gegen den Lesebeweis. Das Kontrollbein ist weiter nie bis zur Prüfung gelaufen; die Positivkontrolle des Lesebeweises (D-02-10) fehlt also noch. Nebenbefund für das Produkt: fällt bei einer echten Installation ein Cron-Lauf in das Aktivieren der App, verliert die Instanz den SchedulerJob, bis die App erneut aktiviert oder aktualisiert wird. Nicht korrigiert (kein dritter Push freigegeben).
+
+### Befund 5: Verschieben über Speichergrenzen verliert den Verweis (Produkt)
+
+Phase move-cross verschiebt `wandern.webm` (Datei-ID 80) aus dem Home von ana in den Gruppenordner Team; die Datei-ID bleibt 80 (ids.env). Vorher im Vorrat: fileId 80, mediaId 7, storageId 3, active, keyed. Nachher steht 80 in keiner Phase mehr im Vorrat (`occ :files --json --all` ohne Zeile), `move_same_media erwartet=7 gefunden=`. Ablauf laut Logs: MOVE 07:48:41; 07:49:04 ein Auftrag aus der Warteschlange, das Backend meldet "media orphaned" mit cause delete und "intake written" mit items 1, applied 1; danach Warteschlange leer, dueWork 0, kein Gateway-Abruf für 80. Es kam also nur das Löschen der Quelle an, nicht das Erfassen des Ziels; weil Quelle und Ziel dieselbe Datei-ID tragen, löscht der Auftrag den einzigen Verweis.
+
+In Lauf 43359737879 war move-cross grün, aber aus dem falschen Grund: der verspätete Erst-Crawl lief genau in dieser Phase und fand die Datei im Gruppenordner. Mit richtigem Warten zeigt sich der Fehler. Er gehört zur Ereignisbehandlung (FileEventListener: "across storages content for the target and delete for a source"), nicht zu den Plänen 18 bis 20; der Abgleich aus 19 und 20 würde die Datei später wiederfinden, die Abnahme verlangt sie aber sofort. Kein Leck (eine Datei fehlt, keine ist zuviel). Ursache nur aus den Logs belegt, nicht am Code geprüft, nicht korrigiert.
+
+### Stand des Plans nach Push 7
+
+- Erfüllt: nur phase-02 gepusht, main und ghcr unverändert, drei Pflicht-Workflows grün, vier verlangte Phasen grün, Samba, Selbsttest und access-log grün.
+- Nicht erfüllt: "das Kontrollbein leak-control zeigt das Leck" (Befund 4); "übrige FAIL-Zeilen sind Plan 18 bis 20 zugeordnet" (Befund 5 ist es nicht).
+- Der verify-Befehl von Task 2 scheitert an den zwei Prüfungen zu leak-control. Task 3 ist mit `push-fix` einmal durchlaufen; für das Weitere braucht es einen neuen Owner-Entscheid.
+
 ## Offene Punkte
 
-- Zweiter Checkpoint: Push von HEAD auf phase-02 (sechs Korrektur-Commits plus die docs-Commits von 02-17) braucht eine neue Owner-Wahl und eine neue Freigabedatei für den neuen SHA.
+- **Nach Push 7:** Befund 4 (Cron-Wettlauf, Kontrollbein ohne Aussage) und Befund 5 (Verschieben über Speichergrenzen) brauchen je eine Entscheidung und einen weiteren Push, der nicht freigegeben ist. Beide stehen in deferred-items.md.
+- Zweiter Checkpoint: mit `push-fix` am 13.11.2026 freigegeben und als Push 7 ausgeführt (Abschnitt oben).
 - Befund 3 (neverFetched und M2): geklärt und lokal korrigiert (Nachtrag, d62e38c, 85921b8). Offen bleibt die Grenze, dass das Zugriffslog den Mount nicht nennt, und dass die Kopie von state.db im Artefakt leer ist (WAL-Datei fehlt); beides steht in deferred-items.md.
 - Takt des SchedulerJob (bis zu fünf Minuten bis zum Erst-Crawl nach bereitem Backend): Owner-Entscheid, ob das Produkt das ändern soll; steht in deferred-items.md.
 - DISC-02, DISC-03, DISC-05: nicht abgehakt; die Abnahme der externen Speicher, des Lesebeweises und der Ausschlüsse vor dem ersten Durchlauf ist in CI erst mit einem grünen Lauf von initial, read-proof, shares, access-control und dem Kontrollbein belegt.
@@ -226,4 +297,5 @@ Die anderen 13 Phasen hatten M2 nicht in oc_mounts und sind von dieser Korrektur
 
 - Commits vorhanden: 1862b53, 00928f7, 9b59082, 11db11a, d62e38c, 85921b8.
 - Dateien vorhanden (lokal, nicht committet): approvals/push-c1b6375…, main-before, ghcr-before, ghcr-after, ghcr-extra-before, ghcr-extra-after, discovery-c1b6375….log.
-- origin/phase-02 = c1b6375, origin/main = ea97b58 (unverändert).
+- Nach Push 6: origin/phase-02 = c1b6375. Nach Push 7: origin/phase-02 = 25d241b, origin/main = ea97b58 (unverändert).
+- Belege zu Push 7 (lokal, nicht committet): approvals/push-25d241b…, main-before, ghcr-before, ghcr-after, ghcr-extra-before, ghcr-extra-after, discovery-25d241b….log.
