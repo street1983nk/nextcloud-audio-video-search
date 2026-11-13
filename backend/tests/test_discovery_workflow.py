@@ -16,6 +16,8 @@
 - The S3 server never takes a port of the leg (push 2: its volume server took
   8080 from Nextcloud), and the phases run only after a successful setup, with
   a bounded wait and a step limit (push 2 waited two hours for nothing).
+- The cron loop of both jobs starts only after the apps are enabled: a
+  cron.php that began earlier removed the jobs of the app (push 7, plan 02-17b).
 
 Every rule has a self test on a broken copy, so a gate whose body went missing
 does not stay green.
@@ -773,3 +775,116 @@ def test_the_flow_rule_fires_when_the_access_log_control_comes_first() -> None:
     )
 
     assert flow_findings(broken) == ["the job discovery does not run the verdict in the order of plan 02-04"]
+
+
+# -- cron after the apps (plan 02-17b) ----------------------------------------------
+#
+# A cron.php that begins before ./occ app:enable audio_video_search cannot
+# build the jobs of the app, and JobList::buildJob removes their rows (run
+# 43387183622: the control leg never got its first crawl). So the cron loop of
+# both jobs starts only after the apps are enabled; ./occ background:cron only
+# switches the mode and may come earlier.
+
+CRON_LOOP = "do php cron.php;"
+APP_API_ENABLED = "./occ app:enable -vvv -f app_api\n"
+APPS_BEFORE_CRON = {
+    "discovery": (
+        "./occ app:enable audio_video_search",
+        "./occ app:enable files_external",
+        "./occ app:install files_accesscontrol",
+    ),
+    "leak-control": (
+        "./occ app:enable audio_video_search",
+        "./occ app:enable files_external",
+    ),
+}
+
+
+def _code_offset(body: str, needle: str) -> int:
+    """The offset of the first line holding needle that is no YAML or shell comment, or -1."""
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        if needle in line and not line.lstrip().startswith("#"):
+            return offset
+        offset += len(line)
+    return -1
+
+
+def cron_order_findings(text: str) -> list[str]:
+    """Every job whose cron loop starts before one of its apps is enabled."""
+    findings: list[str] = []
+    for job, apps in APPS_BEFORE_CRON.items():
+        body = job_text(text, job)
+        cron = _code_offset(body, CRON_LOOP)
+        if cron < 0:
+            findings.append(f"the job {job} runs no cron loop")
+            continue
+        for app in apps:
+            enabled = _code_offset(body, app)
+            if enabled < 0:
+                findings.append(f"the job {job} does not enable {app}")
+            elif cron < enabled:
+                findings.append(f"the job {job} starts cron before the app is enabled: {app}")
+    return findings
+
+
+def _cron_moved_up(text: str, job: str) -> str:
+    """The workflow with the cron loop of one job back right after app_api, as it was at 25d241b."""
+    body = job_text(text, job)
+    lines = body.splitlines(keepends=True)
+    loop = [line for line in lines if CRON_LOOP in line and not line.lstrip().startswith("#")]
+    assert len(loop) == 1, f"{job} holds {len(loop)} cron loops"
+    assert body.count(APP_API_ENABLED) == 1, f"{job} no longer enables app_api once"
+    moved = body.replace(loop[0], "", 1).replace(APP_API_ENABLED, APP_API_ENABLED + loop[0], 1)
+    return text.replace(body, moved, 1)
+
+
+def test_cron_starts_after_the_apps_are_enabled() -> None:
+    assert cron_order_findings(source()) == []
+
+
+def test_the_cron_rule_fires_in_each_job_on_its_own() -> None:
+    text = source()
+    discovery = _cron_moved_up(text, "discovery")
+    assert cron_order_findings(discovery) == [
+        "the job discovery starts cron before the app is enabled: ./occ app:enable audio_video_search",
+        "the job discovery starts cron before the app is enabled: ./occ app:enable files_external",
+        "the job discovery starts cron before the app is enabled: ./occ app:install files_accesscontrol",
+    ]
+    control = _cron_moved_up(text, "leak-control")
+    assert cron_order_findings(control) == [
+        "the job leak-control starts cron before the app is enabled: ./occ app:enable audio_video_search",
+        "the job leak-control starts cron before the app is enabled: ./occ app:enable files_external",
+    ]
+
+
+def test_the_cron_rule_reads_the_order_of_25d241b_as_too_early() -> None:
+    # The lines of the control leg at 25d241b, word for word.
+    old_control = (
+        "jobs:\n  leak-control:\n    steps:\n      - name: Install\n        run: |\n"
+        "          ./occ app:enable -vvv -f app_api\n"
+        "          ./occ background:cron\n"
+        '          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &\n'
+        "          ./occ app:enable files_external\n"
+        "          mv app-src/php apps/audio_video_search\n"
+        "          ./occ app:enable audio_video_search\n"
+    )
+    assert [finding for finding in cron_order_findings(old_control) if "leak-control" in finding] == [
+        "the job leak-control starts cron before the app is enabled: ./occ app:enable audio_video_search",
+        "the job leak-control starts cron before the app is enabled: ./occ app:enable files_external",
+    ]
+
+
+def test_the_cron_rule_ignores_a_comment_and_fires_without_a_loop() -> None:
+    text = source()
+    commented = text.replace(
+        "      - name: Install Nextcloud in debug mode and enable AppAPI\n",
+        "      # (while true; do php cron.php; sleep 15; done)\n"
+        "      - name: Install Nextcloud in debug mode and enable AppAPI\n",
+    )
+    assert cron_order_findings(commented) == []
+    body = job_text(text, "leak-control")
+    loop = next(line for line in body.splitlines(keepends=True) if CRON_LOOP in line)
+    assert cron_order_findings(text.replace(body, body.replace(loop, ""), 1)) == [
+        "the job leak-control runs no cron loop"
+    ]
