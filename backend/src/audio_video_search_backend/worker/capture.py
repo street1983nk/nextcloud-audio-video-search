@@ -41,7 +41,9 @@ The state machine of a reference:
   etag, size or mtime change or the reconcile asks again.
 - locked (423): stage pending again, next try in 120 s, state and attempts
   unchanged; disk_full the same with 300 s. Neither is a verdict on the file.
-- excluded (403 with that reason): the reference is deleted.
+- excluded (403 with that reason): the reference is deleted, the sample of the
+  file with it, and a content that loses its last reference this way is
+  forgotten at once, index documents included (D-02-04, D-02-15a).
 - too_large: stage failed without a next try; the file stays active and counts,
   it is honestly not transcribed.
 
@@ -315,11 +317,22 @@ class Capture:
             return CaptureStep(CaptureOutcome.STALE, ref.file_id)
         return CaptureStep(CaptureOutcome.KEYED, ref.file_id, media_id=media_id)
 
+    def _delete_excluded(self, ref: FileRef, now: int) -> bool:
+        """Under the services lock: delete the reference, then the index lets go of a content that was forgotten."""
+        store = self._services.store
+        done = store.delete_ref(ref, now)
+        try:
+            if done and store.retired_media():
+                self._services.index.retire_forgotten(store)
+        except Exception as exc:  # the deletion stands; the mark in the outbox is worked off later
+            LOGGER.exception("index retirement failed", extra={"error_type": type(exc).__name__})
+        return done
+
     async def _judge(self, ref: FileRef, reason: str) -> CaptureStep:
         store = self._services.store
         now = self._now()
         if reason == nc.EXCLUDED:
-            done = await run_locked(self._services, lambda: store.delete_ref(ref, now))
+            done = await run_locked(self._services, lambda: self._delete_excluded(ref, now))
             outcome = CaptureOutcome.DELETED
         elif reason in (nc.LOCKED, nc.DISK_FULL):
             wait = LOCKED_RETRY_SECONDS if reason == nc.LOCKED else DISK_FULL_RETRY_SECONDS

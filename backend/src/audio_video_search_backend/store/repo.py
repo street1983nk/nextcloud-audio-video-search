@@ -122,7 +122,8 @@ WHERE s.media_id = :m
   AND NOT EXISTS (SELECT 1 FROM file_ref r WHERE r.file_id = s.file_id AND r.state <> 'active')
 ORDER BY 1
 """
-# The sample layer (D-02-15), written only by api/sample.py and remove_sample.
+# The sample layer (D-02-15), written only by api/sample.py and remove_sample;
+# an exclusion deletes the sample of an excluded file (_REMOVE_SAMPLES, D-02-15a).
 _PUT_SAMPLE: Final = """
 INSERT INTO sample_ref (file_id, media_id, created_at) VALUES (:file_id, :media_id, :now)
 ON CONFLICT (file_id) DO UPDATE SET media_id = excluded.media_id, created_at = excluded.created_at
@@ -319,9 +320,16 @@ WHERE file_id = :file_id AND stage = 'fetching' AND etag = :etag AND size = :siz
 # of the removed references, the only ones looked at afterwards (T-02-56).
 RemoveCause = Literal["exclude", "delete", "gone", "vanished_expired"]
 REMOVE_CAUSES: Final = frozenset({"exclude", "delete", "gone", "vanished_expired"})
-_REMOVE_BY_FILE: Final = "DELETE FROM file_ref WHERE file_id IN (SELECT value FROM json_each(?)) RETURNING media_id"
+_REMOVE_BY_FILE: Final = """
+DELETE FROM file_ref WHERE file_id IN (SELECT value FROM json_each(?)) RETURNING media_id, file_id
+"""
 _REMOVE_BY_STORAGE: Final = """
-DELETE FROM file_ref WHERE storage_id IN (SELECT value FROM json_each(?)) RETURNING media_id
+DELETE FROM file_ref WHERE storage_id IN (SELECT value FROM json_each(?)) RETURNING media_id, file_id
+"""
+# An exclusion takes the sample of the file with it (D-02-15a): no test hit
+# stays for a file the admin left out. Only an exclusion writes sample_ref here.
+_REMOVE_SAMPLES: Final = """
+DELETE FROM sample_ref WHERE file_id IN (SELECT value FROM json_each(?)) RETURNING media_id
 """
 # Forgetting a content (D-02-04), in the order of the foreign keys: corrections,
 # the current pointer, words, transcripts, keys, the media item. :everything is
@@ -473,6 +481,7 @@ class _Removal:
     transcripts: int = 0
     words: int = 0
     corrections: int = 0
+    samples: int = 0
 
 
 def _id_list(ids: Sequence[int], minimum: int, name: str) -> list[int]:
@@ -501,6 +510,8 @@ def _log_removal(tally: _Removal, cause: str) -> None:
         _LOG.info("media orphaned", extra={"media": tally.orphaned, "references": tally.references, "cause": cause})
     if tally.references and not tally.forgotten and not tally.orphaned:
         _LOG.info("references removed", extra={"references": tally.references, "cause": cause})
+    if tally.samples:
+        _LOG.info("samples removed", extra={"samples": tally.samples, "cause": cause})
 
 
 def _check_intake(item: IntakeItem) -> None:
@@ -1046,21 +1057,24 @@ class Store:
     def delete_ref(self, claimed: FileRef, now: int | None = None) -> bool:
         """Delete a claimed reference (the gateway says excluded); False when stale.
 
-        The media item, if any, is only marked orphaned here. Forgetting a
-        content with its last reference is what the exclude row of the queue
-        does (remove_refs, plan 02-15); whether this path forgets as well is
-        left to plan 16 (deferred-items.md of phase 2).
+        The capture met the exclusion before the exclude row of the queue did,
+        so the rule of that row holds here as well (D-02-04, plan 02-16): the
+        sample of the file goes, and a content that loses its last reference
+        is forgotten at once, not only marked. The exclude row that follows
+        finds nothing left to do.
         """
         moment = _now() if now is None else now
         values = self._claim_values(claimed)
+        tally = _Removal()
         with self._transaction():
             row = self._conn.execute(_CLAIMED, values).fetchone()
             if row is None:
                 return False
-            self._conn.execute(_DELETE_CLAIMED, values)
-            if row[0] is not None:
-                self._conn.execute(_MARK_ORPHANED, {"m": int(row[0]), "now": moment})
+            tally.references += self._conn.execute(_DELETE_CLAIMED, values).rowcount
+            held = set() if row[0] is None else {int(row[0])}
+            self._judge_excluded(held, [claimed.file_id], moment, tally)
         _LOG.info("reference deleted", extra={"file_id": claimed.file_id, "reason": "excluded"})
+        _log_removal(tally, "exclude")
         return True
 
     # The read proof (plan 02-13), called only from worker/capture.py.
@@ -1180,13 +1194,32 @@ class Store:
         tally.corrections += corrections
         return True
 
+    def _judge_excluded(self, media_ids: set[int], file_ids: Sequence[int], now: int, tally: _Removal) -> None:
+        """Inside a transaction: what an exclusion does once the references of ``file_ids`` are deleted.
+
+        The samples of these files go first (D-02-15a), so a content only a
+        sample of an excluded file pointed at is forgotten like any other.
+        Then every content that lost a reference or a sample is forgotten when
+        nothing holds it any more, and marked orphaned otherwise (D-02-04).
+        """
+        samples = self._conn.execute(_REMOVE_SAMPLES, (json.dumps(list(file_ids)),)).fetchall()
+        tally.samples += len(samples)
+        for media_id in sorted(media_ids | {int(row[0]) for row in samples}):
+            if not self._forget(media_id, now, tally):
+                tally.orphaned += self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": now}).rowcount
+
     def _remove(self, statement: str, ids: Sequence[int], cause: str, now: int, tally: _Removal) -> None:
         """Inside a transaction: delete the references and judge only the contents they pointed at."""
         rows = self._conn.execute(statement, (json.dumps(ids),)).fetchall()
         tally.references += len(rows)
-        for media_id in sorted({int(row[0]) for row in rows if row[0] is not None}):
-            if cause == "exclude" and self._forget(media_id, now, tally):
-                continue
+        media_ids = {int(row[0]) for row in rows if row[0] is not None}
+        if cause == "exclude":
+            # By file the named files lose their samples, also one the
+            # discovery never saw; by storage the files of the deleted rows.
+            files = ids if statement is _REMOVE_BY_FILE else [int(row[1]) for row in rows]
+            self._judge_excluded(media_ids, files, now, tally)
+            return
+        for media_id in sorted(media_ids):
             tally.orphaned += self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": now}).rowcount
 
     def remove_refs(

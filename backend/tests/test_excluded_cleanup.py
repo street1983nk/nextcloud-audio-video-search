@@ -358,4 +358,5 @@ async def test_an_index_that_fails_keeps_the_mark_and_the_step(
     assert step.outcome == CaptureOutcome.DELETED
     assert _known(store, media_id) == (0, 0, 0, 0)
     assert store.retired_media() == [media_id]
-    assert [record.getMessage() for record in caplog.records] == ["index retirement failed"]
+    own = [record.getMessage() for record in caplog.records if record.name == capture_module.__name__]
+    assert own == ["index retirement failed"]
