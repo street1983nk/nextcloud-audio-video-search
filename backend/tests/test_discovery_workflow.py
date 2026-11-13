@@ -549,6 +549,7 @@ SELF_TEST_SHIFTS = (
     ("'.Y += 1'", "contents"),
     ('"$((transcribed + 1))"', "transcribed"),
     ('>> "${log}"', "never_in_log"),
+    ('>> "${foreign}"', "session_shared_readers"),
 )
 # The order of the verdict in the job discovery, as plain substrings.
 VERDICT_ORDER = (
@@ -597,6 +598,20 @@ def script_findings(scripts: dict[str, str]) -> list[str]:
         findings.append("the self test of compare.sh does not stop the run")
     if 'check transcribed "${expected}"' not in compare:
         findings.append("compare.sh does not check transcribed for equality with the ledger")
+    # A mount with session credentials may lie on a storage that a mount with
+    # stored credentials captures (M2 and M1 of ana): those ids are fetched, so
+    # they cannot be "never fetched"; who fetched them is checked instead.
+    truth = "\n".join(code_lines(scripts["truth.sh"]))
+    if re.search(r'media_ids_below \S+ \S*SMB-Sitzung\S* >> "\$\{NEVER\}"', truth):
+        findings.append("truth.sh takes every id of the session mount for never fetched")
+    if "session_mount ana /ana/files/SMB-Sitzung/" not in truth:
+        findings.append("truth.sh does not split the ids of the session mount by their other ways")
+    if 'echo "${id}" >> "${NEVER}"' not in truth:
+        findings.append("truth.sh keeps no id of the session mount as never fetched")
+    if "sessionShared:" not in truth:
+        findings.append("truth.sh does not write sessionShared")
+    if "check session_shared_readers '' " not in compare:
+        findings.append("compare.sh does not check who fetched the ids shared with the session mount")
     if ".dueWork == 0" not in compare:
         findings.append("compare.sh wait does not wait for dueWork")
     if "((.crawl.finished + .crawl.open) > 0)" not in compare:
@@ -672,6 +687,45 @@ def test_the_script_rule_fires_on_a_wait_before_the_first_crawl() -> None:
     scripts["compare.sh"] = scripts["compare.sh"].replace(planned, "true")
 
     assert script_findings(scripts) == ["compare.sh wait takes a stock without any first crawl for complete"]
+
+
+def test_the_script_rule_fires_on_a_session_mount_taken_for_never_fetched() -> None:
+    scripts = verdict_scripts()
+    split = "\tsession_mount ana /ana/files/SMB-Sitzung/\n"
+    assert split in scripts["truth.sh"]
+    scripts["truth.sh"] = scripts["truth.sh"].replace(
+        split, '\tmedia_ids_below ana /ana/files/SMB-Sitzung/ >> "${NEVER}"\n'
+    )
+
+    assert script_findings(scripts) == [
+        "truth.sh takes every id of the session mount for never fetched",
+        "truth.sh does not split the ids of the session mount by their other ways",
+    ]
+
+
+def test_the_script_rule_fires_on_a_session_mount_that_is_never_never_fetched() -> None:
+    scripts = verdict_scripts()
+    never = 'echo "${id}" >> "${NEVER}"'
+    assert never in scripts["truth.sh"]
+    scripts["truth.sh"] = scripts["truth.sh"].replace(never, "true").replace("sessionShared:", "shared:")
+
+    assert script_findings(scripts) == [
+        "truth.sh keeps no id of the session mount as never fetched",
+        "truth.sh does not write sessionShared",
+    ]
+
+
+def test_the_script_rule_fires_on_unchecked_readers_of_the_shared_ids() -> None:
+    scripts = verdict_scripts()
+    check = "check session_shared_readers '' "
+    assert check in scripts["compare.sh"]
+    compare = scripts["compare.sh"].replace(check, "echo ")
+    scripts["compare.sh"] = compare.replace('>> "${foreign}"', '> "${foreign}"')
+
+    assert script_findings(scripts) == [
+        "the self test of compare.sh does not shift session_shared_readers",
+        "compare.sh does not check who fetched the ids shared with the session mount",
+    ]
 
 
 def test_the_script_rule_fires_on_a_missing_self_test_shift() -> None:
