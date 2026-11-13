@@ -19,6 +19,9 @@ key-files:
   modified:
     - .github/workflows/discovery-e2e.yml
     - ci/discovery/compare.sh
+    - ci/discovery/truth.sh
+    - ci/discovery/common.sh
+    - ci/discovery/README.md
     - backend/tests/test_discovery_workflow.py
     - .planning/phases/02-erfassung-aller-dateien/deferred-items.md
 decisions:
@@ -115,7 +118,7 @@ In upload, copy, tag, restore, exclude-user-after, exclude-storage-after und rea
 | delete-user: dan_ref_gone, dan_media_orphaned, transcribed_minus_one, Mengen | gelöschter Nutzer, Abgleich | 19, 20 |
 | reattach:transcribed_plus_one, Mengen | Folge von vanish | 19, 20 |
 | foreign-change: Mengen | Folge der Phasen davor, erlaubter Folgefehler laut Plan | 20 |
-| never_in_stock, never_in_log in sieben Phasen | Befund 3 | Fehler der Erwartung, offen |
+| never_in_stock, never_in_log in sieben Phasen | Befund 3 | Fehler der Erwartung, lokal korrigiert (Nachtrag unten) |
 
 Gegen Push 5 grün geworden: never_in_stock und never_in_log für 83, 91, 95 in allen Phasen (Ausschlüsse vor dem ersten Durchlauf, Plan 16), shares:eva_finds_nothing, exclude-user-after:ben_finds_nothing und ana_storage_refs_stay, access-control:reason_77 und sperre_reason, restore:wait, move-cross und trash als ganze Phasen.
 
@@ -134,9 +137,63 @@ Gates auf 11db11a: ruff check und format grün, pyright 0 Fehler, vulture Exit 0
 
 Lokal nicht belegbar: ob initial, read-proof, shares und access-control mit dem Warten grün werden und ob das Kontrollbein das Leck zeigt. Dafür spricht, dass move-cross und trash mit vollem Vorrat grün sind; das Kontrollbein ist nach dem Bau noch nie gelaufen. Der erste Warteschritt hat 900 s Grenze, der Takt des SchedulerJob ist 300 s; die Phasen haben je 300 s und laufen erst danach. Der Lauf wird etwa fünf Minuten länger.
 
+## Nachtrag: Befund 3 geklärt und lokal korrigiert (Zwischenauftrag der Hauptsitzung, 13.11.2026)
+
+Nur lokal, kein Push, kein Dispatch. Der zweite Checkpoint bleibt offen.
+
+### Beleg aus dem Artefakt des Laufs 43359737879
+
+| Frage | Beleg |
+|---|---|
+| Gleicher Speicher, gleiche IDs | Der Vorrat führt auf `storageId` 4 (STORAGE_SMB_ANA) genau 11 Dateien: 41, 44, 105, 106, 107, 108, 110, 111, 112, 113, 114. Die IDs, die `truth.sh` unter `/ana/files/SMB-Sitzung/` (M2) findet, sind genau diese 11. ids.env: `ID_ANA_SMB_SITZUNG_GEMEINSAM_G1_WEBM` = `ID_ANA_SMB_GEMEINSAM_G1_WEBM` = 107, `ID_ANA_SMB_SITZUNG_GESPERRT_WEBM` = `ID_ANA_SMB_GESPERRT_WEBM` = 41 |
+| Erwartung widerspricht sich selbst | In upload, copy, tag, restore, exclude-user-after und exclude-storage-after stehen alle 11 IDs zugleich in `files` (muss im Vorrat stehen) und in `neverFetched` (darf nie im Vorrat stehen), in reattach 9 davon. Kein Produkt kann beides erfüllen. neverFetched hat 14 Einträge in diesen 7 Phasen und 3 in den anderen 13, je nachdem, ob M2 beim Lesen der Wahrheit in oc_mounts steht |
+| Wer hat geladen | 17 Gateway-Zeilen für die 11 IDs (GET der Datei, keine Kopf-Route), alle 200, alle `userId=ana`; kein anderer Nutzer |
+| Darf ana das über M1 | Alle 11 stehen in jeder Phase ab move-cross als `active`, Stufe `keyed`, `storageId` 4 im Vorrat; `truth.sh` liest dieselben Dateien als ana per smbclient (Quelle `smb:ana`) und erwartet sie active. M1 ist `password::logincredentials` für ana |
+| Über welchen Mount | Aus dem Zugriffslog nicht ablesbar: es nennt Nutzer und Datei-ID, nicht den Mount; das Gateway nimmt `getFirstNodeById`. Indizien: `SessionCredentials::manipulateStorageConfig` (stable33) wirft ohne Anmeldedaten der Sitzung, files_external macht daraus einen FailedStorage; nextcloud.log des Laufs nennt sechsmal "Undefined array key -1 at lib/private/Files/Node/Root.php#471" (ein Mount mit Root-ID -1, also ein gescheiterter Speicher, bei der Suche nach einer Datei-ID), einmal im Abruf `files/105?userId=ana` um 03:43:23, der trotzdem 200 antwortete. Ein Abruf über M2 ist nirgends belegt; ausschließen kann das Log ihn nicht. In beiden Fällen wäre der Leser ana mit den Rechten von ana auf demselben Speicher |
+| Wirklich Ausgeschlossene | `truth.sh` führt als vor dem ersten Durchlauf ausgeschlossen nur 83 (ana privat), 91 (eva), 95 (fritz); über alle 20 Wahrheiten ist die Vereinigung von neverFetched genau diese 3 plus die 11. Für 83, 91, 95: 0 Gateway-Zeilen (Datei und Kopf), 0 Zeilen in allen 20 `occ :files --json --all`, also kein Verweis und damit kein Inhalt; shares:eva_finds_nothing grün |
+| Grenze des Belegs | Die Kopie von state.db im Artefakt ist leer (4096 Bytes, keine Tabelle: der Schritt "Collect the logs" kopiert die WAL-Datei nicht mit). Der Zustand stammt deshalb aus `occ-files-*.json`, nicht aus state.db |
+
+Was die Erwartung schützen soll: D-02-03 sagt "Externe Speicher mit Anmeldedaten aus der Sitzung werden übersprungen", 02-04 sagt für initial "M2 (Sitzung) fehlt, status.skippedStorages nennt M2". 02-12 hat entschieden: "Mehrere Mount-Konfigurationen auf einem Speicher: klassifiziert wird nach der ersten mit hintergrundfähiger Anmeldung". Die Zusage ist also "nichts wird über den Sitzungs-Mount geladen", nicht "diese Dateien werden nie geladen"; 02-01 hat M2 auf dieselbe Freigabe wie M1 gelegt, 02-04 hat das bei neverFetched nicht bedacht. Der Beleg trägt die Lesart "Fehler der Erwartung": die Erwartung ist in sich widersprüchlich, alle Abrufe liefen als der berechtigte Nutzer, kein Ausgeschlossener wurde geladen.
+
+### Korrektur
+
+| Commit | Inhalt |
+|---|---|
+| d62e38c test(02-04) | Gate: `truth.sh` darf die IDs des Sitzungs-Mounts nicht pauschal nach neverFetched schreiben, muss sie nach ihren anderen Wegen teilen, `sessionShared` schreiben und IDs ohne anderen Weg in neverFetched behalten; `compare.sh` prüft `session_shared_readers`, der Selbsttest verschiebt die Prüfung. Drei auslösende Fälle. RED: 9 Fälle rot |
+| 85921b8 fix(02-04) | `truth.sh` `session_mount`: je ID von M2 die anderen Mounts desselben Speichers aus oc_mounts (ohne ausgeschlossene, gelöschte, verschwundene Nutzer), deren Root die Datei enthält. Gibt es einen: `sessionShared[id] = [Nutzer]`; gibt es keinen: weiter neverFetched. `compare.sh`: neue Prüfung `session_shared_readers` (jede Gateway- und Kopf-Zeile einer solchen ID nennt einen dieser Nutzer; eine Zeile ohne Nutzer zählt als Verstoß), Selbsttest mit einer fremden Zeile. `common.sh` `gateway_users`. README der Abnahme angepasst |
+
+neverFetched ist damit nicht schwächer als nötig: 83, 91, 95 bleiben, und jede ID, die nur M2 erreicht, bleibt auch. Für die geteilten IDs kommt eine Prüfung dazu, die es vorher nicht gab. Grenze: der Mount selbst ist im Zugriffslog nicht sichtbar; `initial:skipped_session_mount` (occ :status nennt M2 als übersprungen) bleibt unverändert.
+
+Geprüft ohne CI, mit den echten Skripten:
+- `core_checks` aus `compare.sh` gegen die Dateien des Laufs (neue Wahrheit: die 11 IDs aus neverFetched nach sessionShared mit Leser ana): in allen 20 Phasen never_in_stock, never_in_log und session_shared_readers grün.
+- Positivkontrollen mit gepflanzter Zeile (Phase restore): `files/83?userId=ana` macht never_in_log rot (gefunden 83), `files/91/head?userId=eva` macht never_in_log rot (91), `files/107?userId=cem` macht session_shared_readers rot (107:cem), `files/41/head?userId=dan` rot (41:dan), `files/105` ohne Nutzer rot (105:-), `files/107?userId=ana` bleibt grün.
+- `compare.sh --self-test` gegen die Dateien des Laufs: alle fünf Verschiebungen schlagen einzeln an, auch "FAIL self-test:session_shared_readers erwartet= gefunden=999999998:x". Mit ausgeschalteter Leserprüfung endet der Selbsttest mit "compare self-test did not fail (foreign-reader)", Exit 1.
+- `session_mount` gegen kleine Nachbauten der drei gelesenen Tabellen: M2 nicht in oc_mounts: nichts; nur M2: alle neverFetched; M1 daneben: alle sessionShared mit ana; dazu eine Freigabe an dan unter gemeinsam: dort ana und dan; anderer Mount nur mit Root gemeinsam: nur die IDs darunter geteilt (ein Ordner `gemeinsamer` nicht), der Rest neverFetched; anderer Mount nur für die ausgeschlossene eva: alle neverFetched; anderer Mount auf einem anderen Speicher: alle neverFetched.
+
+Gates auf 85921b8: ruff check und format grün (71 Dateien), pyright 0 Fehler, vulture Exit 0, pytest 943 grün; `bash -n` für truth.sh, compare.sh, common.sh grün.
+
+### Die sieben betroffenen Phasen mit den Daten dieses Laufs
+
+| Phase | never_in_stock, never_in_log, session_shared_readers | Was rot bliebe | Zuordnung |
+|---|---|---|---|
+| upload | grün | active_set, unreadable_set, files_count, unreadable_count, contents, transcribed | Befund 2 (Vorrat ohne Crawl), lokal korrigiert in 11db11a |
+| copy | grün | dieselben | Befund 2 |
+| tag | grün | dieselben | Befund 2 |
+| restore | grün | restore_no_download | 18 |
+| exclude-user-after | grün | active_set, unreadable_set, files_count, unreadable_count, ben_storage_refs | 18 |
+| exclude-storage-after | grün | active_set, unreadable_set, files_count, unreadable_count, m3_refs, files_fewer | 18 |
+| reattach | grün | active_set, unreadable_set, files_count, unreadable_count, contents, transcribed, transcribed_plus_one | 19, 20 (Folge von vanish und der Ausschlüsse aus 18) |
+
+Die anderen 13 Phasen hatten M2 nicht in oc_mounts und sind von dieser Korrektur nicht berührt. Ob upload, copy und tag mit vollem Vorrat ganz grün werden, zeigt erst ein Lauf; move-cross und trash waren es.
+
 ## Deviations from Plan
 
 ### Auto-fixed Issues
+
+**3. [Rule 1 - Fehler] neverFetched führt Dateien, die über einen erfassbaren Mount im Vorrat stehen müssen**
+- **Gefunden bei:** Task 2, Lauf 43359737879; geklärt im Zwischenauftrag der Hauptsitzung
+- **Fix:** d62e38c, 85921b8 (Nachtrag oben), lokal
+
 
 **1. [Rule 1 - Fehler] Kontrollbein prüft den ganzen Checkout**
 - **Gefunden bei:** Task 2, Lauf 43359737879, Job leak-control
@@ -159,14 +216,14 @@ Lokal nicht belegbar: ob initial, read-proof, shares und access-control mit dem 
 
 ## Offene Punkte
 
-- Zweiter Checkpoint: Push von HEAD nach diesem SUMMARY-Commit auf phase-02 (vier Korrektur-Commits plus dieser docs-Commit) braucht eine neue Owner-Wahl und eine neue Freigabedatei für den neuen SHA.
-- Befund 3 (neverFetched und M2): Owner-Entscheid zur Erwartung der Abnahme. Ohne ihn bleiben upload, copy und tag auch nach der Korrektur rot, sobald M2 beim Lesen der Wahrheit in oc_mounts steht; die vier vom Plan verlangten Phasen hatten in diesem Lauf 3 Einträge und wären davon nicht betroffen, sicher ist das nicht.
+- Zweiter Checkpoint: Push von HEAD auf phase-02 (sechs Korrektur-Commits plus die docs-Commits von 02-17) braucht eine neue Owner-Wahl und eine neue Freigabedatei für den neuen SHA.
+- Befund 3 (neverFetched und M2): geklärt und lokal korrigiert (Nachtrag, d62e38c, 85921b8). Offen bleibt die Grenze, dass das Zugriffslog den Mount nicht nennt, und dass die Kopie von state.db im Artefakt leer ist (WAL-Datei fehlt); beides steht in deferred-items.md.
 - Takt des SchedulerJob (bis zu fünf Minuten bis zum Erst-Crawl nach bereitem Backend): Owner-Entscheid, ob das Produkt das ändern soll; steht in deferred-items.md.
 - DISC-02, DISC-03, DISC-05: nicht abgehakt; die Abnahme der externen Speicher, des Lesebeweises und der Ausschlüsse vor dem ersten Durchlauf ist in CI erst mit einem grünen Lauf von initial, read-proof, shares, access-control und dem Kontrollbein belegt.
 - Beobachtung ohne Wertung: nextcloud.log des Laufs nennt `QueueController::claim executed 289 queries` (Hinweis des Servers im Debug-Modus).
 
 ## Self-Check: PASSED
 
-- Commits vorhanden: 1862b53, 00928f7, 9b59082, 11db11a.
+- Commits vorhanden: 1862b53, 00928f7, 9b59082, 11db11a, d62e38c, 85921b8.
 - Dateien vorhanden (lokal, nicht committet): approvals/push-c1b6375…, main-before, ghcr-before, ghcr-after, ghcr-extra-before, ghcr-extra-after, discovery-c1b6375….log.
 - origin/phase-02 = c1b6375, origin/main = ea97b58 (unverändert).
