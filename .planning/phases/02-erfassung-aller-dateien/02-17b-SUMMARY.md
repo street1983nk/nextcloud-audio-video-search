@@ -35,7 +35,7 @@ decisions:
 metrics:
   duration: "ca. 90 min (davon ca. 60 min Warten auf freien RAM)"
   completed: 2026-11-13
-  tasks: "4 von 5 (Task 5 ist der Checkpoint)"
+  tasks: "5 von 5 (Task 5: Owner-Wahl push-8, Push 8 auf bf2342c)"
 ---
 
 # Phase 2 Plan 17b: move-cross, Selbsteintragung der Jobs, Cron-Reihenfolge Summary
@@ -144,9 +144,14 @@ Commit-Prüfung `origin/phase-02..HEAD`: Autor und Committer jedes Commits `stre
 
 Keine neue Fläche außerhalb des Threat-Modells. T-02-82 bis T-02-87 umgesetzt wie geplant (Pfad nicht bestimmbar bleibt "nicht zulässig"; ensure nach dem Wächter mit fester Klassenliste; Logzeilen nur Klassen; Workflow-Diff nur Reihenfolge; Docker nur eigene Container nach Vorprüfung).
 
-## Checkpoint (Task 5, offen)
+## Checkpoint (Task 5): Owner-Wahl push-8
 
-Frage an den Owner: Soll der Stand von 02-17b als Push 8 auf origin/phase-02 gehen (`push-8`) oder erst 02-18 bis 02-20 lokal (`stop`)? HEAD wird mit diesem SUMMARY-Commit gesetzt; seit 25d241b dann 11 Commits. Kein Push, keine Freigabedatei, kein Dispatch in diesem Plan.
+- Frage: Soll der Stand von 02-17b als Push 8 auf origin/phase-02 gehen (`push-8`) oder erst 02-18 bis 02-20 lokal (`stop`)?
+- Owner-Entscheid 13.11.2026: `push-8` ("Ja, push-8 (Empfohlen)" per AskUserQuestion der Hauptsitzung, über die Hauptsitzung übermittelt). Gilt für genau einen Push.
+- Vorgehen wie 02-17: `main-before-bf2342c…` (main unverändert ea97b58), `ghcr-before-bf2342c…` mit `STATE 404 Package not found` (Positivkontrolle findling_backend mit Tag 1.6.2: Exit 0, Treffer), Freigabedatei `approvals/push-bf2342c…` mit Inhalt `push-phase-02 bf2342cb12fdd6aa071d9669cc179787b5468b05`; `approvals/` per `git check-ignore` ausgenommen, darum nicht committet (wie 02-17). Autoren- und Textprüfung über `origin/phase-02..HEAD` ohne Treffer, Fast-Forward vorab mit `git merge-base --is-ancestor` geprüft.
+- Push: genau ein `git push origin HEAD:phase-02`, Fast-Forward 25d241b..bf2342c um 21:18:01Z. Kein Workflow von Hand gestartet (PHP gates lief durch den Pfadfilter von selbst).
+- Läufe für bf2342c (Stand 21:18Z, nicht abgewartet): 43509442470 Discovery acceptance (in_progress, Jobs discovery und leak-control laufen), 43509442497 PHP gates (in_progress), 43509442333 Deploy through HaRP (queued), 43509442366 Python gates (in_progress).
+- Auswertung der Läufe (Kontrollbein, move-cross, trash, restore, ghcr-after) folgt in der Hauptsitzung bzw. einem Folgeplan.
 
 ## Self-Check: PASSED
 
