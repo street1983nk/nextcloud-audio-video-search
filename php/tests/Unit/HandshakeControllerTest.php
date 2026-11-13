@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Controller\HandshakeController;
+use OCA\AudioVideoSearch\Service\JobRegistry;
 use OCP\App\IAppManager;
 use OCP\AppFramework\Http;
 use OCP\IRequest;
@@ -19,6 +20,8 @@ use Psr\Log\LoggerInterface;
  *
  * Only the backend of this app gets the version; every other caller gets a
  * 403 with a static sentence, and the log names the caller app id only.
+ * Only the backend makes the app put its missing background jobs back
+ * (plan 02-17b); that never changes the answer.
  */
 #[CoversClass(HandshakeController::class)]
 final class HandshakeControllerTest extends TestCase {
@@ -26,12 +29,14 @@ final class HandshakeControllerTest extends TestCase {
 
 	private IAppManager&MockObject $appManager;
 	private LoggerInterface&MockObject $logger;
+	private JobRegistry&MockObject $jobs;
 
 	protected function setUp(): void {
 		parent::setUp();
 
 		$this->appManager = $this->createMock(IAppManager::class);
 		$this->logger = $this->createMock(LoggerInterface::class);
+		$this->jobs = $this->createMock(JobRegistry::class);
 	}
 
 	/** The app id of the container, read out of the class instead of copied. */
@@ -49,7 +54,7 @@ final class HandshakeControllerTest extends TestCase {
 			static fn (string $name): string => $name === 'EX-APP-ID' ? $callerAppId : '',
 		);
 
-		return new HandshakeController($request, $this->appManager, $this->logger);
+		return new HandshakeController($request, $this->appManager, $this->logger, $this->jobs);
 	}
 
 	public function testTheBackendGetsTheVersionOfThePhpApp(): void {
@@ -67,6 +72,7 @@ final class HandshakeControllerTest extends TestCase {
 
 	public function testAForeignExAppIsRefusedWithAStaticSentence(): void {
 		$this->appManager->expects(self::never())->method('getAppVersion');
+		$this->jobs->expects(self::never())->method('ensure');
 
 		$response = $this->controller('some_other_backend')->handshake();
 
@@ -95,5 +101,32 @@ final class HandshakeControllerTest extends TestCase {
 			->with('Audio & Video Search: handshake called by a foreign ExApp', ['app' => 'some_other_backend']);
 
 		$this->controller('some_other_backend')->handshake();
+	}
+
+	public function testTheBackendMakesTheAppPutItsMissingJobsBackOnce(): void {
+		$this->appManager->method('getAppVersion')->willReturn('0.1.0');
+		$this->jobs->expects(self::once())->method('ensure')->willReturn(['OCA\AudioVideoSearch\BackgroundJobs\SchedulerJob']);
+
+		$response = $this->controller($this->backendAppId())->handshake();
+
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame(['companionVersion' => '0.1.0'], $response->getData());
+	}
+
+	public function testAFailureWhilePuttingTheJobsBackDoesNotChangeTheAnswer(): void {
+		$this->appManager->method('getAppVersion')->willReturn('0.1.0');
+		$this->jobs->expects(self::once())->method('ensure')->willThrowException(new \RuntimeException('database gone'));
+
+		$response = $this->controller($this->backendAppId())->handshake();
+
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame(['companionVersion' => '0.1.0'], $response->getData());
+	}
+
+	public function testNoCallerWithoutTheHeaderMakesTheAppTouchTheJobList(): void {
+		$this->jobs->expects(self::never())->method('ensure');
+
+		$this->controller('')->handshake();
+		$this->controller('findling_backend')->handshake();
 	}
 }

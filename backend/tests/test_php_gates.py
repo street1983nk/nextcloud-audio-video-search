@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The fourteen rules:
+The fifteen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -48,6 +48,11 @@ The fourteen rules:
     ``PageController`` asks ``isExcludedUser`` and ``isExcludedFile`` before
     ``searchAllowed`` and before the excerpt of the container, so an excluded
     user and an excluded file get no text there either.
+15. The app puts its own background jobs back (plan 02-17b): the list
+    ``JobRegistry::JOBS`` names exactly the jobs of ``<background-jobs>`` in
+    ``php/appinfo/info.xml``, and ``HandshakeController::handshake`` asks
+    ``ensure()`` only after the guard of rule 1, so a foreign caller never
+    writes into the job list (T-02-84).
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -779,3 +784,111 @@ def test_self_rule14_reads_a_method_body_without_comments_and_strings() -> None:
     assert php_method(source, "one") == "{\n\t\t\n\t\treturn '';\n\t}"
     assert php_method(source, "two") == "{\n\t\t$this->later();\n\t}"
     assert php_method(source, "three") is None
+
+
+# -- rule 15 ------------------------------------------------------------------------
+
+INFO_XML = PHP_ROOT / "appinfo" / "info.xml"
+JOB_REGISTRY = "php/lib/Service/JobRegistry.php"
+HANDSHAKE = "php/lib/Controller/HandshakeController.php"
+ENSURE_CALL = "->ensure("
+APP_JOBS = "OCA\\AudioVideoSearch\\BackgroundJobs\\"
+_BACKGROUND_JOBS = re.compile(r"<background-jobs>(?P<body>.*?)</background-jobs>", re.DOTALL)
+_JOB = re.compile(r"<job>\s*([^<\s]+)\s*</job>")
+_NAMESPACE = re.compile(r"^namespace\s+([\w\\]+)\s*;", re.MULTILINE)
+_USE = re.compile(r"^use\s+([\w\\]+)\s*;", re.MULTILINE)
+_JOBS_CONSTANT = re.compile(r"const\s+JOBS\s*=\s*\[(?P<body>[^\]]*)\]")
+
+
+def info_xml_jobs(text: str) -> list[str]:
+    """The classes of every <background-jobs> block of an info.xml, in order."""
+    return [job for block in _BACKGROUND_JOBS.finditer(text) for job in _JOB.findall(block.group("body"))]
+
+
+def registry_jobs(source: str) -> list[str]:
+    """The fully qualified classes of JobRegistry::JOBS, resolved through the use statements."""
+    constant = _JOBS_CONSTANT.search(php_code(source))
+    if constant is None:
+        return []
+    imported = {name.rsplit("\\", 1)[-1]: name for name in _USE.findall(source)}
+    namespace = _NAMESPACE.search(source)
+    found = []
+    for name in re.findall(r"([\w\\]+)::class", constant.group("body")):
+        if name.startswith("\\"):
+            found.append(name[1:])
+        elif name in imported:
+            found.append(imported[name])
+        else:
+            found.append(f"{namespace.group(1)}\\{name}" if namespace else name)
+    return found
+
+
+def job_list_drift(info_jobs: list[str], registry: list[str]) -> list[str]:
+    """What differs between the jobs of info.xml and the list JobRegistry puts back."""
+    findings = [f"JobRegistry misses {job}" for job in info_jobs if job not in registry]
+    findings += [f"info.xml does not name {job}" for job in registry if job not in info_jobs]
+    if not info_jobs:
+        findings.append("info.xml names no background job")
+    return findings
+
+
+def handshake_job_findings(source: str) -> list[str]:
+    """Whether handshake asks ensure(), and only after the guard of rule 1."""
+    body = php_method(source, "handshake")
+    if body is None:
+        return [f"{HANDSHAKE} has no handshake"]
+    guard = body.find(GUARD_STATEMENT)
+    ensure = body.find(ENSURE_CALL)
+    if ensure < 0:
+        return [f"{HANDSHAKE}::handshake does not put the jobs back"]
+    if guard < 0 or ensure < guard:
+        return [f"{HANDSHAKE}::handshake puts the jobs back before the guard"]
+    return []
+
+
+def test_rule15_the_handshake_puts_back_exactly_the_jobs_of_info_xml() -> None:
+    sources = _lib_sources()
+    info = info_xml_jobs(INFO_XML.read_text(encoding="utf-8"))
+    assert APP_JOBS + "SchedulerJob" in info
+    assert JOB_REGISTRY in sources, "JobRegistry.php is missing"
+    assert job_list_drift(info, registry_jobs(sources[JOB_REGISTRY])) == []
+    assert "IJobList" in sources[JOB_REGISTRY]
+    assert handshake_job_findings(sources.get(HANDSHAKE, "")) == []
+
+
+def test_self_rule15_fires_on_a_missing_and_on_an_extra_job() -> None:
+    info = info_xml_jobs(INFO_XML.read_text(encoding="utf-8"))
+    registry_source = (
+        "<?php\nnamespace OCA\\AudioVideoSearch\\Service;\n"
+        "use OCA\\AudioVideoSearch\\BackgroundJobs\\SchedulerJob;\n"
+        "use OCA\\AudioVideoSearch\\BackgroundJobs\\StorageCrawlJob;\n"
+        "class JobRegistry {\n\tpublic const JOBS = [SchedulerJob::class, StorageCrawlJob::class];\n}\n"
+    )
+    assert job_list_drift(info, registry_jobs(registry_source)) == [
+        f"JobRegistry misses {APP_JOBS}ExternalRescanJob",
+        f"info.xml does not name {APP_JOBS}StorageCrawlJob",
+    ]
+    # A list only in a comment is no list.
+    assert registry_jobs("<?php\n// const JOBS = [SchedulerJob::class];\n") == []
+    assert job_list_drift([], []) == ["info.xml names no background job"]
+    staged = "<background-jobs><job>A\\B</job>\n<job> C\\D </job></background-jobs>"
+    assert info_xml_jobs(staged) == ["A\\B", "C\\D"]
+
+
+def test_self_rule15_fires_when_the_handshake_skips_or_precedes_the_guard() -> None:
+    inline = (
+        "<?php\nclass H {\n\tpublic function handshake(): DataResponse {\n"
+        "\t\t$foreign = $this->rejectForeignCaller();\n\t\tif ($foreign !== null) {\n\t\t\treturn $foreign;\n\t\t}\n"
+        "\t\t$this->jobs->ensure();\n\t\treturn new DataResponse([]);\n\t}\n}\n"
+    )
+    assert handshake_job_findings(inline) == []
+    early = (
+        "<?php\nclass H {\n\tpublic function handshake(): DataResponse {\n"
+        "\t\t$this->jobs->ensure();\n"
+        "\t\t$foreign = $this->rejectForeignCaller();\n\t\tif ($foreign !== null) {\n\t\t\treturn $foreign;\n\t\t}\n"
+        "\t\treturn new DataResponse([]);\n\t}\n}\n"
+    )
+    assert handshake_job_findings(early) == [f"{HANDSHAKE}::handshake puts the jobs back before the guard"]
+    commented = inline.replace("$this->jobs->ensure();", "// $this->jobs->ensure();")
+    assert handshake_job_findings(commented) == [f"{HANDSHAKE}::handshake does not put the jobs back"]
+    assert handshake_job_findings("") == [f"{HANDSHAKE} has no handshake"]
