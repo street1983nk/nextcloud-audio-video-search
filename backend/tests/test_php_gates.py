@@ -44,6 +44,10 @@ The fourteen rules:
     through ``admissible``, both gateway routes ask ``isExcludedFile`` before
     they resolve or open anything, and ``Provider::search`` asks
     ``isExcludedUser`` before the first call that could reach the container.
+    Since plan 02-16b the playback page is the fourth place: ``excerpt`` of
+    ``PageController`` asks ``isExcludedUser`` and ``isExcludedFile`` before
+    ``searchAllowed`` and before the excerpt of the container, so an excluded
+    user and an excluded file get no text there either.
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -553,6 +557,7 @@ EXCLUSION_QUESTIONS = ("isExcluded", "isExcludedFile", "isExcludedUser")
 QUEUE_SERVICE = "php/lib/Service/QueueService.php"
 GATEWAY = "php/lib/Controller/GatewayController.php"
 SEARCH_PROVIDER = "php/lib/Search/Provider.php"
+PLAYBACK_PAGE = "php/lib/Controller/PageController.php"
 _EXCLUSION_DEFINITION = re.compile(r"function\s+(isExcluded\w*)\s*\(")
 # Per method: the question to the exclusions and what must not come before it.
 EXCLUSION_CHECKS = (
@@ -560,6 +565,8 @@ EXCLUSION_CHECKS = (
     (GATEWAY, "getFileContents", "$this->exclusions->isExcludedFile(", ("->resolve(", "fopen(", "->actAs(")),
     (GATEWAY, "getFileHead", "$this->exclusions->isExcludedFile(", ("->resolve(", "fopen(", "->actAs(")),
     (SEARCH_PROVIDER, "search", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->search(", "->entries(")),
+    (PLAYBACK_PAGE, "excerpt", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->excerpt(")),
+    (PLAYBACK_PAGE, "excerpt", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->excerpt(")),
 )
 
 
@@ -721,7 +728,45 @@ def test_self_rule14_fires_when_one_of_the_three_checks_is_gone_or_comes_too_lat
         f"{GATEWAY} has no getFileContents",
         f"{GATEWAY} has no getFileHead",
         f"{SEARCH_PROVIDER} has no search",
+        f"{PLAYBACK_PAGE} has no excerpt",
+        f"{PLAYBACK_PAGE} has no excerpt",
         f"{QUEUE_SERVICE}::describeRow does not ask admissible again",
+    ]
+
+
+def test_self_rule14_fires_when_the_playback_page_gives_an_excerpt_without_asking() -> None:
+    sources = _lib_sources()
+    silent = f"{PLAYBACK_PAGE}::excerpt does not ask the exclusions"
+
+    no_user = _mutated(sources, PLAYBACK_PAGE, "$this->exclusions->isExcludedUser(", "$this->nothing(")
+    assert missing_exclusion_checks(no_user) == [silent]
+
+    no_file = _mutated(sources, PLAYBACK_PAGE, "$this->exclusions->isExcludedFile(", "$this->nothing(")
+    assert missing_exclusion_checks(no_file) == [silent]
+
+    # Asked, but only after the container was reachable.
+    opening = "private function excerpt(string $uid, int $fileId, int $startMs): array {\n"
+    late = _mutated(
+        sources,
+        PLAYBACK_PAGE,
+        opening,
+        opening + "\t\t$early = $this->exAppService->excerpt($uid, $fileId, $startMs);\n",
+    )
+    assert missing_exclusion_checks(late) == [
+        f"{PLAYBACK_PAGE}::excerpt reaches ->excerpt( before the exclusions",
+        f"{PLAYBACK_PAGE}::excerpt reaches ->excerpt( before the exclusions",
+    ]
+
+    drift_first = _mutated(
+        sources,
+        PLAYBACK_PAGE,
+        opening,
+        opening
+        + "\t\tif (!$this->exAppService->searchAllowed()) {\n\t\t\treturn [self::EXCERPT_UNAVAILABLE, ''];\n\t\t}\n",
+    )
+    assert missing_exclusion_checks(drift_first) == [
+        f"{PLAYBACK_PAGE}::excerpt reaches ->searchAllowed( before the exclusions",
+        f"{PLAYBACK_PAGE}::excerpt reaches ->searchAllowed( before the exclusions",
     ]
 
 

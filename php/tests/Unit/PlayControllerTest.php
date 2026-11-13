@@ -7,15 +7,21 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Controller\PageController;
 use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCA\AudioVideoSearch\Service\StorageService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\TemplateResponse;
+use OCP\Files\Cache\IFileAccess;
+use OCP\Files\Config\IUserMountCache;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\Files\Storage\ISharedStorage;
 use OCP\Files\Storage\IStorage;
 use OCP\IAppConfig;
+use OCP\IDBConnection;
+use OCP\IGroupManager;
 use OCP\IL10N;
 use OCP\IRequest;
 use OCP\IURLGenerator;
@@ -37,6 +43,9 @@ use Psr\Log\LoggerInterface;
  * ExAppService. Whatever the address says, the page only plays a file that
  * FileAccess::readableFile confirms in the folder of the signed in user, and a
  * file it cannot confirm leaves no name and no path in the page parameters.
+ *
+ * The exclusions are a double of ExclusionService, except in the one case
+ * that reads a broken rule list through the real service (plan 02-16b).
  */
 #[CoversClass(PageController::class)]
 final class PlayControllerTest extends TestCase {
@@ -57,6 +66,28 @@ final class PlayControllerTest extends TestCase {
 	/** @var list<array{string,int,int}> */
 	private array $excerptCalls = [];
 
+	private int $allowedCalls = 0;
+
+	/** @var list<string> the users a rule of the admin excludes */
+	private array $excludedUsers = [];
+
+	/** @var list<int> the files a rule of the admin excludes */
+	private array $excludedFiles = [];
+
+	private bool $exclusionsFail = false;
+
+	/** The real service instead of the double, for the case of a rule list nobody can read. */
+	private ?ExclusionService $realExclusions = null;
+
+	/** @var list<string> every user the exclusions were asked about */
+	private array $askedUsers = [];
+
+	/** @var list<int> every file the exclusions were asked about */
+	private array $askedFiles = [];
+
+	/** @var list<string> every log line with its context, as one text */
+	private array $logged = [];
+
 	protected function setUp(): void {
 		parent::setUp();
 
@@ -67,6 +98,14 @@ final class PlayControllerTest extends TestCase {
 		$this->searchAllowed = true;
 		$this->viewWithoutDownload = true;
 		$this->excerptCalls = [];
+		$this->allowedCalls = 0;
+		$this->excludedUsers = [];
+		$this->excludedFiles = [];
+		$this->exclusionsFail = false;
+		$this->realExclusions = null;
+		$this->askedUsers = [];
+		$this->askedFiles = [];
+		$this->logged = [];
 	}
 
 	private function controller(): PageController {
@@ -112,11 +151,30 @@ final class PlayControllerTest extends TestCase {
 		);
 
 		$exApp = $this->createMock(ExAppService::class);
-		$exApp->method('searchAllowed')->willReturnCallback(fn (): bool => $this->searchAllowed);
+		$exApp->method('searchAllowed')->willReturnCallback(function (): bool {
+			$this->allowedCalls++;
+
+			return $this->searchAllowed;
+		});
 		$exApp->method('excerpt')->willReturnCallback(function (string $uid, int $fileId, int $startMs): ?array {
 			$this->excerptCalls[] = [$uid, $fileId, $startMs];
 
 			return $this->excerpt;
+		});
+
+		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('isExcludedUser')->willReturnCallback(function (string $uid): bool {
+			$this->askedUsers[] = $uid;
+			if ($this->exclusionsFail) {
+				throw new \RuntimeException('the rules are gone for alice and Sitzung.webm');
+			}
+
+			return in_array($uid, $this->excludedUsers, true);
+		});
+		$exclusions->method('isExcludedFile')->willReturnCallback(function (int $fileId): bool {
+			$this->askedFiles[] = $fileId;
+
+			return in_array($fileId, $this->excludedFiles, true);
 		});
 
 		return new PageController(
@@ -128,8 +186,59 @@ final class PlayControllerTest extends TestCase {
 			$l10n,
 			$exApp,
 			new ReaderContext($session, $this->createMock(IUserManager::class)),
-			$this->createMock(LoggerInterface::class),
+			$this->logger(),
+			$this->realExclusions ?? $exclusions,
 		);
+	}
+
+	/** A logger that keeps every line with its context as one text. */
+	private function logger(): LoggerInterface&MockObject {
+		$logger = $this->createMock(LoggerInterface::class);
+		foreach (['debug', 'info', 'notice', 'warning', 'error'] as $level) {
+			$logger->method($level)->willReturnCallback(function (string|\Stringable $message, array $context = []): void {
+				$this->logged[] = $message . ' ' . json_encode($context);
+			});
+		}
+
+		return $logger;
+	}
+
+	/**
+	 * What could tell two answers of the page apart.
+	 *
+	 * @return array{status: int, app: string, template: string, renderAs: string, params: array<string, mixed>}
+	 */
+	private static function answer(TemplateResponse $response): array {
+		return [
+			'status' => $response->getStatus(),
+			'app' => $response->getApp(),
+			'template' => $response->getTemplateName(),
+			'renderAs' => $response->getRenderAs(),
+			'params' => $response->getParams(),
+		];
+	}
+
+	/**
+	 * The answer of the page for a file the container has no transcript of.
+	 * Afterwards the container would hand out text again and every counter
+	 * starts over.
+	 *
+	 * @return array{status: int, app: string, template: string, renderAs: string, params: array<string, mixed>}
+	 */
+	private function answerWithoutTranscript(int $fileId): array {
+		$this->excerpt = ['known' => false, 'excerpt' => null];
+		$answer = self::answer($this->response($fileId));
+		self::assertSame('none', $answer['params']['excerptState']);
+		self::assertSame('', $answer['params']['excerpt']);
+		self::assertCount(1, $this->excerptCalls);
+
+		$this->excerpt = ['known' => true, 'excerpt' => 'der Haushalt wird beraten'];
+		$this->excerptCalls = [];
+		$this->allowedCalls = 0;
+		$this->askedUsers = [];
+		$this->askedFiles = [];
+
+		return $answer;
 	}
 
 	private function file(int $id, string $relativePath, string $mime = 'video/webm', ?IStorage $storage = null, bool $readable = true): File&MockObject {
@@ -403,6 +512,128 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame('unavailable', $params['excerptState']);
 		self::assertSame([], $this->excerptCalls);
 		self::assertSame('ready', $params['state']);
+	}
+
+	// -- the exclusions (plan 02-16b) ---------------------------------------------------
+
+	public function testAnExcludedUserGetsTheAnswerOfAFileWithoutATranscriptAndTheContainerIsNeverAsked(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$withoutTranscript = $this->answerWithoutTranscript(7);
+
+		$this->excludedUsers = [self::UID];
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($withoutTranscript, $excluded);
+		self::assertSame(Http::STATUS_OK, $excluded['status']);
+		self::assertSame([self::UID], $this->askedUsers);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+		self::assertStringNotContainsString('Haushalt', json_encode($excluded['params'], JSON_THROW_ON_ERROR));
+	}
+
+	public function testAnExcludedFileGetsTheAnswerOfAFileWithoutATranscriptAndTheContainerIsNeverAsked(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$withoutTranscript = $this->answerWithoutTranscript(7);
+
+		$this->excludedFiles = [7];
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($withoutTranscript, $excluded);
+		self::assertSame([self::UID], $this->askedUsers);
+		self::assertSame([7], $this->askedFiles);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testExclusionsThatCannotBeAskedShowNoExcerptAndLogNeitherUserNorFile(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$withoutTranscript = $this->answerWithoutTranscript(7);
+
+		$this->exclusionsFail = true;
+		$failed = self::answer($this->response(7));
+
+		self::assertSame($withoutTranscript, $failed);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+		self::assertCount(1, $this->logged);
+		self::assertStringContainsString('RuntimeException', $this->logged[0]);
+		self::assertStringNotContainsString(self::UID, $this->logged[0]);
+		self::assertStringNotContainsString('Sitzung', $this->logged[0]);
+	}
+
+	public function testAnExclusionListThatCannotBeReadShowsNoExcerpt(): void {
+		// The real service over a stored value that is no JSON list: every
+		// doubt excludes, so nobody gets an excerpt until the list is repaired.
+		$stored = $this->createMock(IAppConfig::class);
+		$stored->method('getValueString')->willReturn('eva');
+		$this->realExclusions = new ExclusionService(
+			$stored,
+			$this->createMock(IUserMountCache::class),
+			$this->createMock(IGroupManager::class),
+			$this->createMock(IFileAccess::class),
+			$this->createMock(StorageService::class),
+			$this->createMock(IDBConnection::class),
+			$this->createMock(LoggerInterface::class),
+		);
+		$this->file(7, 'Sitzung.webm');
+
+		$params = $this->play(7);
+
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame('', $params['excerpt']);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAnExcludedUserGetsNoExcerptEitherWhileTheTwoHalvesDrifted(): void {
+		// The answer does not depend on the container: not "cannot be loaded".
+		$this->file(7, 'Sitzung.webm');
+		$this->searchAllowed = false;
+		$this->excludedUsers = [self::UID];
+
+		$params = $this->play(7);
+
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame(0, $this->allowedCalls);
+	}
+
+	public function testTheMediumOfAnExcludedUserStillPlays(): void {
+		// The file is theirs to read through WebDAV; only the transcript is withheld.
+		$this->file(7, 'Sitzung.webm');
+		$this->excludedUsers = [self::UID];
+
+		$params = $this->play(7);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame('/nc/remote.php/dav/files/alice/Sitzung.webm', $params['src']);
+		self::assertSame('Sitzung.webm', $params['fileName']);
+	}
+
+	public function testAUserAndAFileThatAreNotExcludedAreAskedAboutOnceAndGetTheExcerpt(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->excludedUsers = ['bob'];
+		$this->excludedFiles = [8];
+
+		$params = $this->play(7);
+
+		self::assertSame('ok', $params['excerptState']);
+		self::assertSame('der Haushalt wird beraten', $params['excerpt']);
+		self::assertSame([self::UID], $this->askedUsers);
+		self::assertSame([7], $this->askedFiles);
+		self::assertSame([], $this->logged);
+	}
+
+	public function testTheExclusionsAreNotAskedWhereNoExcerptIsShownAnyway(): void {
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+		$this->excludedUsers = [self::UID];
+
+		self::assertSame('skipped', $this->play(3)['excerptState']);
+		self::assertSame(Http::STATUS_NOT_FOUND, $this->response(5)->getStatus());
+		self::assertSame([], $this->askedUsers);
+		self::assertSame([], $this->askedFiles);
 	}
 
 	// -- the route ----------------------------------------------------------------------

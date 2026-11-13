@@ -7,6 +7,7 @@ namespace OCA\AudioVideoSearch\Controller;
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Search\Provider;
 use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\ReaderContext;
 use OCP\AppFramework\Controller;
@@ -41,6 +42,13 @@ use Psr\Log\LoggerInterface;
  * The start time in ?t= survives a login redirect, which a fragment does not.
  * It is read as seconds with at most three decimals, between 0 and one day;
  * anything else is 0 and no message. The page writes nothing.
+ *
+ * An excluded user and an excluded file get no excerpt (owner 13.11.2026,
+ * plan 02-16b): the page shows the state of a file without a transcript and
+ * the container is not asked. The question goes to ExclusionService like the
+ * ones of the search provider and the content gateway (gate rule 14), and a
+ * question that fails counts as excluded. The medium itself still plays:
+ * that is WebDAV and the rights of the user, not the transcript.
  */
 final class PageController extends Controller {
 	/** One day, the ceiling of the start time in seconds. */
@@ -69,6 +77,7 @@ final class PageController extends Controller {
 		private ExAppService $exAppService,
 		private ReaderContext $readerContext,
 		private LoggerInterface $logger,
+		private ExclusionService $exclusions,
 	) {
 		parent::__construct(Application::APP_ID, $request);
 	}
@@ -251,9 +260,29 @@ final class PageController extends Controller {
 	 * The excerpt state and text. A drift on record or a silent container is
 	 * "cannot be loaded right now", an unknown file is "no transcript yet".
 	 *
+	 * An excluded user, by name or through a group, and an excluded file are
+	 * answered first, before anything that could reach the container, and
+	 * with the answer of a file without a transcript: the same state and the
+	 * same empty text, whatever the container would have said and whether it
+	 * can be reached or not. Every doubt excludes: ExclusionService answers
+	 * yes for rules it cannot read, and a question that throws is a yes here.
+	 * The log line names neither the user nor the file.
+	 *
 	 * @return array{string, string}
 	 */
 	private function excerpt(string $uid, int $fileId, int $startMs): array {
+		try {
+			$excluded = $this->exclusions->isExcludedUser($uid) || $this->exclusions->isExcludedFile($fileId);
+		} catch (\Throwable $e) {
+			$this->logger->warning('Audio & Video Search: the exclusions could not be asked for the playback page, no excerpt is shown', [
+				'class' => $e::class,
+			]);
+			$excluded = true;
+		}
+		if ($excluded) {
+			return [self::EXCERPT_NONE, ''];
+		}
+
 		if (!$this->exAppService->searchAllowed()) {
 			return [self::EXCERPT_UNAVAILABLE, ''];
 		}
