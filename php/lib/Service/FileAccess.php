@@ -127,6 +127,39 @@ final class FileAccess {
 	}
 
 	/**
+	 * The path of a node in the cache of its numeric storage, the space the
+	 * walk roots of StorageService::mountRoots are written in, or null when it
+	 * cannot be told. Never logged.
+	 *
+	 * The internal path of a node is the path inside the storage of its mount.
+	 * When that storage is a jail (a team folder of groupfolders, a share),
+	 * the path is the one below the jail, and the cache of the numeric storage
+	 * holds it with the root of the jail in front (Cache::moveFromCache and the
+	 * other cache events carry that one). So the walk goes down the wrappers
+	 * and maps the path at every jail, the way the jail itself does when it
+	 * hands a call on. Without a jail the internal path is already that path.
+	 */
+	public static function storagePath(Node $node): ?string {
+		try {
+			$path = (string)$node->getInternalPath();
+			$layer = $node->getStorage();
+			for ($depth = 0; $depth < self::MAX_STORAGE_LAYERS; $depth++) {
+				if (!$layer instanceof \OC\Files\Storage\Wrapper\Wrapper) {
+					return $path;
+				}
+				if ($layer instanceof \OC\Files\Storage\Wrapper\Jail) {
+					$path = $layer->getUnjailedPath($path);
+				}
+				$layer = $layer->getWrapperStorage();
+			}
+		} catch (\Throwable) {
+			return null;
+		}
+
+		return null;
+	}
+
+	/**
 	 * The path of a confirmed file relative to the user folder, without a
 	 * leading slash. Never logged and never put into an error answer.
 	 */

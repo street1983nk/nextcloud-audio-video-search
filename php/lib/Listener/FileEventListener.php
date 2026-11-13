@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Listener;
 
 use OCA\AudioVideoSearch\Db\QueueMapper;
+use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\StorageService;
 use OCP\EventDispatcher\Event;
@@ -140,7 +141,9 @@ class FileEventListener implements IEventListener {
 		}
 		$mime = (string)$node->getMimetype();
 		$mimeId = $mime !== '' && $this->mimeTypeLoader->exists($mime) ? $this->mimeTypeLoader->getId($mime) : 0;
-		$relative = $this->storageService->mountRelativePath($identity[1], (string)$node->getInternalPath());
+		// In the space of the walk roots, not below the jail of a team folder.
+		$storagePath = FileAccess::storagePath($node);
+		$relative = $storagePath === null ? null : $this->storageService->mountRelativePath($identity[1], $storagePath);
 		if ($relative === null || !$this->queueService->admissible($identity[1], $mimeId, $relative)) {
 			return null;
 		}
