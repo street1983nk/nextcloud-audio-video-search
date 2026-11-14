@@ -4,13 +4,22 @@ declare(strict_types=1);
 
 namespace OCA\AudioVideoSearch\Tests\Unit;
 
+use OCA\AudioVideoSearch\AppInfo\Application;
+use OCA\AudioVideoSearch\BackgroundJobs\StorageCrawlJob;
+use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Db\QueueMapper;
 use OCA\AudioVideoSearch\Listener\CacheEventListener;
 use OCA\AudioVideoSearch\Listener\FileEventListener;
+use OCA\AudioVideoSearch\Listener\GroupEventListener;
 use OCA\AudioVideoSearch\Listener\UserEventListener;
+use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\StorageService;
+use OCA\Files_Trashbin\Events\MoveToTrashEvent;
+use OCA\Files_Trashbin\Events\NodeRestoredEvent;
+use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\AppFramework\Utility\ITimeFactory;
+use OCP\BackgroundJob\IJobList;
 use OCP\Files\Cache\CacheEntryInsertedEvent;
 use OCP\Files\Cache\CacheEntryRemovedEvent;
 use OCP\Files\Events\Node\NodeCopiedEvent;
@@ -25,8 +34,13 @@ use OCP\Files\IMimeTypeDetector;
 use OCP\Files\IMimeTypeLoader;
 use OCP\Files\Mount\IMountPoint;
 use OCP\Files\Node;
+use OCP\Files\Config\ICachedMountInfo;
+use OCP\Files\Config\IUserMountCache;
 use OCP\Files\Storage\IStorage;
+use OCP\Group\Events\UserAddedEvent;
+use OCP\Group\Events\UserRemovedEvent;
 use OCP\IAppConfig;
+use OCP\IGroup;
 use OCP\IUser;
 use OCP\User\Events\UserDeletedEvent;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -41,6 +55,8 @@ use Psr\Log\LoggerInterface;
  * type 5 is video/webm, 6 is text/plain.
  */
 #[CoversClass(FileEventListener::class)]
+#[CoversClass(GroupEventListener::class)]
+#[CoversClass(Application::class)]
 #[CoversClass(UserEventListener::class)]
 #[CoversClass(CacheEventListener::class)]
 final class FileEventListenerTest extends TestCase {
@@ -283,6 +299,229 @@ final class FileEventListenerTest extends TestCase {
 		$broken->method('getId')->willThrowException(new \OCP\Files\NotFoundException());
 
 		$this->listener()->handle(new NodeRenamedEvent($this->createMock(Node::class), $broken));
+
+		self::assertSame([], $this->queued);
+	}
+
+	// -- trash bin (plan 02-18, D-02-09) ----------------------------------------------
+
+	/**
+	 * In the order of the trash bin at stable34: MoveToTrashEvent before the
+	 * move, NodeDeletedEvent after it. The delete replaces the trash row in the
+	 * queue (QueueMapper REPLACES); QueueService::describe sees the file id in
+	 * the trash bin and hands it out as trash.
+	 */
+	public function testMovingToTheTrashBinQueuesTrashAndTheDeletionAfterIt(): void {
+		$listener = $this->listener();
+		$file = $this->file(10, 3, 'video/webm', 'files/a.webm');
+
+		$listener->handle(new MoveToTrashEvent($file));
+		$listener->handle(new NodeDeletedEvent($file));
+
+		self::assertSame([
+			[QueueMapper::KIND_TRASH, 10, 3],
+			[QueueMapper::KIND_DELETE, 10, 3],
+		], $this->queued);
+	}
+
+	/** Like a deletion: whatever the type says now, but only in the mount set and only files. */
+	public function testTheTrashBinTakesFilesOfTheMountSetOnly(): void {
+		$listener = $this->listener();
+		$listener->handle(new MoveToTrashEvent($this->file(10, 3, 'text/plain')));
+		$listener->handle(new MoveToTrashEvent($this->file(11, 9)));
+		$listener->handle(new MoveToTrashEvent($this->createMock(Folder::class)));
+
+		self::assertSame([[QueueMapper::KIND_TRASH, 10, 3]], $this->queued);
+	}
+
+	public function testRestoringFromTheTrashBinQueuesRestore(): void {
+		$this->listener()->handle(new NodeRestoredEvent(
+			$this->file(10, 3, 'video/webm', 'files_trashbin/files/a.webm.d1700000000'),
+			$this->file(10, 3, 'video/webm', 'files/a.webm'),
+		));
+
+		self::assertSame([[QueueMapper::KIND_RESTORE, 10, 3]], $this->queued);
+	}
+
+	/** Restored to a place the work stock does not take (a rule, no walk root): it leaves. */
+	public function testARestoredFileThatIsNotAdmissibleLeavesTheWorkStock(): void {
+		$listener = $this->listener();
+		$listener->handle(new NodeRestoredEvent($this->file(10), $this->file(10, 3, 'text/plain')));
+		$listener->handle(new NodeRestoredEvent($this->file(11, 9), $this->file(11, 9)));
+
+		self::assertSame([[QueueMapper::KIND_DELETE, 10, 3]], $this->queued);
+	}
+
+	/** Without files_trashbin there is only NodeDeletedEvent: a deletion. */
+	public function testWithoutTheTrashBinADeletionStaysADeletion(): void {
+		$this->listener()->handle(new NodeDeletedEvent($this->file(10)));
+
+		self::assertSame([[QueueMapper::KIND_DELETE, 10, 3]], $this->queued);
+	}
+
+	/**
+	 * The trash bin events are registered by their class name: files_trashbin
+	 * registers its autoloader after this app (the coordinator goes through
+	 * the apps in order), so a class_exists check inside register() would
+	 * answer no on every instance and drop both events. A name that never
+	 * matches an event costs nothing when the trash bin is disabled.
+	 */
+	public function testTheApplicationListensToTheTrashBinAndToGroupChanges(): void {
+		$registered = [];
+		$context = $this->createMock(IRegistrationContext::class);
+		$context->method('registerEventListener')->willReturnCallback(function (string $event, string $listener) use (&$registered): void {
+			$registered[$event][] = $listener;
+		});
+
+		(new Application())->register($context);
+
+		self::assertSame([FileEventListener::class], $registered['OCA\Files_Trashbin\Events\MoveToTrashEvent'] ?? null);
+		self::assertSame([FileEventListener::class], $registered['OCA\Files_Trashbin\Events\NodeRestoredEvent'] ?? null);
+		self::assertSame([GroupEventListener::class], $registered[UserAddedEvent::class] ?? null);
+		self::assertSame([GroupEventListener::class], $registered[UserRemovedEvent::class] ?? null);
+		self::assertSame([FileEventListener::class], $registered[NodeDeletedEvent::class] ?? null);
+	}
+
+	// -- group changes (plan 02-18, T-02-66) ------------------------------------------
+
+	/**
+	 * ana's mounts: her home 4, her SMB storage 8 (her own login), the team
+	 * folder 5, the shared external storage 9 and the share of eva's home 3.
+	 * The group extern is excluded.
+	 *
+	 * @param list<string> $excludedUsers users excluded after the change
+	 * @param list<int> $excludedStorages storages excluded as a whole after the change
+	 * @param list<int> $crawled storages whose walk roots have a crawl row
+	 * @return array{listener: GroupEventListener, resets: \ArrayObject<int, array{int, int}>, jobs: \ArrayObject<int, mixed>}
+	 */
+	private function groupListener(array $excludedUsers = [], array $excludedStorages = [], array $crawled = [3, 4, 5, 8, 9]): array {
+		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('groupListed')->willReturnCallback(static fn (string $gid): bool => $gid === 'extern');
+		$exclusions->method('isExcludedUser')->willReturnCallback(static fn (string $uid): bool => in_array($uid, $excludedUsers, true));
+		$exclusions->method('isExcluded')->willReturnCallback(
+			static fn (int $storageId, string $path): bool => $path === '' && in_array($storageId, $excludedStorages, true),
+		);
+		$owners = [3 => 'eva', 4 => 'ana', 5 => null, 8 => 'ana', 9 => null];
+		$exclusions->method('storageOwner')->willReturnCallback(static fn (int $storageId): ?string => $owners[$storageId] ?? null);
+
+		$mountCache = $this->createMock(IUserMountCache::class);
+		$mountCache->method('getMountsForUser')->willReturnCallback(function (IUser $user): array {
+			$mounts = [];
+			foreach ($user->getUID() === 'ana' ? [4, 8, 5, 9, 3, 4] : [] as $storageId) {
+				$info = $this->createMock(ICachedMountInfo::class);
+				$info->method('getStorageId')->willReturn($storageId);
+				$mounts[] = $info;
+			}
+
+			return $mounts;
+		});
+		$this->storage->method('mountRoots')->willReturnCallback(
+			static fn (int $storageId): array => [['rootId' => $storageId * 10 + 1, 'rootPath' => 'files']],
+		);
+
+		$resets = new \ArrayObject();
+		$jobs = new \ArrayObject();
+		$crawls = $this->createMock(CrawlMapper::class);
+		$crawls->method('find')->willReturnCallback(static fn (int $storageId, int $rootId): ?array => in_array($storageId, $crawled, true)
+			? ['storageId' => $storageId, 'rootId' => $rootId, 'lastFileId' => 9, 'generation' => 0, 'startedAt' => 1, 'finishedAt' => 2]
+			: null);
+		$crawls->method('reset')->willReturnCallback(static function (int $storageId, int $rootId) use ($resets): void {
+			$resets[] = [$storageId, $rootId];
+		});
+		$jobList = $this->createMock(IJobList::class);
+		$jobList->method('has')->willReturn(false);
+		$jobList->method('add')->willReturnCallback(static function (string $job, mixed $argument) use ($jobs): void {
+			self::assertSame(StorageCrawlJob::class, $job);
+			$jobs[] = $argument;
+		});
+
+		return [
+			'listener' => new GroupEventListener($exclusions, $mountCache, $this->storage, $this->queue, $crawls, $jobList, $this->logger),
+			'resets' => $resets,
+			'jobs' => $jobs,
+		];
+	}
+
+	private function groupEvent(string $class, string $gid, string $uid): UserAddedEvent|UserRemovedEvent {
+		$group = $this->createMock(IGroup::class);
+		$group->method('getGID')->willReturn($gid);
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn($uid);
+
+		return $class === UserAddedEvent::class ? new UserAddedEvent($group, $user) : new UserRemovedEvent($group, $user);
+	}
+
+	/** D-02-08, D-02-11: joining an excluded group removes what belongs to the user, at once. */
+	public function testJoiningAnExcludedGroupRemovesTheStoragesOfTheUser(): void {
+		$group = $this->groupListener(['ana']);
+
+		$group['listener']->handle($this->groupEvent(UserAddedEvent::class, 'extern', 'ana'));
+
+		self::assertSame([
+			[QueueMapper::KIND_EXCLUDE_STORAGE, 0, 4],
+			[QueueMapper::KIND_EXCLUDE_STORAGE, 0, 8],
+		], $this->queued);
+		self::assertSame([], $group['resets']->getArrayCopy());
+	}
+
+	public function testJoiningAnotherGroupDoesNothing(): void {
+		$group = $this->groupListener();
+
+		$group['listener']->handle($this->groupEvent(UserAddedEvent::class, 'intern', 'ana'));
+		$group['listener']->handle($this->groupEvent(UserRemovedEvent::class, 'intern', 'ana'));
+
+		self::assertSame([], $this->queued);
+		self::assertSame([], $group['resets']->getArrayCopy());
+	}
+
+	/** Leaving the excluded group: the crawl of the storages of the user starts over, nothing is removed. */
+	public function testLeavingTheExcludedGroupCrawlsTheStoragesOfTheUserAgain(): void {
+		$group = $this->groupListener();
+
+		$group['listener']->handle($this->groupEvent(UserRemovedEvent::class, 'extern', 'ana'));
+
+		self::assertSame([], $this->queued);
+		self::assertSame([[4, 41], [8, 81]], $group['resets']->getArrayCopy());
+		self::assertSame([StorageCrawlJob::argument(4, 41), StorageCrawlJob::argument(8, 81)], $group['jobs']->getArrayCopy());
+	}
+
+	public function testLeavingTheGroupWhileStillExcludedOtherwiseDoesNothing(): void {
+		$group = $this->groupListener(['ana']);
+
+		$group['listener']->handle($this->groupEvent(UserRemovedEvent::class, 'extern', 'ana'));
+
+		self::assertSame([], $this->queued);
+		self::assertSame([], $group['resets']->getArrayCopy());
+	}
+
+	/** A storage switched off as a whole stays off; a storage never crawled is started by the scheduler. */
+	public function testLeavingTheGroupSkipsAStorageExcludedAsAWholeAndOneNeverCrawled(): void {
+		$group = $this->groupListener([], [8], [3, 5, 8, 9]);
+
+		$group['listener']->handle($this->groupEvent(UserRemovedEvent::class, 'extern', 'ana'));
+
+		self::assertSame([], $group['resets']->getArrayCopy());
+		self::assertSame([], $group['jobs']->getArrayCopy());
+	}
+
+	public function testAFailureInAGroupEventIsSwallowedAndLoggedWithoutAName(): void {
+		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('groupListed')->willThrowException(new \RuntimeException('extern ana'));
+		$this->logger->expects(self::once())->method('warning')->with(
+			self::anything(),
+			self::callback(static fn (array $context): bool => $context === ['class' => \RuntimeException::class]),
+		);
+		$listener = new GroupEventListener(
+			$exclusions,
+			$this->createMock(IUserMountCache::class),
+			$this->storage,
+			$this->queue,
+			$this->createMock(CrawlMapper::class),
+			$this->createMock(IJobList::class),
+			$this->logger,
+		);
+
+		$listener->handle($this->groupEvent(UserAddedEvent::class, 'extern', 'ana'));
 
 		self::assertSame([], $this->queued);
 	}

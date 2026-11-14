@@ -395,7 +395,7 @@ final class QueueServiceTest extends TestCase {
 
 		$described = $this->service()->describe(self::TOKEN, [
 			$this->row(1, QueueMapper::KIND_EXCLUDE_STORAGE, null, 9),
-			$this->row(2, QueueMapper::KIND_DELETE, 42),
+			$this->row(2, QueueMapper::KIND_EXCLUDE, 41),
 			$this->row(3, QueueMapper::KIND_TRASH, 43),
 		]);
 
@@ -405,6 +405,63 @@ final class QueueServiceTest extends TestCase {
 			self::assertNull($item['etag']);
 			self::assertNull($item['readerUid']);
 		}
+	}
+
+	/**
+	 * Whether a NodeDeletedEvent was the trash bin is decided at the cache
+	 * entry when the row is handed out (plan 02-18, D-02-09, T-02-68): the
+	 * trash bin keeps the file id and moves the row out of every walk root of
+	 * the same storage (files_trashbin/files of a home, the trash of a team
+	 * folder). Gone from the cache, or on a storage outside the mount set: a
+	 * real deletion.
+	 */
+	public function testADeletionWhoseFileLiesInTheTrashBinIsHandedOutAsTrash(): void {
+		$entries = [
+			42 => $this->entry(3, 'video/webm', 'files_trashbin/files/a.webm.d1700000000'),
+			43 => $this->entry(5, 'video/webm', 'trash/7/b.webm.d1700000000'),
+			44 => $this->entry(3, 'video/webm', 'files/still/here.webm'),
+			45 => $this->entry(9, 'video/webm', 'moved/elsewhere.webm'),
+		];
+		$this->storage = $this->createMock(StorageService::class);
+		$this->storage->method('inMountSet')->willReturnCallback(static fn (int $storageId): bool => in_array($storageId, [3, 5], true));
+		$this->storage->method('mountRelativePath')->willReturnCallback(
+			static fn (int $storageId, string $path): ?string => str_starts_with($path, 'files/') ? substr($path, 6) : null,
+		);
+		$this->fileAccess->method('getByFileId')->willReturnCallback(static fn (int $fileId): ?ICacheEntry => $entries[$fileId] ?? null);
+		$this->mapper->method('drop')->willReturn(0);
+
+		$described = $this->service()->describe(self::TOKEN, [
+			$this->row(1, QueueMapper::KIND_DELETE, 42),
+			$this->row(2, QueueMapper::KIND_DELETE, 43, 5),
+			$this->row(3, QueueMapper::KIND_DELETE, 44),
+			$this->row(4, QueueMapper::KIND_DELETE, 45),
+			$this->row(5, QueueMapper::KIND_DELETE, 46),
+		]);
+
+		self::assertSame([
+			QueueMapper::KIND_TRASH,
+			QueueMapper::KIND_TRASH,
+			QueueMapper::KIND_DELETE,
+			QueueMapper::KIND_DELETE,
+			QueueMapper::KIND_DELETE,
+		], array_column($described['items'], 'kind'));
+		self::assertSame(0, $described['dropped']);
+		foreach ($described['items'] as $item) {
+			self::assertSame(QueueService::ITEM_KEYS, array_keys($item));
+			self::assertNull($item['etag']);
+			self::assertNull($item['readerUid']);
+		}
+		self::assertSame([3, 5, 3, 3, 3], array_column($described['items'], 'storageId'));
+	}
+
+	/** A cache that cannot be asked takes nothing out wrongly: the deletion stays a deletion. */
+	public function testADeletionWhoseFileCannotBeLookedUpStaysADeletion(): void {
+		$this->fileAccess->method('getByFileId')->willThrowException(new \RuntimeException('files_trashbin/files/geheim.webm.d1'));
+		$this->mapper->method('drop')->willReturn(0);
+
+		$described = $this->service()->describe(self::TOKEN, [$this->row(1, QueueMapper::KIND_DELETE, 42)]);
+
+		self::assertSame([QueueMapper::KIND_DELETE], array_column($described['items'], 'kind'));
 	}
 
 	public function testTheReaderOfAHomeIsItsOwner(): void {
