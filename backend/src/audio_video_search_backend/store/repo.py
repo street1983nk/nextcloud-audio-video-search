@@ -73,6 +73,37 @@ STATE_REASONS: Final = frozenset(
         "size_mismatch",
     }
 )
+# Closed lists for preview_job (schema v3, plan 03-09). state: see schema.sql.
+# reason: why a job waits (disk_full, D-03-17) or is skipped. The four codes
+# of the probe (media/probe.py MEDIA_REASONS, D-03-20), too_long (D-03-08),
+# the two verdicts of a file without text (engine/catch.py, D-03-12) and
+# engine_failed after the last attempt. A code reaches the play page and occ,
+# never a free text (D-03-13).
+PREVIEW_STATES: Final = frozenset({"queued", "running", "waiting", "complete", "skipped"})
+PREVIEW_REASONS: Final = frozenset(
+    {
+        "too_long",
+        "no_audio",
+        "damaged",
+        "protected",
+        "format_unsupported",
+        "no_speech",
+        "unsupported_language",
+        "disk_full",
+        "engine_failed",
+    }
+)
+# Which call may write which code: a skip by the worker, a verdict of the
+# file after its last piece, a wait for room on the disk.
+_SKIP_REASONS: Final = frozenset(
+    {"too_long", "no_audio", "damaged", "protected", "format_unsupported", "engine_failed"}
+)
+_TEXTLESS_VERDICTS: Final = frozenset({"no_speech", "unsupported_language"})
+_DEFER_REASONS: Final = frozenset({"disk_full"})
+_TRANSCRIPT_VERDICT: Final = "transcript"
+# The admin limit of the duration (D-03-08, D-03-09), kept in meta.
+MAX_DURATION_KEY: Final = "max_duration_hours"
+DEFAULT_MAX_DURATION_HOURS: Final = 12
 _HEX64: Final = re.compile(r"[0-9a-f]{64}")
 CORRECTION_KINDS: Final = frozenset({"text", "speaker", "sound"})
 _MAX_UID_LENGTH: Final = 64
@@ -332,8 +363,11 @@ RETURNING media_id
 """
 _CLEAR_ORPHAN: Final = "UPDATE media SET orphaned_at = NULL WHERE media_id = ?"
 # The preview job of a content (schema v3), seeded in the same commit that keys
-# a reference (mark_keyed) or attaches a copy (attach_by_proof): one row per
-# media_id, never per file. Only an active, keyed reference seeds; a sample
+# a reference (mark_keyed) or attaches a copy (attach_by_proof), and on every
+# way back to an active keyed reference (a restore from the trash, a renewed
+# proof that passed, a storage back in the list; plan 03-09): a content whose
+# references all lay elsewhere when the migration seeded gets its job there.
+# One row per media_id, never per file. Only an active, keyed reference seeds; a sample
 # never does (D-02-15, T-03-09). A copy of a content that has its job already
 # only carries its origin (event wins) and its mtime (the newest wins) into a
 # job that still waits; a running, complete or skipped job stays as it is.
@@ -440,7 +474,7 @@ UPDATE file_ref SET
                        ELSE NULL END,
     vanished_since = NULL, updated_at = :now
 WHERE storage_id IN (SELECT value FROM json_each(:ids)) AND vanished_since IS NOT NULL
-RETURNING media_id, state
+RETURNING media_id, state, file_id
 """
 # The renewed read proof (D-02-12): an active keyed reference on SMB or SFTP
 # whose last proof is older than the limit is due again. The capture proves it
@@ -539,6 +573,74 @@ SELECT EXISTS (SELECT 1 FROM file_ref WHERE media_id = :m)
 """
 _DELETE_MEDIA_KEYS: Final = "DELETE FROM media_key WHERE media_id = ?"
 _DELETE_MEDIA: Final = "DELETE FROM media WHERE media_id = ?"
+
+# The preview jobs (plan 03-09). A job is worked only for a content that has
+# an active, keyed reference with a reader: the gateway reads the bytes as
+# that user, and a job nobody can read never blocks the queue (T-03-32).
+# D-03-05: event before crawl, then the newest file first. A waiting job comes
+# back once its time has come; the claim clears its reason, so a running job
+# never counts under the reason it waited for.
+_CLAIM_PREVIEW: Final = """
+UPDATE preview_job SET state = 'running', reason = NULL, updated_at = :now
+WHERE media_id = (
+    SELECT media_id FROM preview_job
+    WHERE (state = 'queued' OR (state = 'waiting' AND next_try_at <= :now))
+      AND EXISTS (SELECT 1 FROM file_ref f WHERE f.media_id = preview_job.media_id AND f.state = 'active'
+                  AND f.stage = 'keyed' AND f.reader_uid IS NOT NULL)
+    ORDER BY CASE origin WHEN 'event' THEN 0 ELSE 1 END, sort_mtime DESC, media_id
+    LIMIT 1)
+RETURNING media_id, epoch, state, reason, origin, sort_mtime, duration_ms, next_start_ms, chunks_done, version_id,
+          kept_words, drop_script, drop_language, drop_conf, speech_ms, attempts, next_try_at, second_pass, updated_at
+"""
+_PREVIEW_SOURCE: Final = """
+SELECT file_id, reader_uid, size FROM file_ref
+WHERE media_id = ? AND state = 'active' AND stage = 'keyed' AND reader_uid IS NOT NULL
+ORDER BY file_id LIMIT 1
+"""
+# Every write after the claim names the claimed job: still running, the epoch
+# it was claimed in, and the content still in that epoch. Otherwise it is
+# stale and nothing is written.
+_RUNNING_JOB: Final = """
+SELECT p.version_id, p.next_start_ms FROM preview_job p JOIN media m ON m.media_id = p.media_id
+WHERE p.media_id = :m AND p.state = 'running' AND p.epoch = :e AND m.epoch = :e
+"""
+_NEXT_WORD_IDX: Final = "SELECT COALESCE(MAX(idx) + 1, 0) FROM word WHERE version_id = ?"
+_CHUNK_JOB: Final = """
+UPDATE preview_job SET next_start_ms = :next, chunks_done = chunks_done + 1, version_id = :v,
+    kept_words = kept_words + :kept, drop_script = drop_script + :script,
+    drop_language = drop_language + :language, drop_conf = drop_conf + :conf,
+    speech_ms = speech_ms + :speech, updated_at = :now
+WHERE media_id = :m AND state = 'running' AND epoch = :e
+"""
+_SETTLE_JOB: Final = """
+UPDATE preview_job SET state = :state, reason = :reason, duration_ms = COALESCE(:duration, duration_ms),
+    next_try_at = :retry_at, attempts = attempts + :bump, updated_at = :now
+WHERE media_id = :m AND state = 'running' AND epoch = :e
+  AND epoch = (SELECT epoch FROM media WHERE media_id = :m)
+"""
+_RESET_RUNNING: Final = "UPDATE preview_job SET state = 'queued', updated_at = :now WHERE state = 'running'"
+_WAITING_EVENT: Final = """
+SELECT 1 FROM preview_job
+WHERE state = 'queued' AND origin = 'event'
+  AND EXISTS (SELECT 1 FROM file_ref f WHERE f.media_id = preview_job.media_id AND f.state = 'active'
+              AND f.stage = 'keyed' AND f.reader_uid IS NOT NULL)
+LIMIT 1
+"""
+# D-03-09: a raised limit brings back what fits now; a duration not known is
+# given the chance as well. A job that comes back starts at the beginning.
+_REQUEUE_TOO_LONG: Final = """
+UPDATE preview_job SET state = 'queued', reason = NULL, next_start_ms = 0, chunks_done = 0, attempts = 0,
+    next_try_at = NULL, updated_at = :now
+WHERE state = 'skipped' AND reason = 'too_long' AND (duration_ms IS NULL OR duration_ms <= :max_ms)
+"""
+# What the play page may learn of a file (D-03-13): only through an active
+# reference, exactly like media_for_file; every other file is not known.
+_PREVIEW_VIEW: Final = """
+SELECT p.state, p.reason, p.chunks_done, p.next_start_ms, c.level
+FROM file_ref f JOIN preview_job p ON p.media_id = f.media_id
+LEFT JOIN current c ON c.media_id = f.media_id
+WHERE f.file_id = ? AND f.state = 'active'
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -667,6 +769,53 @@ class CurrentRow:
     level: int
     config_version: int
     index_rev: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewJob:
+    """One row of preview_job as the claim handed it out (schema v3, plan 03-09)."""
+
+    media_id: int
+    epoch: int
+    state: str
+    reason: str | None
+    origin: str
+    sort_mtime: int
+    duration_ms: int | None
+    next_start_ms: int
+    chunks_done: int
+    version_id: int | None
+    kept_words: int
+    drop_script: int
+    drop_language: int
+    drop_conf: int
+    speech_ms: int
+    attempts: int
+    next_try_at: int | None
+    second_pass: int
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkCounters:
+    """What one piece kept and dropped (TRANS-03), added to the job with its words."""
+
+    kept_words: int
+    drop_script: int
+    drop_language: int
+    drop_conf: int
+    speech_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewView:
+    """What the play page may learn of the job of a file with an active reference (D-03-13)."""
+
+    state: str
+    reason: str | None
+    chunks_done: int
+    next_start_ms: int
+    level: int | None
 
 
 class _Rejected(Exception):
@@ -1069,6 +1218,7 @@ class Store:
         self._conn.execute(_INTAKE_RESTORE, values | fields)
         if media_id is not None and fields["state"] == "active":
             self._conn.execute(_CLEAR_ORPHAN, (media_id,))
+            self._conn.execute(_SEED_PREVIEW_JOB, values)
 
     # The capture (plan 02-08), called only from worker/capture.py.
 
@@ -1259,6 +1409,7 @@ class Store:
             if row is None:
                 return False
             self._conn.execute(_CLEAR_ORPHAN, (int(row[0]),))
+            self._conn.execute(_SEED_PREVIEW_JOB, values)
         _LOG.info("read proof confirmed", extra={"file_id": file_id, "media_id": int(row[0])})
         return True
 
@@ -1448,6 +1599,9 @@ class Store:
             rows = self._conn.execute(_MARK_PRESENT, values).fetchall()
             for media_id in sorted({int(row[0]) for row in rows if row[0] is not None and row[1] == "active"}):
                 self._conn.execute(_CLEAR_ORPHAN, (media_id,))
+            for row in rows:
+                if row[0] is not None and row[1] == "active":
+                    self._conn.execute(_SEED_PREVIEW_JOB, {"file_id": int(row[2]), "now": moment})
         if rows:
             _LOG.info("references back", extra={"references": len(rows)})
         return len(rows)
@@ -1566,6 +1720,214 @@ class Store:
         row = self._conn.execute(_SAMPLE_MEDIA, (file_id,)).fetchone()
         return None if row is None else int(row[0])
 
+    # The preview jobs (plan 03-09), written only by worker/preview.py and the
+    # settings sync; read by api/excerpt.py (preview_view) and occ (coverage).
+
+    def next_preview(self, now: int | None = None) -> PreviewJob | None:
+        """Claim the next preview job in the order of D-03-05 (state running) and return it, or None."""
+        moment = _now() if now is None else now
+        with self._transaction():
+            row = self._conn.execute(_CLAIM_PREVIEW, {"now": moment}).fetchone()
+        return None if row is None else PreviewJob(*row)
+
+    def preview_source(self, media_id: int) -> tuple[int, str, int] | None:
+        """(file_id, reader_uid, size) of the active keyed reference with a reader and the smallest file id."""
+        row = self._conn.execute(_PREVIEW_SOURCE, (media_id,)).fetchone()
+        return None if row is None else (int(row[0]), str(row[1]), int(row[2]))
+
+    def commit_chunk(
+        self,
+        job: PreviewJob,
+        *,
+        prov: Provenance,
+        words: Sequence[Word],
+        next_start_ms: int,
+        counters: ChunkCounters,
+    ) -> bool:
+        """Commit one piece of a running job in one transaction (D-03-07, TRANS-07); False when stale.
+
+        The words, the index revision with its outbox row, next_start_ms,
+        chunks_done and the counters go in together or not at all. The first
+        piece with words writes the preview version and makes it current
+        (the path of publish_version); every further piece appends its words
+        to that version and raises the index revision, like a correction.
+        Stale, with nothing written: the job no longer runs, its content left
+        the epoch it was claimed in, the provenance names another epoch or
+        other bytes, the current version is not the job's, or the piece would
+        go back in time.
+        """
+        validate(prov)
+        if not _is_count(next_start_ms):
+            raise ValueError("invalid preview field: next_start_ms")
+        tally = (
+            counters.kept_words,
+            counters.drop_script,
+            counters.drop_language,
+            counters.drop_conf,
+            counters.speech_ms,
+        )
+        if not all(_is_count(value) for value in tally):
+            raise ValueError("invalid preview field: counters")
+        values = {"m": job.media_id, "e": job.epoch}
+        try:
+            with self._transaction():
+                row = self._conn.execute(_RUNNING_JOB, values).fetchone()
+                if row is None or prov.epoch != job.epoch or next_start_ms < int(row[1]):
+                    raise _Rejected("stale_rejected")
+                version_id = None if row[0] is None else int(row[0])
+                if version_id is None and words:
+                    version_id, _ = self._publish(job.media_id, prov, words)
+                elif words and version_id is not None:
+                    current = self._conn.execute(_CURRENT, (job.media_id,)).fetchone()
+                    if current is None or int(current[0]) != version_id:
+                        raise _Rejected("stale_rejected")
+                    first = int(self._conn.execute(_NEXT_WORD_IDX, (version_id,)).fetchone()[0])
+                    self._insert_words(version_id, first, words)
+                    bumped = self._conn.execute(_BUMP_INDEX_REV, (job.media_id,)).fetchone()
+                    self._conn.execute(_INSERT_OUTBOX, (job.media_id, int(bumped[0])))
+                self._conn.execute(
+                    _CHUNK_JOB,
+                    values
+                    | {
+                        "next": next_start_ms,
+                        "v": version_id,
+                        "kept": counters.kept_words,
+                        "script": counters.drop_script,
+                        "language": counters.drop_language,
+                        "conf": counters.drop_conf,
+                        "speech": counters.speech_ms,
+                        "now": _now(),
+                    },
+                )
+        except _Rejected as rejected:
+            _LOG.info("preview piece not committed", extra={"media_id": job.media_id, "reason": rejected.reason})
+            return False
+        _LOG.info(
+            "preview piece committed",
+            extra={"media_id": job.media_id, "words": len(words), "next_start_ms": next_start_ms},
+        )
+        return True
+
+    def _settle(
+        self,
+        job: PreviewJob,
+        state: str,
+        *,
+        reason: str | None = None,
+        duration_ms: int | None = None,
+        retry_at: int | None = None,
+        bump: bool = False,
+        now: int | None = None,
+    ) -> bool:
+        """Move a running job of its epoch to ``state``; False when stale."""
+        values = {
+            "m": job.media_id,
+            "e": job.epoch,
+            "state": state,
+            "reason": reason,
+            "duration": duration_ms,
+            "retry_at": retry_at,
+            "bump": 1 if bump else 0,
+            "now": _now() if now is None else now,
+        }
+        with self._transaction():
+            changed = self._conn.execute(_SETTLE_JOB, values).rowcount == 1
+        if changed:
+            _LOG.info("preview job settled", extra={"media_id": job.media_id, "state": state, "reason": reason})
+        return changed
+
+    def finish_preview(self, job: PreviewJob, verdict: str, now: int | None = None) -> bool:
+        """The verdict of a file after its last piece (engine/catch.py file_verdict); False when stale.
+
+        transcript completes the job; no_speech and unsupported_language skip
+        it with that reason and leave the current version alone.
+        """
+        if verdict == _TRANSCRIPT_VERDICT:
+            return self._settle(job, "complete", now=now)
+        if verdict not in _TEXTLESS_VERDICTS:
+            raise ValueError("invalid preview field: verdict")
+        return self._settle(job, "skipped", reason=verdict, now=now)
+
+    def skip_preview(self, job: PreviewJob, reason: str, duration_ms: int | None, now: int | None = None) -> bool:
+        """Skip a running job with a reason of the probe, too_long or engine_failed; False when stale."""
+        if reason not in _SKIP_REASONS:
+            raise ValueError("invalid preview field: reason")
+        if duration_ms is not None and not _is_count(duration_ms):
+            raise ValueError("invalid preview field: duration_ms")
+        return self._settle(job, "skipped", reason=reason, duration_ms=duration_ms, now=now)
+
+    def defer_preview(self, job: PreviewJob, reason: str, *, retry_at: int, now: int | None = None) -> bool:
+        """Let a running job wait with its reason until ``retry_at`` (D-03-17); its progress stays. False when stale."""
+        if reason not in _DEFER_REASONS:
+            raise ValueError("invalid preview field: reason")
+        if not _is_count(retry_at):
+            raise ValueError("invalid preview field: next_try_at")
+        return self._settle(job, "waiting", reason=reason, retry_at=retry_at, now=now)
+
+    def retry_preview(self, job: PreviewJob, *, retry_at: int, count: bool, now: int | None = None) -> bool:
+        """Let a running job wait without a reason until ``retry_at``; ``count`` adds an attempt. False when stale."""
+        if not _is_count(retry_at):
+            raise ValueError("invalid preview field: next_try_at")
+        return self._settle(job, "waiting", retry_at=retry_at, bump=count, now=now)
+
+    def yield_preview(self, job: PreviewJob, now: int | None = None) -> bool:
+        """Put a running job back in the queue at its piece boundary (D-03-06); its progress stays."""
+        return self._settle(job, "queued", now=now)
+
+    def reset_running(self) -> int:
+        """Hand the running jobs of a stopped process back to the queue with their progress; returns how many."""
+        with self._transaction():
+            reset = self._conn.execute(_RESET_RUNNING, {"now": _now()}).rowcount
+        if reset:
+            _LOG.info("preview jobs reset", extra={"jobs": reset})
+        return reset
+
+    def has_waiting_event(self) -> bool:
+        """True when a queued job of an event could be claimed now, the cue for a long crawl job to yield."""
+        return self._conn.execute(_WAITING_EVENT).fetchone() is not None
+
+    def requeue_too_long(self, max_ms: int) -> int:
+        """Bring the too_long jobs that fit ``max_ms`` (or have no known duration) back from the start (D-03-09)."""
+        if not _is_count(max_ms):
+            raise ValueError("invalid preview field: max_ms")
+        with self._transaction():
+            back = self._conn.execute(_REQUEUE_TOO_LONG, {"max_ms": max_ms, "now": _now()}).rowcount
+        if back:
+            _LOG.info("too long jobs back", extra={"jobs": back, "max_ms": max_ms})
+        return back
+
+    def max_duration_hours(self) -> int:
+        """The limit of the duration in hours (D-03-08); the default when unset or not a whole number above 0."""
+        value = self.meta_value(MAX_DURATION_KEY)
+        if value is None or not value.isdigit() or int(value) < 1:
+            return DEFAULT_MAX_DURATION_HOURS
+        return int(value)
+
+    def set_max_duration_hours(self, hours: int) -> int:
+        """Store the limit of the duration and return the one before."""
+        if not _is_count(hours) or hours < 1:
+            raise ValueError("invalid preview field: max_duration_hours")
+        previous = self.max_duration_hours()
+        self.set_meta(MAX_DURATION_KEY, str(hours))
+        return previous
+
+    def preview_view(self, file_id: int) -> PreviewView | None:
+        """The job of a file for its play page, only through an active reference (D-03-13, D-02-15c).
+
+        An unreadable, vanished or trashed reference, a sample and a file never
+        seen all answer None alike, so the answer tells nothing about them.
+        """
+        row = self._conn.execute(_PREVIEW_VIEW, (file_id,)).fetchone()
+        if row is None:
+            return None
+        return PreviewView(
+            state=str(row[0]),
+            reason=None if row[1] is None else str(row[1]),
+            chunks_done=int(row[2]),
+            next_start_ms=int(row[3]),
+            level=None if row[4] is None else int(row[4]),
+        )
+
     # Versions.
 
     def publish_version(self, media_id: int, prov: Provenance, words: Sequence[Word]) -> PublishResult:
@@ -1579,50 +1941,7 @@ class Store:
         validate(prov)
         try:
             with self._transaction():
-                key = self._conn.execute(_MEDIA_FOR_KEY, (prov.input_file_sha256,)).fetchone()
-                if key is None or int(key[0]) != media_id:
-                    raise _Rejected("input_mismatch")
-                epoch = self._conn.execute(_MEDIA_EPOCH, (media_id,)).fetchone()
-                if epoch is None or prov.epoch < int(epoch[0]):
-                    raise _Rejected("stale_rejected")
-                version_id = _row_id(
-                    self._conn.execute(
-                        _INSERT_TRANSCRIPT,
-                        {
-                            "media_id": media_id,
-                            "engine": prov.engine,
-                            "model_sha256": prov.model_sha256,
-                            "config_version": prov.config_version,
-                            "profile": prov.profile,
-                            "level": int(prov.level),
-                            "epoch": prov.epoch,
-                            "language": prov.language,
-                            "input_file_sha256": prov.input_file_sha256,
-                            "now": _now(),
-                        },
-                    )
-                )
-                self._conn.executemany(
-                    _INSERT_WORD,
-                    (
-                        (version_id, i, w.start_ms, w.end_ms, w.surface, w.norm, w.conf, w.src)
-                        for i, w in enumerate(words)
-                    ),
-                )
-                self._conn.execute(
-                    _UPSERT_CURRENT,
-                    {
-                        "m": media_id,
-                        "v": version_id,
-                        "e": prov.epoch,
-                        "l": int(prov.level),
-                        "c": prov.config_version,
-                    },
-                )
-                if self._conn.execute(_CHANGES).fetchone()[0] == 0:
-                    raise _Rejected("stale_rejected")
-                index_rev = int(self._conn.execute(_CURRENT, (media_id,)).fetchone()[4])
-                self._conn.execute(_INSERT_OUTBOX, (media_id, index_rev))
+                version_id, index_rev = self._publish(media_id, prov, words)
         except _Rejected as rejected:
             _LOG.info(
                 "version not published",
@@ -1634,6 +1953,55 @@ class Store:
             extra={"media_id": media_id, "version_id": version_id, "index_rev": index_rev, "words": len(words)},
         )
         return PublishResult(True, int(version_id), index_rev, None)
+
+    def _publish(self, media_id: int, prov: Provenance, words: Sequence[Word]) -> tuple[int, int]:
+        """Inside a transaction: write a version with its words and make it current; (version_id, index_rev).
+
+        Raises _Rejected for other bytes than the content's and for a version
+        that is not strictly newer; the caller's transaction rolls back.
+        """
+        key = self._conn.execute(_MEDIA_FOR_KEY, (prov.input_file_sha256,)).fetchone()
+        if key is None or int(key[0]) != media_id:
+            raise _Rejected("input_mismatch")
+        epoch = self._conn.execute(_MEDIA_EPOCH, (media_id,)).fetchone()
+        if epoch is None or prov.epoch < int(epoch[0]):
+            raise _Rejected("stale_rejected")
+        version_id = _row_id(
+            self._conn.execute(
+                _INSERT_TRANSCRIPT,
+                {
+                    "media_id": media_id,
+                    "engine": prov.engine,
+                    "model_sha256": prov.model_sha256,
+                    "config_version": prov.config_version,
+                    "profile": prov.profile,
+                    "level": int(prov.level),
+                    "epoch": prov.epoch,
+                    "language": prov.language,
+                    "input_file_sha256": prov.input_file_sha256,
+                    "now": _now(),
+                },
+            )
+        )
+        self._insert_words(version_id, 0, words)
+        self._conn.execute(
+            _UPSERT_CURRENT,
+            {"m": media_id, "v": version_id, "e": prov.epoch, "l": int(prov.level), "c": prov.config_version},
+        )
+        if self._conn.execute(_CHANGES).fetchone()[0] == 0:
+            raise _Rejected("stale_rejected")
+        index_rev = int(self._conn.execute(_CURRENT, (media_id,)).fetchone()[4])
+        self._conn.execute(_INSERT_OUTBOX, (media_id, index_rev))
+        return version_id, index_rev
+
+    def _insert_words(self, version_id: int, first_idx: int, words: Sequence[Word]) -> None:
+        self._conn.executemany(
+            _INSERT_WORD,
+            (
+                (version_id, first_idx + i, w.start_ms, w.end_ms, w.surface, w.norm, w.conf, w.src)
+                for i, w in enumerate(words)
+            ),
+        )
 
     def current(self, media_id: int) -> CurrentRow | None:
         row = self._conn.execute(_CURRENT, (media_id,)).fetchone()
