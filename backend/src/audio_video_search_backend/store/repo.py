@@ -608,7 +608,7 @@ _CHUNK_JOB: Final = """
 UPDATE preview_job SET next_start_ms = :next, chunks_done = chunks_done + 1, version_id = :v,
     kept_words = kept_words + :kept, drop_script = drop_script + :script,
     drop_language = drop_language + :language, drop_conf = drop_conf + :conf,
-    speech_ms = speech_ms + :speech, updated_at = :now
+    speech_ms = speech_ms + :speech, second_pass = MAX(second_pass, :second), updated_at = :now
 WHERE media_id = :m AND state = 'running' AND epoch = :e
 """
 _SETTLE_JOB: Final = """
@@ -991,6 +991,12 @@ class Store:
         return int(row[0])
 
     # Content keys and files.
+
+    def media_of_file_sha256(self, sha256: str) -> int | None:
+        """The media item of a file hash, or None; never creates one (the preview checks its download)."""
+        _require_hex64(sha256, "sha256")
+        row = self._conn.execute(_MEDIA_FOR_KEY, (sha256,)).fetchone()
+        return None if row is None else int(row[0])
 
     def media_for_file_sha256(self, sha256: str) -> int:
         """The media item of a file hash; created on first sight."""
@@ -1742,6 +1748,7 @@ class Store:
         words: Sequence[Word],
         next_start_ms: int,
         counters: ChunkCounters,
+        second_pass: bool = False,
     ) -> bool:
         """Commit one piece of a running job in one transaction (D-03-07, TRANS-07); False when stale.
 
@@ -1753,7 +1760,8 @@ class Store:
         Stale, with nothing written: the job no longer runs, its content left
         the epoch it was claimed in, the provenance names another epoch or
         other bytes, the current version is not the job's, or the piece would
-        go back in time.
+        go back in time. ``second_pass`` marks the piece of the second VAD
+        pass (D-03-16) in the same transaction, so it is never run twice.
         """
         validate(prov)
         if not _is_count(next_start_ms):
@@ -1795,6 +1803,7 @@ class Store:
                         "language": counters.drop_language,
                         "conf": counters.drop_conf,
                         "speech": counters.speech_ms,
+                        "second": 1 if second_pass else 0,
                         "now": _now(),
                     },
                 )
