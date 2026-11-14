@@ -733,15 +733,24 @@ test.describe.serial('phase 3 partial transcript and leak probes @preview', () =
 		await screenshot(page, 'play-p11', testInfo);
 	});
 
-	// The container keeps one reference per file id and reads it as the owner
-	// (file_ref.reader_uid); a revoked share does not touch it, and a file
-	// whose reference is not active (vanished, trashed, unreadable for the
-	// reader) cannot be read by the user either in this topology. The state
-	// therefore needs the topology of discovery-e2e.yml (Samba with DENY READ,
-	// files_accesscontrol). Covered meanwhile by the container (03-14: known
-	// false for every reference that is not active), the playback page (03-16:
-	// known false is A5, byte-equal) and the search parity of 03-17.
-	test.fixme('P12 Verweis nicht active, Datei über anderen Weg lesbar: Block gleich P4 @preview', () => {});
+	// deploy-harp cannot reach P12: the container keeps one reference per file
+	// id and reads it as the owner (file_ref.reader_uid); a revoked share does
+	// not touch it, and a file whose reference is not active cannot be read by
+	// the user either in this topology. The real probe on the play page runs
+	// in discovery-e2e.yml, phase play-leak (ci/discovery/playpage.sh, plan
+	// 03-18b, D-03-24): Samba with DENY READ before the first read (never
+	// active) and the revoked Samba copy after reconcile --reprove, each with a
+	// positive control and the block compared byte for byte and by structure.
+	// The unit evidence stays: 03-14 (known false for every reference that is
+	// not active) and 03-16 (known false is A5, byte-equal).
+	const playLeak = 'discovery-e2e.yml phase play-leak, ci/discovery/playpage.sh (plan 03-18b, D-03-24)';
+	test(
+		'P12 Verweis nicht active, Datei über anderen Weg lesbar: Block gleich P4 @preview',
+		{ annotation: { type: 'covered by', description: playLeak } },
+		() => {
+			test.skip(true, playLeak);
+		},
+	);
 
 	// disk_full needs a full disk in the container, which CI cannot make
 	// without an intervention into the running ExApp. Covered by unit tests:

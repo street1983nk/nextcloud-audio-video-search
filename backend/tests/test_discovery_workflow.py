@@ -549,6 +549,7 @@ PHASES = (
     "reattach",
     "foreign-change",
     "search-parity",
+    "play-leak",
 )
 # (shift in the expectation, the one check it has to make fail on its own)
 SELF_TEST_SHIFTS = (
@@ -811,8 +812,9 @@ def test_the_script_rule_fires_on_a_weak_transcribed_check_and_no_leak_line() ->
 
 def test_the_flow_rule_fires_on_a_missing_phase() -> None:
     text = source()
-    assert " reattach foreign-change search-parity; do" in text
-    broken = text.replace(" reattach foreign-change search-parity; do", " reattach foreign-change; do")
+    listed = " reattach foreign-change search-parity play-leak; do"
+    assert listed in text
+    broken = text.replace(listed, " reattach foreign-change play-leak; do")
 
     assert flow_findings(broken) == ["the job discovery does not run the phases of plan 02-04 in order"]
 
@@ -1246,13 +1248,13 @@ def test_the_parity_rule_fires_on_a_weak_phase_in_the_workflow() -> None:
     broken = (
         text.replace("grep -qx 'PARITY CONTROL SHOWED THE DIFF'", "true")
         .replace('bash "${d}/topology.sh" parity_revoke', "true")
-        .replace('[ "${passed}" = 21 ]', '[ "${passed}" = 20 ]')
+        .replace('[ "${passed}" = 22 ]', '[ "${passed}" = 21 ]')
     )
 
     assert parity_findings(script, broken) == [
         "the phase search-parity does not run place, wait, before, revoke and check in order",
         "the phase search-parity passes without the control line",
-        "the verdict does not count 21 phases",
+        "the verdict does not count 22 phases",
     ]
 
 
@@ -1264,3 +1266,172 @@ def test_the_parity_rule_fires_without_the_rest_of_the_preview() -> None:
     assert parity_findings(PARITY.read_text(encoding="utf-8"), broken) == [
         "the phases do not wait for the preview of the test media"
     ]
+
+
+# -- the phase play-leak (plan 03-18b, D-03-24) ------------------------------------
+#
+# The leak probe P12 on the real play page: a reference that is not active shows
+# A5, byte for byte and by the texts of the UI-SPEC. playpage.sh only reads
+# (state.db as a copy), tests itself first, and each probe has a positive
+# control of the same person; the phase reprove saves the pages of the revoked
+# case before and after the operation, the phase play-leak judges both cases.
+
+PLAY = DISCOVERY / "playpage.sh"
+PLAY_LINES = (
+    "PHASE=play-leak",
+    'echo "PHASE PASS ${PHASE}"',
+    'echo "PHASE FAIL ${PHASE}"',
+    'echo "PLAY CONTROL SHOWED THE DIFF $1"',
+    'echo "PLAY SELF-TEST PASSED"',
+    'echo "PLAY SELF-TEST FAILED"',
+    "LABEL_TEXT='Excerpt at this point'",
+    "A5_TEXT='There is no transcript for this file yet.'",
+    "T5_TEXT='No speech was found in this file, for example because it only contains music, silence or noise.'",
+    "-H 'Accept-Language: en'",
+    "SELECT state FROM file_ref WHERE file_id = ",
+    "audio_video_search:files --json --all",
+)
+PLAY_SUBCOMMANDS = (
+    "\t--self-test) self_test ;;",
+    "\tbefore-revoke) cmd_before_revoke ;;",
+    "\tafter-revoke) cmd_after_revoke ;;",
+    "\tcheck) cmd_check ;;",
+)
+PLAY_FORBIDDEN = ("audio_video_search_backend", "php -r", "python", "INSERT", "UPDATE", "DELETE FROM")
+# The only command the script may run inside the container: the path of state.db.
+PLAY_EXEC = """docker exec "${EXAPP_CONTAINER}" sh -c 'printf %s "${APP_PERSISTENT_STORAGE}/state.db"'"""
+PLAY_BEFORE = 'bash "${d}/playpage.sh" before-revoke | tee play-before-revoke.txt'
+PLAY_AFTER = 'bash "${d}/playpage.sh" after-revoke | tee play-after-revoke.txt'
+PLAY_CONTROLS = (
+    "grep -qx 'PLAY CONTROL SHOWED THE DIFF p12a'",
+    "grep -qx 'PLAY CONTROL SHOWED THE DIFF p12b'",
+)
+# A broken line for the positive control: python, a write, a foreign container command, a wait.
+PLAY_BROKEN_LINE = '\nx() { python3 -I y.py; sqlite3 "${d}" "DELETE FROM file_ref"; docker exec "${C}" id; sleep 5; }\n'
+
+
+def play_script_findings(script: str) -> list[str]:
+    """playpage.sh only reads, tests itself first and names every line the phase needs."""
+    findings: list[str] = []
+    lines = code_lines(script)
+    code = "\n".join(lines)
+    missing = [part.strip().split(")")[0] for part in PLAY_SUBCOMMANDS if part not in script]
+    findings += [f"playpage.sh lacks the subcommand {name}" for name in missing]
+    findings += [f"playpage.sh lacks {part}" for part in PLAY_LINES if part not in script]
+    findings += [f"playpage.sh contains {word}" for word in PLAY_FORBIDDEN if word in code]
+    if any("docker exec" in line and PLAY_EXEC not in line for line in lines):
+        findings.append("playpage.sh runs something in the container other than the path of state.db")
+    if re.search(r"\bsleep\b", code):
+        findings.append("playpage.sh waits a fixed time")
+    body = re.search(r"^cmd_check\(\) \{\n(.*?)^\}", script, re.MULTILINE | re.DOTALL)
+    check = body.group(1) if body else ""
+    test_at = check.find('playpage.sh" --self-test')
+    judge_at = check.find("judge_probe")
+    if test_at < 0 or judge_at < 0 or test_at > judge_at:
+        findings.append("playpage.sh check does not run its self test before the verdict")
+    return findings
+
+
+def play_findings(script: str, workflow: str) -> list[str]:
+    """playpage.sh only reads and can fail; the workflow runs it in reprove and play-leak."""
+    findings = play_script_findings(script)
+    steps = dict(steps_of(job_text(workflow, "discovery")))
+    phases = steps.get("Run the phases", "")
+    loop = re.search(r"for phase in (.*?); do", phases, re.DOTALL)
+    listed = loop.group(1).replace("\\", " ").split() if loop else []
+    if listed[-2:] != ["search-parity", "play-leak"]:
+        findings.append("the phases do not end with search-parity and play-leak")
+    case_at = phases.find('case "${phase}" in')
+    compare_at = phases.find('bash "${d}/compare.sh" "${phase}" | tee')
+    done_at = phases.rfind("\n          done\n")
+    before_at = phases.find(PLAY_BEFORE)
+    after_at = phases.find(PLAY_AFTER)
+    if before_at < 0 or case_at < 0 or before_at > case_at:
+        findings.append("the phase reprove does not save the pages before its operation")
+    if after_at < 0 or compare_at < 0 or after_at < compare_at or after_at > done_at:
+        findings.append("the phase reprove does not save the pages after compare.sh")
+    if 'bash "${d}/playpage.sh" check' not in phases:
+        findings.append("the phase play-leak does not run playpage.sh check")
+    findings += [f"the phase play-leak passes without {part}" for part in PLAY_CONTROLS if part not in phases]
+    logs = steps.get("Collect the logs", "")
+    if "play-*.html" not in logs or "play-*.txt" not in logs:
+        findings.append("the logs lack the saved play pages")
+    if f'[ "${{passed}}" = {len(PHASES)} ]' not in steps.get("The verdict of all phases", ""):
+        findings.append(f"the verdict does not count {len(PHASES)} phases")
+    return findings
+
+
+def test_the_play_leak_phase_reads_only_can_fail_and_runs_after_the_parity() -> None:
+    assert play_findings(PLAY.read_text(encoding="utf-8"), source()) == []
+
+
+def test_the_play_rule_fires_on_python_a_write_and_another_container_command() -> None:
+    broken = PLAY.read_text(encoding="utf-8") + PLAY_BROKEN_LINE
+
+    assert play_findings(broken, source()) == [
+        "playpage.sh contains python",
+        "playpage.sh contains DELETE FROM",
+        "playpage.sh runs something in the container other than the path of state.db",
+        "playpage.sh waits a fixed time",
+    ]
+
+
+def test_the_play_rule_ignores_comments() -> None:
+    script = PLAY.read_text(encoding="utf-8")
+    broken = script + "\n# python, INSERT, sleep and docker exec in a comment only\n"
+
+    assert play_findings(broken, source()) == []
+
+
+def test_the_play_rule_fires_on_a_missing_control_line_and_a_late_self_test() -> None:
+    script = PLAY.read_text(encoding="utf-8")
+    run_self_test = '\ttested=$(bash "${SCRIPT_DIR}/playpage.sh" --self-test)\n'
+    assert script.count('echo "PLAY CONTROL SHOWED THE DIFF $1"') == 1
+    assert script.count(run_self_test) == 1
+    broken = script.replace('echo "PLAY CONTROL SHOWED THE DIFF $1"', 'echo "control ok"').replace(
+        run_self_test, "\ttested='PLAY SELF-TEST PASSED'\n"
+    )
+
+    assert play_findings(broken, source()) == [
+        'playpage.sh lacks echo "PLAY CONTROL SHOWED THE DIFF $1"',
+        "playpage.sh check does not run its self test before the verdict",
+    ]
+
+
+def test_the_play_rule_fires_on_a_weak_phase_in_the_workflow() -> None:
+    text = source()
+    script = PLAY.read_text(encoding="utf-8")
+    assert text.count(PLAY_CONTROLS[0]) == 1
+    assert text.count(" search-parity play-leak; do") == 1
+    broken = (
+        text.replace(PLAY_CONTROLS[0], "true")
+        .replace(" search-parity play-leak; do", " search-parity; do")
+        .replace('[ "${passed}" = 22 ]', '[ "${passed}" = 21 ]')
+    )
+
+    assert play_findings(script, broken) == [
+        "the phases do not end with search-parity and play-leak",
+        "the phase play-leak passes without grep -qx 'PLAY CONTROL SHOWED THE DIFF p12a'",
+        "the verdict does not count 22 phases",
+    ]
+
+
+def test_the_play_rule_fires_when_reprove_saves_the_pages_in_the_wrong_order() -> None:
+    text = source()
+    script = PLAY.read_text(encoding="utf-8")
+    assert text.count(PLAY_BEFORE) == 1
+    assert text.count(PLAY_AFTER) == 1
+    broken = text.replace(PLAY_BEFORE, "@@BEFORE@@").replace(PLAY_AFTER, PLAY_BEFORE).replace("@@BEFORE@@", PLAY_AFTER)
+
+    assert play_findings(script, broken) == [
+        "the phase reprove does not save the pages before its operation",
+        "the phase reprove does not save the pages after compare.sh",
+    ]
+
+
+def test_the_play_rule_fires_without_the_pages_in_the_logs() -> None:
+    text = source()
+    assert text.count(" play-*.txt play-*.html logs/") == 1
+    broken = text.replace(" play-*.txt play-*.html logs/", " logs/")
+
+    assert play_findings(PLAY.read_text(encoding="utf-8"), broken) == ["the logs lack the saved play pages"]

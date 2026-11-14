@@ -24,9 +24,12 @@ S3_BUCKET=avs-medien
 # later phase inherits every change of the earlier ones. search-parity (plan
 # 03-17) comes last and has a verdict of its own (parity.sh): it adds a speech
 # content, which the count of transcribed contents of compare.sh does not know.
+# play-leak (plan 03-18b, D-03-24) follows with the leak probe P12 on the play
+# page (playpage.sh); it needs the Samba copy of search-parity and the pages the
+# phase reprove saved.
 PHASES=(initial read-proof shares access-control upload overwrite copy rename tag move-cross trash
 	restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user reattach
-	foreign-change search-parity)
+	foreign-change search-parity play-leak)
 
 # The media endings of MEDIA-01, in lower case.
 MEDIA_ENDINGS='mp3|m4a|wav|ogg|oga|opus|flac|mp4|m4v|mov|mkv|webm|weba|mts|avi|wmv|3gp|mpeg'

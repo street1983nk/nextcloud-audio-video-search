@@ -456,9 +456,26 @@ jobs:
           ./occ config:app:set audio_video_search sample_visible --value=true --type=boolean
           for phase in initial read-proof shares access-control upload overwrite copy rename tag move-cross \
             trash restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user \
-            reattach foreign-change search-parity; do
+            reattach foreign-change search-parity play-leak; do
             echo "::group::phase ${phase}"
             ok=1
+            # play-leak (plan 03-18b, D-03-24) has a verdict of its own: the
+            # leak probe P12 on the real play page (playpage.sh), never active
+            # (search-parity's Samba copy) and revoked (pages saved in reprove).
+            # A few curl calls only, so the deadlines stay as they are.
+            if [ "${phase}" = play-leak ]; then
+              bash "${d}/playpage.sh" check | tee "compare-${phase}.txt"
+              grep -E '^FAIL |^P12 [^ ]+ (FAIL|INVALID) |SELF-TEST FAILED' "compare-${phase}.txt" >> results.txt
+              if [ "${ok}" = 1 ] && grep -qx 'PLAY CONTROL SHOWED THE DIFF p12a' "compare-${phase}.txt" \
+                && grep -qx 'PLAY CONTROL SHOWED THE DIFF p12b' "compare-${phase}.txt" \
+                && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
+                echo "PHASE PASS ${phase}" >> results.txt
+              else
+                echo "PHASE FAIL ${phase}" >> results.txt
+              fi
+              echo "::endgroup::"
+              continue
+            fi
             # search-parity (plan 03-17) has a verdict of its own: the hits of the
             # search against WebDAV (parity.sh), not the counts of compare.sh.
             # The clip lands, the preview and the index finish, the positive
@@ -491,6 +508,11 @@ jobs:
             bash "${d}/compare.sh" prepare "${phase}" | tee "prepare-${phase}.txt" || ok=0
             grep '^FAIL ' "prepare-${phase}.txt" >> results.txt
             bash "${d}/compare.sh" mark "${phase}" || ok=0
+            # P12 revoked (play-leak): cem's play page while his reference is
+            # still active; this never changes the verdict of reprove.
+            if [ "${phase}" = reprove ]; then
+              bash "${d}/playpage.sh" before-revoke | tee play-before-revoke.txt
+            fi
             case "${phase}" in
               initial | read-proof | shares) true ;;
               access-control) bash "${d}/topology.sh" access_control ;;
@@ -520,6 +542,10 @@ jobs:
             bash "${d}/truth.sh" "${phase}" || { echo "FAIL ${phase}:truth" >> results.txt; ok=0; }
             bash "${d}/compare.sh" "${phase}" | tee "compare-${phase}.txt"
             grep '^FAIL ' "compare-${phase}.txt" >> results.txt
+            # P12 revoked: the same page after the revocation, judged in play-leak.
+            if [ "${phase}" = reprove ]; then
+              bash "${d}/playpage.sh" after-revoke | tee play-after-revoke.txt
+            fi
             if [ "${ok}" = 1 ] && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
               echo "PHASE PASS ${phase}" >> results.txt
             else
@@ -535,8 +561,8 @@ jobs:
           test -f results.txt || { echo "no results, the phases did not run"; exit 1; }
           cat results.txt
           passed=$(grep -c '^PHASE PASS ' results.txt || true)
-          echo "${passed} of 21 phases passed"
-          ! grep -q '^PHASE FAIL ' results.txt && [ "${passed}" = 21 ]
+          echo "${passed} of 22 phases passed"
+          ! grep -q '^PHASE FAIL ' results.txt && [ "${passed}" = 22 ]
 
       - name: Collect the logs
         if: always()
@@ -553,7 +579,7 @@ jobs:
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
           cp app-src/ci/discovery/ids.env logs/ 2>/dev/null || true
-          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt procure-lines.json before-*.txt logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt procure-lines.json before-*.txt play-*.txt play-*.html logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/avs-discovery/ledger.tsv" logs/ 2>/dev/null || true
           sudo tail -n 300 /var/log/samba/log.smbd > logs/smbd.log 2>/dev/null || true
 
