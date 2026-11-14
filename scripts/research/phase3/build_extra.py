@@ -68,7 +68,7 @@ for code in ("de_de", "en_us", "fr_fr"):
     n = len(sp)
     wr(OUT / f"deg_pink5_{code}.wav", at_snr(sp, pink(n), 5))
     wr(OUT / f"deg_pink0_{code}.wav", at_snr(sp, pink(n), 0))
-    bab = sum(np.resize(b, n) for b in babble_src)
+    bab = sum((np.resize(b, n) for b in babble_src), start=np.zeros(n, dtype=np.float32))
     wr(OUT / f"deg_babble5_{code}.wav", at_snr(sp, bab, 5))
     # Argumentliste ohne Shell, ffmpeg wählt der Aufrufer
     subprocess.run(  # noqa: S603

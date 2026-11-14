@@ -21,6 +21,18 @@ dependencies = [
     "tantivy==0.26.2",
     # Streams the file bytes from the PHP content gateway (nc.py only).
     "httpx==0.28.1",
+    # Parakeet-TDT-0.6B-v3 and Silero VAD (Apache-2.0, owner approved in plan 03-01;
+    # wheel sha256 for amd64 and arm64 are held in uv.lock and tests/test_lock_wheels.py).
+    "sherpa-onnx==2.0.1",
+    # The native core of sherpa-onnx with its own libonnxruntime (Apache-2.0, owner
+    # approved in plan 03-01). Never the onnxruntime wheel beside it in one process.
+    "sherpa-onnx-core==2.0.1",
+    # PCM buffers between ffmpeg and the engine (BSD-3-Clause, Findling pin, owner
+    # approved in plan 03-01).
+    "numpy==2.5.4",
+    # Text language of a window for the catch rule (BSD-3-Clause, owner approved in
+    # plan 03-01); only py3langid.langid is used, never py3langid.server.
+    "py3langid==0.4.0",
 ]
 
 [dependency-groups]
