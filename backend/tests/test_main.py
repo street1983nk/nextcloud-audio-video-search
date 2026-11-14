@@ -1,14 +1,18 @@
 """The AppAPI contract of the application: lifecycle routes, auth, shutdown."""
 
 import asyncio
+import hashlib
 import logging
+from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from audio_video_search_backend import main, settings
+from audio_video_search_backend import config, main, nc, settings
+from audio_video_search_backend.models import catalog, procure
 from tests.conftest import signed_headers
 
 
@@ -80,15 +84,180 @@ def test_a_signed_status_request_answers_with_versions_state_and_settings(
     }
 
 
-def test_init_acknowledges_at_once(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The default /init hands the work to a background task that reports progress
-    # to Nextcloud; the test holds only the immediate answer.
-    monkeypatch.setattr("nc_py_api.ex_app.integration_fastapi.fetch_models_task", lambda *_args: None)
+def test_init_acknowledges_at_once_and_prepares_the_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    roots: list[Path] = []
 
-    response = client.post("/init", headers=signed_headers())
+    async def prepared(root: Path) -> bool:
+        roots.append(root)
+        return True
+
+    monkeypatch.setattr(main, "prepare_models", prepared)
+
+    with TestClient(main.APP) as test_client:
+        response = test_client.post("/init", headers=signed_headers())
 
     assert response.status_code == 200
     assert response.json() == {}
+    # The shutdown waits for the background task, so it ran by now.
+    assert roots == [config.storage_root()]
+
+
+def test_init_is_signed_like_every_other_route(client: TestClient) -> None:
+    assert client.post("/init").status_code == 401
+
+
+def test_nc_py_api_does_not_fetch_models_on_init(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Positive control of default_init=False: nc_py_api's own task is never reached.
+    calls: list[object] = []
+    monkeypatch.setattr("nc_py_api.ex_app.integration_fastapi.fetch_models_task", lambda *args: calls.append(args))
+    monkeypatch.setattr(main, "prepare_models", _never_ready)
+
+    assert client.post("/init", headers=signed_headers()).status_code == 200
+    assert calls == []
+
+
+async def _never_ready(_root: Path) -> bool:
+    return False
+
+
+# ---------------------------------------------------------------------------
+# The models on /init and after a restart (plan 03-07)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def models_not_ready() -> Iterator[None]:
+    procure.mark_ready(False)
+    yield
+    procure.mark_ready(False)
+
+
+@pytest.fixture
+def statuses(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]]:
+    seen: list[tuple[int, str]] = []
+
+    async def report(progress: int, error: str = "") -> bool:
+        seen.append((progress, error))
+        return True
+
+    monkeypatch.setattr(nc, "report_init_status", report)
+    return seen
+
+
+def _fake_procure(outcomes: dict[str, str], calls: list[tuple[str, object]]) -> Any:
+    async def fake(root: Path, name: str, *, fetch: object = "default", progress: Any = None) -> str:
+        del root
+        calls.append((name, fetch))
+        size = catalog.model_bytes(name)
+        if progress is not None:
+            for part in (size // 4, size // 2, size):
+                await progress(part)
+        return outcomes[name]
+
+    return fake
+
+
+async def test_init_reports_rising_progress_up_to_100_and_sets_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statuses: list[tuple[int, str]]
+) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        procure, "procure", _fake_procure({"silero": procure.PRESENT, "parakeet": procure.PROCURED}, calls)
+    )
+
+    assert await main.prepare_models(tmp_path) is True
+
+    progress = [value for value, _error in statuses]
+    assert progress[0] == 0
+    assert progress[-1] == 100
+    assert progress == sorted(set(progress))  # strictly rising, no repeats
+    assert max(progress[:-1]) == 99
+    assert len(progress) > 3
+    assert all(error == "" for _value, error in statuses)
+    assert [name for name, _fetch in calls] == ["silero", "parakeet"]
+    assert procure.models_ready() is True
+
+
+async def test_a_wrong_digest_reports_models_failed_and_stays_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statuses: list[tuple[int, str]]
+) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        procure, "procure", _fake_procure({"silero": procure.PRESENT, "parakeet": procure.WRONG_DIGEST}, calls)
+    )
+
+    assert await main.prepare_models(tmp_path) is False
+
+    assert statuses[-1][1] == main.MODELS_FAILED
+    assert all(value < 100 for value, _error in statuses)
+    assert procure.models_ready() is False
+
+
+async def test_a_failing_first_model_stops_before_the_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statuses: list[tuple[int, str]]
+) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        procure, "procure", _fake_procure({"silero": procure.UNAVAILABLE, "parakeet": procure.PROCURED}, calls)
+    )
+
+    assert await main.prepare_models(tmp_path) is False
+    assert [name for name, _fetch in calls] == ["silero"]
+    assert statuses[-1] == (statuses[-1][0], main.MODELS_FAILED)
+
+
+def test_models_failed_is_the_approved_text() -> None:
+    # 03-01-SUMMARY.md, owner approval 14.11.2026, written out independently here.
+    approved = "Audio & Video Search could not download its speech models. Details are in the log of the ExApp."
+    assert approved == main.MODELS_FAILED
+
+
+def _place_small_models(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, payload in (("silero", b"vad " * 64), ("parakeet", b"asr " * 256)):
+        entry = catalog.ModelFile(
+            name=f"{name}.onnx",
+            url=f"https://huggingface.co/x/{name}.onnx",
+            sha256=hashlib.sha256(payload).hexdigest(),
+            size=len(payload),
+        )
+        monkeypatch.setitem(catalog.MODELS, name, (entry,))
+        directory = procure.model_dir(root, name)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / entry.name).write_bytes(payload)
+
+
+def _spy_procure(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    real = procure.procure
+    fetches: list[object] = []
+
+    async def spy(root: Path, name: str, **kwargs: Any) -> str:
+        fetches.append(kwargs.get("fetch", "default"))
+        return await real(root, name, **kwargs)
+
+    monkeypatch.setattr(procure, "procure", spy)
+    return fetches
+
+
+def test_a_restart_with_the_files_present_is_ready_without_a_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _place_small_models(config.storage_root(), monkeypatch)
+    fetches = _spy_procure(monkeypatch)
+
+    with TestClient(main.APP):
+        pass
+
+    assert fetches == [None, None]
+    assert procure.models_ready() is True
+
+
+def test_a_restart_without_the_files_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Control of the test above: the same start on an empty volume.
+    fetches = _spy_procure(monkeypatch)
+
+    with TestClient(main.APP):
+        pass
+
+    assert fetches == [None]  # silero is missing, parakeet is not even looked at
+    assert procure.models_ready() is False
 
 
 def test_the_enabled_route_reaches_the_handler(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
