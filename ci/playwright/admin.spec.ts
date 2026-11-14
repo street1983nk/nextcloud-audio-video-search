@@ -11,7 +11,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { ADMIN_PATH, gridOnly, login, ocsSearch, reviewer, SAMPLE_MARK, screenshot, users, type User } from './helpers';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 /** The review users are admins as well; every other project logs in as admin. */
 async function openSection(page: Page, user: User): Promise<void> {

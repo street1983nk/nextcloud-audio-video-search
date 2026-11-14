@@ -26,10 +26,10 @@ name: Deploy through HaRP
 #     backend_missing, and a disabled PHP app makes the container refuse
 #     /sample with companion_missing.
 #
-# The second job, upgrade, installs both halves at a synthetic 0.0.1, seeds
-# them and updates them to the version of this commit (occ upgrade and
-# app_api:app:update); state.db, the test results and the schema version
-# have to survive (plan 10, PLAT-01).
+# The second job, upgrade, installs both halves at the released 0.1.0 (built
+# out of its commit), seeds them and updates them to the version of this
+# commit (occ upgrade and app_api:app:update); state.db, the test results and
+# the schema step from 1 to 2 have to survive (plan 10, PLAT-01, plan 02-21).
 on:
   push:
     branches:
@@ -554,18 +554,25 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # The upgrade proof of both halves (plan 10, PLAT-01). There is no published
-  # release yet to upgrade from, so the previous version is made out of this
-  # commit: a copy whose versions say 0.0.1 (both info.xml, the image tag and
-  # backend/pyproject.toml), installed, seeded and searched, then both halves
-  # moved to the version of this commit the way an update moves them. The PHP
-  # app by swapping its directory and occ upgrade, the ExApp by
+  # The upgrade proof of both halves (plan 10, PLAT-01, plan 02-21). The
+  # previous version is the release 0.1.0, built out of its own commit
+  # (PREV_COMMIT, the tip of phase-01) with git worktree: both halves are
+  # installed, seeded and searched at 0.1.0, then moved to the version of this
+  # commit the way an update moves them. The PHP app by swapping its directory
+  # and occ upgrade (which runs its migration), the ExApp by
   # app_api:app:update with the new info.xml.
+  #
+  # A positive control before the update makes sure the old state is really
+  # old: state.db at schema_version 1 with the sample of phase 1 in file_ref
+  # (storage_id ''), and no oc_avs_ table in the Nextcloud database. Without
+  # it the job could pass on a store that was never migrated.
   #
   # What has to survive, and is compared before against after: the state.db
   # in the volume of the container (same inode, so the same file and not a new
   # one), the test results (same file ids found by the same search, same
-  # sampleCount), the schema version, and at the end the admin state ok.
+  # sampleCount, the sample moved to sample_ref with its transcript), the
+  # schema step to 2, the tables of the PHP migration, and at the end the
+  # admin state ok and an answer of occ audio_video_search:status --json.
   #
   # Assumption A5 of the research, read in the sources before this job was
   # written: app_api:app:update (lib/Command/ExApp/Update.php, stable33 to
@@ -581,7 +588,8 @@ jobs:
     # (the second mostly from the layer cache), HaRP, the seed and the update.
     timeout-minutes: 45
     env:
-      PREV_VERSION: '0.0.1'
+      PREV_VERSION: '0.1.0'
+      PREV_COMMIT: '82f1655481775a87f4fececa2e2b27d7c1f2f496'
     strategy:
       fail-fast: false
       matrix:
@@ -628,26 +636,21 @@ jobs:
           ref: ${{ matrix.server-version }}
           path: apps/viewer
 
+      # The whole history, so the commit of 0.1.0 is there for git worktree.
       - name: Check out this app
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: app-src
+          fetch-depth: 0
 
-      # prev/ is this commit with the version 0.0.1 everywhere the lockstep
-      # gate looks, curr/ is this commit as it is. Every rewrite is counted, so
-      # a sed that hit nothing ends the job here and not as a puzzle later.
-      - name: Prepare the previous version 0.0.1 and the current one
+      # prev/ is the release 0.1.0 out of its own commit, curr/ is this commit
+      # as it is. Every place the lockstep gate looks has to say PREV_VERSION in
+      # prev/, so a wrong commit ends the job here and not as a puzzle later.
+      - name: Prepare the previous version 0.1.0 and the current one
         run: |
-          cp -R app-src prev
           cp -R app-src curr
-          sed -i "s|<version>[^<]*</version>|<version>${PREV_VERSION}</version>|" prev/php/appinfo/info.xml
-          sed -i -e "s|<version>[^<]*</version>|<version>${PREV_VERSION}</version>|" \
-                 -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${PREV_VERSION}</image-tag>|" \
-                 prev/backend/appinfo/info.xml
-          sed -i "s|^version = \"[^\"]*\"|version = \"${PREV_VERSION}\"|" prev/backend/pyproject.toml
-          # The project entry of the lock file follows, so the image build
-          # sees one version and not two.
-          sed -i "/^name = \"audio-video-search-backend\"$/{n;s|^version = \"[^\"]*\"|version = \"${PREV_VERSION}\"|}" prev/backend/uv.lock
+          git -C app-src worktree add --detach "${GITHUB_WORKSPACE}/prev" "${PREV_COMMIT}"
+          test "$(git -C prev rev-parse HEAD)" = "${PREV_COMMIT}"
           test "$(grep -c "<version>${PREV_VERSION}</version>" prev/php/appinfo/info.xml)" = "1"
           test "$(grep -c "<version>${PREV_VERSION}</version>" prev/backend/appinfo/info.xml)" = "1"
           test "$(grep -c "<image-tag>${PREV_VERSION}</image-tag>" prev/backend/appinfo/info.xml)" = "1"
@@ -681,7 +684,7 @@ jobs:
           curl -sf "${NC_URL}/status.php"
           ./occ app:enable -vvv -f app_api
 
-      - name: Install the PHP app at 0.0.1
+      - name: Install the PHP app at 0.1.0
         run: |
           cp -R prev/php apps/audio_video_search
           ./occ app:enable audio_video_search
@@ -754,7 +757,7 @@ jobs:
           done
           exit 1
 
-      - name: Register the HaRP daemon and install the ExApp at 0.0.1
+      - name: Register the HaRP daemon and install the ExApp at 0.1.0
         run: |
           timeout 30 ./occ app_api:daemon:register \
             harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
@@ -774,7 +777,7 @@ jobs:
           sudo apt-get install -y ffmpeg
           bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
 
-      - name: Seed users, team folder, shares, media and test results at 0.0.1
+      - name: Seed users, team folder, shares, media and test results at 0.1.0
         env:
           OCC: ./occ
           MEDIA_DIR: ${{ runner.temp }}/testdata
@@ -785,13 +788,13 @@ jobs:
           cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
 
       # Everything the update has to keep, on record before it runs.
-      - name: Before the update, 0.0.1 is ok, seeded and found
+      - name: Before the update, 0.1.0 is ok, seeded and found
         run: |
           curl -sfS -o status-before.json -u "admin:${ADMIN_PASS}" \
             "http://localhost:8090/exapps/${BACKEND_APP_ID}/status"
           cat status-before.json; echo
           jq -e --arg v "${PREV_VERSION}" \
-            '.appVersion == $v and .schemaVersion == 2 and .companion == "ok" and .sampleCount >= 1' status-before.json
+            '.appVersion == $v and .schemaVersion == 1 and .companion == "ok" and .sampleCount >= 1' status-before.json
           bash app-src/ci/admin-state.sh state-before.json
           jq -e --arg v "${PREV_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-before.json
           curl -sfS -o search-before.json -u "alice:${ALICE_PASS}" \
@@ -807,6 +810,30 @@ jobs:
             echo "SAMPLE_COUNT=$(jq -r '.sampleCount' status-before.json)"
           } >> "${GITHUB_ENV}"
           echo "hits $(cat hits-before.json), volume ${volume}"
+
+      # The positive control (plan 02-21): the old state has to be the one of
+      # 0.1.0, read straight from the files and not through the app. state.db
+      # at schema_version 1 with the sample in file_ref (state sample,
+      # storage_id ''), and no oc_avs_ table in the Nextcloud database next to
+      # a table that is always there (oc_appconfig), so an empty or wrong file
+      # cannot pass.
+      - name: Before the update, the old schema is really there
+        run: |
+          docker exec -i "${EXAPP_CONTAINER}" python - "${FILEID_WEBM}" <<'PY' || { echo "upgrade positive control failed: state.db is not the one of 0.1.0"; exit 1; }
+          import os, sqlite3, sys
+          db = sqlite3.connect(os.path.join(os.environ["APP_PERSISTENT_STORAGE"], "state.db"))
+          version = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+          probe = db.execute("SELECT storage_id, state FROM file_ref WHERE file_id = ?", (int(sys.argv[1]),)).fetchone()
+          print(f"schema_version {version}, probe {probe}")
+          sys.exit(0 if version == ("1",) and probe == ("", "sample") else 1)
+          PY
+          python3 - data/owncloud.db <<'PY' || { echo "upgrade positive control failed: oc_avs_ tables exist before the update"; exit 1; }
+          import sqlite3, sys
+          names = {row[0] for row in sqlite3.connect(sys.argv[1]).execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+          ours = sorted(name for name in names if name.startswith("oc_avs_"))
+          print(f"{len(names)} tables, oc_appconfig {'oc_appconfig' in names}, oc_avs_ {ours}")
+          sys.exit(0 if "oc_appconfig" in names and not ours else 1)
+          PY
 
       # The PHP half: the directory goes and the new one takes its place, the
       # way Installer::updateAppstoreApp does it. occ upgrade then runs the app
@@ -868,6 +895,37 @@ jobs:
           echo "hits before $(cat hits-before.json), after $(cat hits-after.json)"
           cmp hits-before.json hits-after.json
 
+      # The schema step itself (plan 02-21): state.db at 2 in the same file,
+      # the sample of 0.1.0 moved to sample_ref with its transcript (current),
+      # no row of file_ref left with state sample or a storage_id that is not
+      # a number, the tables of the PHP migration in place, and occ status
+      # answers with JSON.
+      - name: After the update, the migration of both halves ran
+        run: |
+          docker exec -i "${EXAPP_CONTAINER}" python - "${FILEID_WEBM}" <<'PY'
+          import os, sqlite3, sys
+          db = sqlite3.connect(os.path.join(os.environ["APP_PERSISTENT_STORAGE"], "state.db"))
+          file_id = int(sys.argv[1])
+          version = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+          sample = db.execute(
+              "SELECT s.media_id, c.version_id FROM sample_ref s JOIN current c ON c.media_id = s.media_id"
+              " WHERE s.file_id = ?", (file_id,)).fetchone()
+          left = db.execute(
+              "SELECT COUNT(*) FROM file_ref WHERE state = 'sample' OR typeof(storage_id) <> 'integer'").fetchone()
+          print(f"schema_version {version}, sample_ref with transcript {sample}, old rows left {left}")
+          sys.exit(0 if version == ("2",) and sample is not None and left == (0,) else 1)
+          PY
+          python3 - data/owncloud.db <<'PY'
+          import sqlite3, sys
+          names = {row[0] for row in sqlite3.connect(sys.argv[1]).execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+          wanted = ("oc_avs_queue", "oc_avs_crawl", "oc_avs_storage")
+          print({name: name in names for name in wanted})
+          sys.exit(0 if all(name in names for name in wanted) else 1)
+          PY
+          ./occ audio_video_search:status --json > occ-status-after.json
+          cat occ-status-after.json; echo
+          jq -e 'has("queue") and has("crawl")' occ-status-after.json
+
       - name: Collect the logs
         if: always()
         run: |
@@ -876,7 +934,7 @@ jobs:
           [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
-          cp status-*.json state-*.json search-*.json hits-*.json logs/ 2>/dev/null || true
+          cp status-*.json state-*.json search-*.json hits-*.json occ-status-*.json logs/ 2>/dev/null || true
 
       - name: Upload the logs
         if: always()
