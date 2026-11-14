@@ -82,8 +82,13 @@ jobs:
     name: discovery ${{ matrix.server-version }} ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     # An estimate until the first green run measures it: image build, HaRP,
-    # Samba, the topology and one wait per phase (each up to 900 s).
-    timeout-minutes: 120
+    # Samba, the topology and one wait per phase (each up to 900 s). Plus 30
+    # minutes for phase 3 (plan 03-17): about 670 MB of models on a cache miss,
+    # and the preview of every test medium and of the speech clip. Plan 03-15
+    # measured 3.5 to 7.4 s per file with the start of the engine child on a
+    # laptop; about 40 media files at twice that on a runner are 10 minutes,
+    # the rest is reserve for the waits of the phase search-parity.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -217,6 +222,91 @@ jobs:
           docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src/backend
           docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}"
 
+      # The speech models and the speech clips of phase 3 (plan 03-17), with the
+      # cache keys of python.yml: MODEL_SHA256 of models/catalog.py; the member
+      # sha256 of ci/media/fetch_speech.py plus the sha256 of the ffmpeg that
+      # turned them into WAV (here the one of the runner). Both files only hold
+      # constants and stdlib imports, so the python3 of the runner reads them.
+      - name: Cache keys of the speech models and clips
+        id: speech-keys
+        run: |
+          set -euo pipefail
+          MODELS_KEY="avs-models-$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["MODEL_SHA256"])' app-src/backend/src/audio_video_search_backend/models/catalog.py)"
+          FFMPEG_SHA256="$(sha256sum "$(command -v ffmpeg)" | cut -c1-64)"
+          SPEECH_KEY="avs-speech-$(python3 -I -c 'import hashlib, runpy, sys; m = runpy.run_path(sys.argv[1]); print(hashlib.sha256(",".join([*sorted(c.member_sha256 for c in m["CLIPS"]), sys.argv[2]]).encode()).hexdigest())' app-src/ci/media/fetch_speech.py "$FFMPEG_SHA256")"
+          echo "models=$MODELS_KEY" >> "$GITHUB_OUTPUT"
+          echo "speech=$SPEECH_KEY" >> "$GITHUB_OUTPUT"
+
+      # A cache entry is only a place to keep the files (T-03-59): the verdict
+      # files of procure are not cached, so the container hashes every model
+      # file again when /init checks them.
+      - name: Restore the speech models
+        id: models-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/avs-models
+            !${{ runner.temp }}/avs-models/**/*.verified.json
+          key: ${{ steps.speech-keys.outputs.models }}
+
+      # The downloader of the image of this commit, the one /init would run
+      # (fixed URL, host allowlist, fixed sha256), as the user of the runner so
+      # the cache can keep what it wrote.
+      - name: Fetch the speech models on a cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/avs-models"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${RUNNER_TEMP}/avs-models:/avs-models" \
+            --entrypoint /app/.venv/bin/python \
+            "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -m audio_video_search_backend.models.procure --root /avs-models
+
+      - name: Restore the speech clips
+        id: speech-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/avs-speech
+          key: ${{ steps.speech-keys.outputs.speech }}
+
+      - name: Fetch the speech clips on a cache miss
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: python3 -I app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+
+      # The member sha256 binds (fetch_speech.py checks it at the fetch); the WAV
+      # sha256 depends on the ffmpeg build and only warns, as in python.yml. The
+      # runner context is not allowed in a job env, so the paths go through
+      # GITHUB_ENV and hold for every later step of the job.
+      - name: Check the speech clips and hand them to the phases
+        run: |
+          set -euo pipefail
+          python3 -I -c 'import hashlib, pathlib, runpy, sys; m = runpy.run_path(sys.argv[1]); d = pathlib.Path(sys.argv[2]); [print(f"::warning::{c.name} wav sha256 {h} differs from {c.wav_sha256} (other ffmpeg build)") for c in m["CLIPS"] if (h := hashlib.sha256((d / c.name).read_bytes()).hexdigest()) != c.wav_sha256]' app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+          WORD="$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["EXPECTED_WORD"])' app-src/ci/media/fetch_speech.py)"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_de.wav"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+          {
+            echo "AVS_SPEECH_DE=${RUNNER_TEMP}/avs-speech/speech_de.wav"
+            echo "AVS_SPEECH_TR=${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+            echo "AVS_SPEECH_WORD=${WORD}"
+          } >> "$GITHUB_ENV"
+
+      # The air gap way of plan 03-07: the files lie in the persistent storage
+      # before the app is installed. HaRP reuses an existing volume of this name
+      # at create (see the upgrade job of deploy-harp.yml), and a fresh named
+      # volume takes over owner and mode of the directory of the image, so the
+      # copy runs as uid 10001 like the container. No verdict file goes in.
+      - name: Put the speech models into the volume of the ExApp
+        run: |
+          set -euo pipefail
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          docker volume create "${volume}"
+          docker run --rm --user 10001:10001 \
+            -v "${volume}:/nc_app_${BACKEND_APP_ID}_data" \
+            -v "${RUNNER_TEMP}/avs-models/models:/avs-models:ro" \
+            --entrypoint sh "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -c 'cp -R /avs-models "$1/models" && find "$1/models" -name "*.verified.json" -delete && echo "model files: $(find "$1/models" -type f | wc -l)"' \
+            sh "/nc_app_${BACKEND_APP_ID}_data"
+
       - name: Start HaRP
         run: |
           harp_key=$(openssl rand -hex 16)
@@ -283,6 +373,27 @@ jobs:
           container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
           test -n "${container}" || { docker ps -a; exit 1; }
           echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      # /init found both models in the volume and fetched nothing: AppAPI holds
+      # init 100, and the log of the container has a "model procure" line with
+      # outcome present for each model, none with procured, and "models ready".
+      - name: The models came from the volume, not from the network
+        run: |
+          set -euo pipefail
+          status=$(sqlite3 data/owncloud.db "SELECT status FROM oc_ex_apps WHERE appid='${BACKEND_APP_ID}'")
+          echo "AppAPI status ${status}"
+          jq -e '.init == 100' <<< "${status}"
+          docker logs "${EXAPP_CONTAINER}" 2>&1 \
+            | jq -cR 'fromjson? | select(.msg == "model procure" or .msg == "models ready")' > procure-lines.json
+          cat procure-lines.json
+          for model in silero parakeet; do
+            jq -e -s --arg m "${model}" 'any(.[]; .msg == "model procure" and .model == $m and .outcome == "present")' procure-lines.json
+          done
+          if jq -e -s 'any(.[]; .msg == "model procure" and .outcome != "present")' procure-lines.json; then
+            echo "a model was fetched or failed at /init although it lay in the volume"
+            exit 1
+          fi
+          jq -e -s 'any(.[]; .msg == "models ready")' procure-lines.json
 
       # The last step of the setup. The phases run only after it succeeded:
       # without the instance every phase would only wait out its limit.
@@ -405,7 +516,7 @@ jobs:
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
           cp app-src/ci/discovery/ids.env logs/ 2>/dev/null || true
-          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt procure-lines.json logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/avs-discovery/ledger.tsv" logs/ 2>/dev/null || true
           sudo tail -n 300 /var/log/samba/log.smbd > logs/smbd.log 2>/dev/null || true
 

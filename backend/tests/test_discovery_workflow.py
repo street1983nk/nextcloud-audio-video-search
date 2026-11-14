@@ -990,3 +990,140 @@ def test_the_cron_rule_ignores_a_comment_and_fires_without_a_loop() -> None:
     assert cron_order_findings(text.replace(body, body.replace(loop, ""), 1)) == [
         "the job leak-control runs no cron loop"
     ]
+
+
+# -- speech models and clip in the acceptance (plan 03-17) ---------------------------
+#
+# The job discovery puts the models of phase 3 into the volume of the ExApp
+# before it is registered (the air gap way of plan 03-07), keyed in the cache
+# by MODEL_SHA256 like python.yml; /init then has to report 100 without a
+# download. The control leg needs no model and gets none.
+
+CATALOG = REPO_ROOT / "backend" / "src" / "audio_video_search_backend" / "models" / "catalog.py"
+MODEL_KEY_STEP = "Cache keys of the speech models and clips"
+MODEL_RESTORE_STEP = "Restore the speech models"
+MODEL_FETCH_STEP = "Fetch the speech models on a cache miss"
+CLIP_RESTORE_STEP = "Restore the speech clips"
+CLIP_HAND_STEP = "Check the speech clips and hand them to the phases"
+MODEL_VOLUME_STEP = "Put the speech models into the volume of the ExApp"
+MODEL_PROOF_STEP = "The models came from the volume, not from the network"
+_MODEL_KEY = re.compile(r"avs-models-\$\(python3 -I -c '([^']*\bMODEL_SHA256\b[^']*)' \S*/models/catalog\.py\)")
+LEAK_FREE_OF_MODELS = ("avs-models", "actions/cache@", "models.procure", "AVS_SPEECH", "fetch_speech")
+
+
+def model_findings(text: str) -> list[str]:
+    """Every way the models or the clip could miss the acceptance or reach the control leg."""
+    findings: list[str] = []
+    discovery = job_text(text, "discovery")
+    steps = dict(steps_of(discovery))
+    if not _MODEL_KEY.search(steps.get(MODEL_KEY_STEP, "")):
+        findings.append("the model cache key is not avs-models-<MODEL_SHA256 of catalog.py>")
+    restore = steps.get(MODEL_RESTORE_STEP, "")
+    if "actions/cache@" not in restore or "key: ${{ steps.speech-keys.outputs.models }}" not in restore:
+        findings.append("the models are not restored from the cache under the model key")
+    if "!${{ runner.temp }}/avs-models/**/*.verified.json" not in restore:
+        findings.append("the verdict files of procure go into the cache")
+    fetch = steps.get(MODEL_FETCH_STEP, "")
+    if "steps.models-cache.outputs.cache-hit != 'true'" not in fetch or "models.procure --root" not in fetch:
+        findings.append("a cache miss of the models does not run procure")
+    clips = steps.get(CLIP_RESTORE_STEP, "")
+    if "actions/cache@" not in clips or "key: ${{ steps.speech-keys.outputs.speech }}" not in clips:
+        findings.append("the clips are not restored from the cache under the clip key")
+    hand = steps.get(CLIP_HAND_STEP, "")
+    findings += [
+        f"{name} is not handed to the phases"
+        for name in ("AVS_SPEECH_DE", "AVS_SPEECH_TR", "AVS_SPEECH_WORD")
+        if f'echo "{name}=' not in hand
+    ]
+    volume = steps.get(MODEL_VOLUME_STEP, "")
+    if '"${volume}:/nc_app_${BACKEND_APP_ID}_data"' not in volume or '-name "*.verified.json" -delete' not in volume:
+        findings.append("the models do not go into the volume of the ExApp without verdict files")
+    proof = steps.get(MODEL_PROOF_STEP, "")
+    for part in (".init == 100", '.outcome == "present"', '.outcome != "present"', '.msg == "models ready"'):
+        if part not in proof:
+            findings.append(f"the proof of /init without download lacks {part}")
+    put = discovery.find(f"- name: {MODEL_VOLUME_STEP}\n")
+    register = discovery.find("app_api:app:register")
+    check = discovery.find(f"- name: {MODEL_PROOF_STEP}\n")
+    if put < 0 or register < 0 or put > register:
+        findings.append("the models do not lie in the volume before the ExApp is registered")
+    if check < 0 or check < register:
+        findings.append("the proof of /init does not come after the registration")
+    leak = job_text(text, "leak-control")
+    findings += [f"leak-control contains {word}" for word in LEAK_FREE_OF_MODELS if word in leak]
+    return findings
+
+
+def test_the_acceptance_puts_the_models_and_the_clip_in_place() -> None:
+    assert model_findings(source()) == []
+
+
+def test_the_model_key_is_the_model_sha256_of_the_catalog() -> None:
+    import subprocess
+    import sys
+
+    from audio_video_search_backend.models.catalog import MODEL_SHA256
+
+    found = _MODEL_KEY.search(dict(steps_of(job_text(source(), "discovery")))[MODEL_KEY_STEP])
+    assert found is not None
+    printed = subprocess.run(  # noqa: S603 - the interpreter of this test and a fixed file
+        [sys.executable, "-I", "-c", found.group(1), str(CATALOG)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    assert printed == MODEL_SHA256
+
+
+def test_the_model_rule_fires_on_a_key_without_the_model_sha256_and_on_verdict_files() -> None:
+    text = source()
+    assert text.count('["MODEL_SHA256"]') == 1
+    broken = text.replace('["MODEL_SHA256"]', '["MODELS"]').replace(
+        '-name "*.verified.json" -delete', '-name "*.tmp" -delete'
+    )
+
+    assert model_findings(broken) == [
+        "the model cache key is not avs-models-<MODEL_SHA256 of catalog.py>",
+        "the models do not go into the volume of the ExApp without verdict files",
+    ]
+
+
+def test_the_model_rule_fires_when_the_models_come_after_the_registration() -> None:
+    text = source()
+    discovery = job_text(text, "discovery")
+    steps = re.split(r"(?=^      - name: )", discovery, flags=re.MULTILINE)
+    volume = next(step for step in steps if step.startswith(f"      - name: {MODEL_VOLUME_STEP}\n"))
+    proof = next(step for step in steps if step.startswith(f"      - name: {MODEL_PROOF_STEP}\n"))
+    moved = discovery.replace(volume, "", 1).replace(proof, proof + volume, 1)
+
+    assert model_findings(text.replace(discovery, moved, 1)) == [
+        "the models do not lie in the volume before the ExApp is registered"
+    ]
+
+
+def test_the_model_rule_fires_without_the_download_proof_and_a_clip_variable() -> None:
+    text = source()
+    broken = text.replace(
+        'if jq -e -s \'any(.[]; .msg == "model procure" and .outcome != "present")\'', "if false"
+    ).replace('echo "AVS_SPEECH_WORD=', 'echo "AVS_WORD=')
+
+    assert model_findings(broken) == [
+        "AVS_SPEECH_WORD is not handed to the phases",
+        'the proof of /init without download lacks .outcome != "present"',
+    ]
+
+
+def test_the_model_rule_fires_on_a_model_step_in_the_control_leg() -> None:
+    text = source()
+    leak = job_text(text, "leak-control")
+    marker = "      - name: Start HaRP\n"
+    assert leak.count(marker) == 1
+    cache = (
+        "      - name: Restore the speech models\n"
+        "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n"
+        "        with:\n          path: ${{ runner.temp }}/avs-models\n"
+    )
+    broken = text.replace(leak, leak.replace(marker, cache + marker, 1), 1)
+
+    assert model_findings(broken) == ["leak-control contains avs-models", "leak-control contains actions/cache@"]
