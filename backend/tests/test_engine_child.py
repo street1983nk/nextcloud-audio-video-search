@@ -433,6 +433,31 @@ def test_a_dropped_window_carries_no_words_but_its_counts() -> None:
     assert engine.vad_calls == [True]
 
 
+class UnsureEngine(ScriptedEngine):
+    """ScriptedEngine whose words have a confidence of exp(-0.5) = 0.6065: kept in the first pass only."""
+
+    def _decode(self, samples: np.ndarray) -> tuple[list[str], list[float], list[float]]:
+        tokens, times, _ = super()._decode(samples)
+        return tokens, times, [-0.5] * len(tokens)
+
+
+def test_the_second_pass_drops_a_window_below_its_confidence_border() -> None:
+    # D-03-23: German 0.95, mean confidence 0.6065: below SECOND_PASS_CONF, above CONF_INSTANCE.
+    span = _span_len(SR, 2 * SR)
+    decodes = {span: [(" Hallo", 0.9), (" Welt", 1.2)]}
+
+    first = UnsureEngine([(SR, SR)], decodes).transcribe(np.zeros(60 * SR, dtype=np.float32), 0, second_pass=False)
+    second = UnsureEngine([(SR, SR)], decodes).transcribe(np.zeros(60 * SR, dtype=np.float32), 0, second_pass=True)
+
+    assert first[0].conf_mean == round(math.exp(-0.5), 4)
+    assert (first[0].lid, first[0].lid_p) == ("de", 0.95)
+    assert first[0].verdict == KEEP
+    assert [word.text for word in first[0].words] == ["Hallo", "Welt"]
+    assert second[0].verdict == DROP_CONFIDENCE
+    assert second[0].words == ()
+    assert second[0].n_words == 2
+
+
 def test_a_window_in_another_script_is_dropped() -> None:
     span = _span_len(SR, 2 * SR)
     engine = ScriptedEngine([(SR, SR)], {span: [(" Привет", 0.9)]})

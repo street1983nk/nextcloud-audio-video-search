@@ -13,28 +13,68 @@ import pytest
 
 from audio_video_search_backend.engine import catch
 
+FIRST_PASS = [
+    pytest.param(0.0, "ru", 1.0, 20, 0.95, catch.DROP_SCRIPT, id="cyrillic"),
+    pytest.param(1.0, "es", 0.98, 12, 0.97, catch.DROP_LANGUAGE, id="spanish-clean"),
+    pytest.param(1.0, "es", 0.98, 2, 0.97, catch.KEEP, id="two-words-no-language-decision"),
+    pytest.param(1.0, "en", 0.97, 6, 0.34, catch.DROP_CONFIDENCE, id="word-salad-as-english"),
+    pytest.param(1.0, "mt", 1.0, 8, 0.39, catch.DROP_LANGUAGE, id="arabic-as-maltese"),
+    pytest.param(1.0, "de", 0.95, 10, 0.55, catch.KEEP, id="sure-instance-language"),
+    pytest.param(1.0, "de", 0.95, 10, 0.49, catch.DROP_CONFIDENCE, id="sure-instance-below-half"),
+    pytest.param(1.0, "de", 0.85, 10, 0.55, catch.DROP_CONFIDENCE, id="unsure-instance-below-0.6"),
+    pytest.param(1.0, "fr", 0.5, 4, 0.60, catch.KEEP, id="confidence-border-inclusive"),
+    pytest.param(0.5, "de", 0.95, 4, 0.9, catch.KEEP, id="script-border-inclusive"),
+    # Borders of the language rule: p and the word count are inclusive.
+    pytest.param(1.0, "es", 0.9, 3, 0.97, catch.DROP_LANGUAGE, id="language-borders-inclusive"),
+    pytest.param(1.0, "es", 0.89, 3, 0.97, catch.KEEP, id="language-p-below-border"),
+    pytest.param(1.0, "de", 0.9, 10, 0.5, catch.KEEP, id="instance-borders-inclusive"),
+]
 
-@pytest.mark.parametrize(
-    ("latin", "lid", "lid_p", "n_words", "conf_mean", "expected"),
-    [
-        pytest.param(0.0, "ru", 1.0, 20, 0.95, catch.DROP_SCRIPT, id="cyrillic"),
-        pytest.param(1.0, "es", 0.98, 12, 0.97, catch.DROP_LANGUAGE, id="spanish-clean"),
-        pytest.param(1.0, "es", 0.98, 2, 0.97, catch.KEEP, id="two-words-no-language-decision"),
-        pytest.param(1.0, "en", 0.97, 6, 0.34, catch.DROP_CONFIDENCE, id="word-salad-as-english"),
-        pytest.param(1.0, "mt", 1.0, 8, 0.39, catch.DROP_LANGUAGE, id="arabic-as-maltese"),
-        pytest.param(1.0, "de", 0.95, 10, 0.55, catch.KEEP, id="sure-instance-language"),
-        pytest.param(1.0, "de", 0.95, 10, 0.49, catch.DROP_CONFIDENCE, id="sure-instance-below-half"),
-        pytest.param(1.0, "de", 0.85, 10, 0.55, catch.DROP_CONFIDENCE, id="unsure-instance-below-0.6"),
-        pytest.param(1.0, "fr", 0.5, 4, 0.60, catch.KEEP, id="confidence-border-inclusive"),
-        pytest.param(0.5, "de", 0.95, 4, 0.9, catch.KEEP, id="script-border-inclusive"),
-        # Borders of the language rule: p and the word count are inclusive.
-        pytest.param(1.0, "es", 0.9, 3, 0.97, catch.DROP_LANGUAGE, id="language-borders-inclusive"),
-        pytest.param(1.0, "es", 0.89, 3, 0.97, catch.KEEP, id="language-p-below-border"),
-        pytest.param(1.0, "de", 0.9, 10, 0.5, catch.KEEP, id="instance-borders-inclusive"),
-    ],
-)
+
+@pytest.mark.parametrize(("latin", "lid", "lid_p", "n_words", "conf_mean", "expected"), FIRST_PASS)
 def test_window_verdict(latin: float, lid: str, lid_p: float, n_words: int, conf_mean: float, expected: str) -> None:
     assert catch.window_verdict(latin, lid, lid_p, n_words, conf_mean) == expected
+
+
+@pytest.mark.parametrize(("latin", "lid", "lid_p", "n_words", "conf_mean", "expected"), FIRST_PASS)
+def test_window_verdict_first_pass_is_unchanged_by_the_keyword(
+    latin: float, lid: str, lid_p: float, n_words: int, conf_mean: float, expected: str
+) -> None:
+    assert catch.window_verdict(latin, lid, lid_p, n_words, conf_mean, second_pass=False) == expected
+
+
+# D-03-23, owner decision option A (14.11.2026): a window of the second VAD pass keeps its
+# words only from a mean word confidence of SECOND_PASS_CONF on, with no language condition
+# beyond the catch rule. Measured cases from scripts/research/phase3/verdict23.py and eval23.py
+# (plan 03-13b), rounded as stored: JA 0.658 out, fr_11 0.7034 in, fr_02 0.6098 out.
+@pytest.mark.parametrize(
+    ("latin", "lid", "lid_p", "n_words", "conf_mean", "second_pass", "expected"),
+    [
+        pytest.param(1.0, "en", 0.249, 2, 0.658, True, catch.DROP_CONFIDENCE, id="ja-00-second-pass-dropped"),
+        pytest.param(1.0, "en", 0.249, 2, 0.658, False, catch.KEEP, id="ja-00-first-pass-kept-positive-control"),
+        pytest.param(1.0, "fr", 0.315, 2, 0.7034, True, catch.KEEP, id="fr-2w-memo-11-kept"),
+        pytest.param(1.0, "fr", 0.748, 2, 0.6098, True, catch.DROP_CONFIDENCE, id="fr-2w-memo-02-dropped"),
+        pytest.param(1.0, "en", 0.975, 7, 0.7395, True, catch.KEEP, id="en-4w-memo-04-kept"),
+        pytest.param(1.0, "en", 0.991, 6, 0.7987, True, catch.KEEP, id="en-3s-memo-00-kept"),
+        pytest.param(1.0, "en", 0.996, 11, 0.8767, True, catch.KEEP, id="en-3s-memo-02-kept"),
+        # Borders: inclusive at SECOND_PASS_CONF.
+        pytest.param(1.0, "de", 0.95, 3, 0.68, True, catch.KEEP, id="second-pass-border-inclusive"),
+        pytest.param(1.0, "de", 0.95, 3, 0.6799, True, catch.DROP_CONFIDENCE, id="second-pass-below-border"),
+        # The lower border of a sure instance language does not hold in the second pass.
+        pytest.param(1.0, "de", 0.95, 10, 0.55, True, catch.DROP_CONFIDENCE, id="sure-instance-0.55-second-pass"),
+        pytest.param(1.0, "de", 0.95, 10, 0.55, False, catch.KEEP, id="sure-instance-0.55-first-pass"),
+        # Option A has no language condition: two words without a language decision stay.
+        pytest.param(1.0, "es", 0.98, 2, 0.97, True, catch.KEEP, id="two-words-no-language-decision-second-pass"),
+        # The catch rule stays in front.
+        pytest.param(0.4, "en", 0.99, 3, 0.95, True, catch.DROP_SCRIPT, id="script-second-pass"),
+        pytest.param(1.0, "tr", 0.99, 3, 0.97, True, catch.DROP_LANGUAGE, id="language-second-pass"),
+        pytest.param(1.0, "", 0.0, 0, 0.0, True, catch.DROP_CONFIDENCE, id="no-text-second-pass"),
+    ],
+)
+def test_window_verdict_second_pass(
+    latin: float, lid: str, lid_p: float, n_words: int, conf_mean: float, second_pass: bool, expected: str
+) -> None:
+    assert catch.window_verdict(latin, lid, lid_p, n_words, conf_mean, second_pass=second_pass) == expected
 
 
 @pytest.mark.parametrize(

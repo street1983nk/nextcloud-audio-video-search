@@ -56,7 +56,8 @@ from audio_video_search_backend.engine import catch, constants
         ("CHUNK_MS", 600_000),
         ("CHUNK_CONTEXT_MS", 1_000),
         ("CHUNK_LOOKAHEAD_MS", 60_000),
-        ("CONFIG_VERSION", 1),
+        # TRANS-06: 2 since D-03-23 (plan 03-13b), the second pass drops words it kept before.
+        ("CONFIG_VERSION", 2),
     ],
 )
 def test_pipeline_constant(name: str, expected: object) -> None:
@@ -83,6 +84,9 @@ def test_pipeline_constant(name: str, expected: object) -> None:
         # the middles of the measured gaps (2,1 s / 4,3 s and 45 % / 55 %).
         ("SPEECH_ONLY_MS", 3_000),
         ("SPEECH_ONLY_SHARE", 0.5),
+        # D-03-23, owner option A (plan 03-13b, verdict23.py / eval23.py): second pass from a mean
+        # word confidence of 0.68 on; the gap between JA 0.658 and the FR memo 0.7034.
+        ("SECOND_PASS_CONF", 0.68),
     ],
 )
 def test_catch_constant(name: str, expected: object) -> None:
@@ -133,6 +137,7 @@ catch.LID_MIN_WORDS=3
 catch.LID_P=0.9
 catch.MIN_LATIN=0.5
 catch.NO_SPEECH='no_speech'
+catch.SECOND_PASS_CONF=0.68
 catch.SPEECH_ONLY_MS=3000
 catch.SPEECH_ONLY_SHARE=0.5
 catch.TRANSCRIPT='transcript'
@@ -141,7 +146,7 @@ catch.UNSUPPORTED_LANGUAGE='unsupported_language'
 constants.CHUNK_CONTEXT_MS=1000
 constants.CHUNK_LOOKAHEAD_MS=60000
 constants.CHUNK_MS=600000
-constants.CONFIG_VERSION=1
+constants.CONFIG_VERSION=2
 constants.CONTEXT_S=0.4
 constants.DECODING_METHOD='greedy_search'
 constants.GUARD_MIN_S=1.0
@@ -173,10 +178,11 @@ def test_the_fingerprint_of_all_constants_is_fixed() -> None:
 def test_the_fingerprint_sees_every_constant_the_value_tests_name() -> None:
     """Counter test of the fingerprint helper: it finds the names, not an empty list."""
     lines = fingerprint().splitlines()
-    assert "constants.CONFIG_VERSION=1" in lines
+    assert "constants.CONFIG_VERSION=2" in lines
     assert "catch.CONF=0.6" in lines
+    assert "catch.SECOND_PASS_CONF=0.68" in lines
     # catch.py imports SECOND_PASS_MAX_FILE_MS; only the module that assigns a name lists it.
-    assert not any(line.startswith("catch.SECOND_PASS") for line in lines)
+    assert not any(line.startswith("catch.SECOND_PASS_MAX_FILE_MS") for line in lines)
 
 
 def test_the_fingerprint_changes_with_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
