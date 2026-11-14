@@ -1,5 +1,3 @@
-# pyright: reportMissingImports=false
-# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: verschlechterte Instanz-Sprache (darf von der Abfangregel nicht verworfen werden).
 
 python -I build_extra.py [--ffmpeg PFAD] <corpus_dir>  -> <corpus_dir>/extra/*.wav

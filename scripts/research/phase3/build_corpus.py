@@ -1,5 +1,3 @@
-# pyright: reportMissingImports=false
-# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: abgeleitete Testdateien aus dem geladenen Korpus bauen (alles 16 kHz mono s16).
 
 python -I build_corpus.py <corpus_dir>   -> <corpus_dir>/test/<name>.wav

@@ -1,5 +1,3 @@
-# pyright: reportMissingImports=false
-# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: zweiter Durchgang für Dateien ohne Wörter.
 
 Varianten je Datei (nur erste 30 s):

@@ -1,5 +1,3 @@
-# pyright: reportMissingImports=false
-# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: Parakeet-Vorschau (Spike-3-Standard, Schluck-Wächter 1,0) auf dem Korpus.
 
 python -I measure.py <models_dir> <stop_dir> <out_dir> <wav> [<wav> ...]

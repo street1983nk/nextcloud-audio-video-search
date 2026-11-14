@@ -1,5 +1,3 @@
-# pyright: reportMissingImports=false
-# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: echte Kurzmemos (1 bis 4 Wörter) an Wortgrenzen geschnitten, mit 0,5 s Stille davor und danach.
 
 Schnittpunkte aus den Parakeet-Wortzeiten der vollen Clips (results/memo_*.json): Ende des k-ten Worts + 0,25 s.
