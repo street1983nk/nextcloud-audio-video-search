@@ -3,6 +3,7 @@ OC.L10N.register(
     {
     "Audio and video": "Audio and video",
     "Test result": "Test result",
+    "Preliminary": "Preliminary",
     "Playback": "Playback",
     "Starts at %s": "Starts at %s",
     "Playback: %s": "Playback: %s",

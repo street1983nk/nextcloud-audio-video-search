@@ -28,17 +28,31 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
 /**
- * The unified search entry: recheck, time mark, play link and the test result.
+ * The unified search entry: recheck, time mark, play link, the marks of state
+ * and the paging (plan 03-12).
  *
  * The container is a double of ExAppService, the file system a double of the
  * user folder. Every hit the container proposes has to survive
  * FileAccess::readableFile in the folder of the searching user, and title and
  * path of an entry come out of that node, never out of the answer.
+ *
+ * The double of the container holds one fixed order of proposals ($hits) and
+ * cuts it like the container does (plan 03-08): [offset, offset + limit),
+ * nextOffset = offset + count, hasMore while proposals are left.
  */
 #[CoversClass(Provider::class)]
 final class ProviderTest extends TestCase {
-	/** @var list<array{fileId:int,startMs:int,excerpt:string,sample:bool}>|null */
+	/** @var list<array{fileId:int,startMs:int,excerpt:string,sample:bool,stage:string}>|null the fixed order of the container */
 	private ?array $hits = [];
+
+	/** @var list<array{limit:int,offset:int}> every call to the container */
+	private array $pages = [];
+
+	/** The call (1 based) from which the container gives no usable answer. */
+	private ?int $failFromCall = null;
+
+	/** How often a file was looked up in the folder of alice. */
+	private int $lookups = 0;
 
 	private bool $debug = false;
 	private bool $sampleVisible = false;
@@ -83,6 +97,9 @@ final class ProviderTest extends TestCase {
 		parent::setUp();
 
 		$this->hits = [];
+		$this->pages = [];
+		$this->failFromCall = null;
+		$this->lookups = 0;
 		$this->debug = false;
 		$this->sampleVisible = false;
 		$this->allowed = true;
@@ -119,17 +136,31 @@ final class ProviderTest extends TestCase {
 
 			return $this->allowed;
 		});
-		$exApp->method('search')->willReturnCallback(function (string $uid, string $term, int $limit): ?array {
+		$exApp->method('search')->willReturnCallback(function (string $uid, string $term, int $limit, int $offset = 0): ?array {
 			$this->searchCalls++;
 			self::assertSame('alice', $uid);
 			self::assertLessThanOrEqual(200, mb_strlen($term));
-			self::assertSame(25, $limit);
+			$this->pages[] = ['limit' => $limit, 'offset' => $offset];
+			if ($this->hits === null || ($this->failFromCall !== null && $this->searchCalls >= $this->failFromCall)) {
+				return null;
+			}
 
-			return $this->hits;
+			// The container caps a page at 50 (ExAppService::MAX_LIMIT).
+			$cut = array_slice($this->hits, $offset, min(50, $limit));
+
+			return [
+				'hits' => $cut,
+				'nextOffset' => $offset + count($cut),
+				'hasMore' => $offset + count($cut) < count($this->hits),
+			];
 		});
 
 		$userFolder = $this->createMock(Folder::class);
-		$userFolder->method('getFirstNodeById')->willReturnCallback(fn (int $id): ?File => $this->readable[$id] ?? null);
+		$userFolder->method('getFirstNodeById')->willReturnCallback(function (int $id): ?File {
+			$this->lookups++;
+
+			return $this->readable[$id] ?? null;
+		});
 		$userFolder->method('getRelativePath')->willReturnCallback(
 			static fn (string $path): string => substr($path, strlen('/alice/files')),
 		);
@@ -213,10 +244,11 @@ final class ProviderTest extends TestCase {
 		return $user;
 	}
 
-	private function query(string $term): ISearchQuery&MockObject {
+	private function query(string $term, int $limit = 5, int|string|null $cursor = null): ISearchQuery&MockObject {
 		$query = $this->createMock(ISearchQuery::class);
 		$query->method('getTerm')->willReturn($term);
-		$query->method('getLimit')->willReturn(5);
+		$query->method('getLimit')->willReturn($limit);
+		$query->method('getCursor')->willReturn($cursor);
 		$query->method('getRoute')->willReturn('files.view.index');
 
 		return $query;
@@ -240,18 +272,61 @@ final class ProviderTest extends TestCase {
 	 * @return list<array<string, mixed>>
 	 */
 	private function entries(string $term = 'Haushalt'): array {
-		$result = $this->provider()->search($this->user(), $this->query($term))->jsonSerialize();
+		return $this->page($term)['entries'];
+	}
+
+	/**
+	 * One whole answer: the entries as plain arrays, isPaginated and the cursor.
+	 *
+	 * @return array{entries: list<array<string, mixed>>, isPaginated: bool, cursor: mixed}
+	 */
+	private function page(string $term = 'Haushalt', int $limit = 5, int|string|null $cursor = null): array {
+		$result = $this->provider()->search($this->user(), $this->query($term, $limit, $cursor))->jsonSerialize();
 		$entries = [];
 		foreach ($result['entries'] as $entry) {
 			$entries[] = is_array($entry) ? $entry : $entry->jsonSerialize();
 		}
 
-		return $entries;
+		return ['entries' => $entries, 'isPaginated' => (bool)$result['isPaginated'], 'cursor' => $result['cursor']];
 	}
 
-	/** @return array{fileId:int,startMs:int,excerpt:string,sample:bool} */
-	private static function hit(int $fileId, int $startMs, string $excerpt = 'der Haushalt wird beraten', bool $sample = false): array {
-		return ['fileId' => $fileId, 'startMs' => $startMs, 'excerpt' => $excerpt, 'sample' => $sample];
+	/**
+	 * A proposal as ExAppService::search hands it on. 'final' by default so
+	 * the older cases keep their subline; a sample is always the stage sample.
+	 *
+	 * @return array{fileId:int,startMs:int,excerpt:string,sample:bool,stage:string}
+	 */
+	private static function hit(int $fileId, int $startMs, string $excerpt = 'der Haushalt wird beraten', bool $sample = false, string $stage = 'final'): array {
+		return ['fileId' => $fileId, 'startMs' => $startMs, 'excerpt' => $excerpt, 'sample' => $sample, 'stage' => $sample ? 'sample' : $stage];
+	}
+
+	/**
+	 * $count marks, one second apart, spread over files 11, 12, ... with three
+	 * marks per file, as the tiers of the container bring them.
+	 *
+	 * @return list<array{fileId:int,startMs:int,excerpt:string,sample:bool,stage:string}>
+	 */
+	private function marks(int $count, string $stage = 'final'): array {
+		$hits = [];
+		for ($index = 0; $index < $count; $index++) {
+			$fileId = 11 + intdiv($index, 3);
+			if (!isset($this->readable[$fileId])) {
+				$this->file($fileId, 'Sitzung ' . $fileId . '.mp4');
+			}
+			$hits[] = self::hit($fileId, ($index + 1) * 1000, 'Stelle ' . $index, false, $stage);
+		}
+
+		return $hits;
+	}
+
+	/**
+	 * The time marks of a page, which name the proposal they came from.
+	 *
+	 * @param list<array<string, mixed>> $entries
+	 * @return list<string>
+	 */
+	private static function urls(array $entries): array {
+		return array_map(static fn (array $entry): string => (string)$entry['resourceUrl'], $entries);
 	}
 
 	public function testItsIdNameAndOrder(): void {
@@ -518,5 +593,179 @@ final class ProviderTest extends TestCase {
 		self::assertCount(2, $entries);
 		self::assertNotSame($entries[0]['resourceUrl'], $entries[1]['resourceUrl']);
 		self::assertSame('61.5', $this->links[1][1]['t']);
+	}
+
+	// -- paging, recheck cache and the marks of state (plan 03-12) ---------------
+
+	public function testALimitOfFiveGivesExactlyFiveAndACursorBehindThem(): void {
+		$this->hits = $this->marks(12);
+
+		$page = $this->page('Haushalt', 5);
+
+		self::assertCount(5, $page['entries']);
+		self::assertTrue($page['isPaginated']);
+		self::assertSame(5, $page['cursor']);
+		self::assertSame([['limit' => 20, 'offset' => 0]], $this->pages);
+	}
+
+	public function testALargerLimitStartsWithTheSameMarks(): void {
+		$this->hits = $this->marks(12);
+		$five = self::urls($this->page('Haushalt', 5)['entries']);
+		$this->links = [];
+
+		$ten = self::urls($this->page('Haushalt', 10)['entries']);
+
+		self::assertCount(10, $ten);
+		self::assertSame($five, array_slice($ten, 0, 5));
+	}
+
+	public function testUnreadableProposalsAreFilledUpToTheLimitAndTheCursorFollowsTheLastDelivered(): void {
+		// Positions 0..6: files 21 and 23 are closed, so five entries need
+		// seven proposals, and the fifth delivered one is position 6.
+		$this->file(20, 'A.mp4');
+		$this->file(21, 'Fremd.mp4', false);
+		$this->file(22, 'B.mp4');
+		$this->file(23, 'Fremd2.mp4', false);
+		$this->file(24, 'C.mp4');
+		$this->file(25, 'D.mp4');
+		$this->file(26, 'E.mp4');
+		$this->file(27, 'F.mp4');
+		$this->hits = [
+			self::hit(20, 1000), self::hit(21, 1000), self::hit(22, 1000), self::hit(23, 1000),
+			self::hit(24, 1000), self::hit(25, 1000), self::hit(26, 1000), self::hit(27, 1000),
+		];
+
+		$page = $this->page('Haushalt', 5);
+
+		self::assertSame(['A.mp4', 'B.mp4', 'C.mp4', 'D.mp4', 'E.mp4'], array_column($page['entries'], 'title'));
+		self::assertTrue($page['isPaginated']);
+		self::assertSame(7, $page['cursor']);
+
+		// The next page with that cursor begins with the first mark not shown.
+		$this->links = [];
+		$next = $this->page('Haushalt', 5, $page['cursor']);
+		self::assertSame(['F.mp4'], array_column($next['entries'], 'title'));
+		self::assertFalse($next['isPaginated']);
+	}
+
+	public function testAFileWithThreeMarksIsCheckedOnce(): void {
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 1000), self::hit(11, 2000), self::hit(11, 3000)];
+
+		self::assertCount(3, $this->entries());
+		self::assertSame(1, $this->lookups);
+		self::assertSame([11], $this->askedFiles);
+	}
+
+	public function testAClosedFileWithThreeMarksIsCheckedOnceAndNeverShown(): void {
+		$this->file(11, 'Fremd.mp4', false);
+		$this->file(12, 'Eigen.mp4');
+		$this->hits = [self::hit(11, 1000), self::hit(11, 2000), self::hit(11, 3000), self::hit(12, 4000)];
+
+		self::assertSame(['Eigen.mp4'], array_column($this->entries(), 'title'));
+		self::assertSame(2, $this->lookups);
+		self::assertSame([11, 12], $this->askedFiles);
+	}
+
+	public function testTheLastPageIsComplete(): void {
+		$this->hits = $this->marks(3);
+
+		$page = $this->page('Haushalt', 5);
+
+		self::assertCount(3, $page['entries']);
+		self::assertFalse($page['isPaginated']);
+		self::assertCount(1, $this->pages);
+	}
+
+	public function testAFullPageWithTheVeryLastProposalIsComplete(): void {
+		$this->hits = $this->marks(5);
+
+		$page = $this->page('Haushalt', 5);
+
+		self::assertCount(5, $page['entries']);
+		self::assertFalse($page['isPaginated']);
+	}
+
+	public function testATestResultIsMarkedAsSuchAndNeverAsPreliminary(): void {
+		$this->debug = true;
+		$this->sampleVisible = true;
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 42000, 'Testtext', true)];
+
+		$subline = (string)$this->entries()[0]['subline'];
+
+		self::assertSame('0:42 · Test result · Testtext', $subline);
+		self::assertStringNotContainsString('Preliminary', $subline);
+	}
+
+	public function testAPreviewIsPreliminaryBeforeTheExcerptAndAFinalMarkHasNoMark(): void {
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [
+			self::hit(11, 83000, 'der Haushalt', false, 'preview'),
+			self::hit(11, 84000, 'der Haushalt', false, 'final'),
+		];
+
+		$entries = $this->entries();
+
+		self::assertSame('1:23 · Preliminary · der Haushalt', $entries[0]['subline']);
+		self::assertSame('1:24 · der Haushalt', $entries[1]['subline']);
+	}
+
+	public function testAPreviewWithoutExcerptEndsWithoutASeparator(): void {
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 83000, '', false, 'preview')];
+
+		self::assertSame('1:23 · Preliminary', $this->entries()[0]['subline']);
+	}
+
+	public function testACursorIsReadAsTheOffsetAndCappedAtTheCeiling(): void {
+		$this->hits = $this->marks(30);
+
+		$this->page('Haushalt', 5, '17');
+		$this->page('Haushalt', 5, 17);
+		$this->page('Haushalt', 5, '9999');
+		$this->page('Haushalt', 5, '99999999999999999999');
+		$this->page('Haushalt', 5, 'abc');
+		$this->page('Haushalt', 5, '-3');
+
+		self::assertSame([17, 17, 1200, 1200, 0, 0], array_column($this->pages, 'offset'));
+	}
+
+	public function testTheLimitIsCappedAtTwentyFiveAndAtLeastOne(): void {
+		$this->hits = $this->marks(60);
+
+		self::assertCount(25, $this->page('Haushalt', 40)['entries']);
+		self::assertCount(1, $this->page('Haushalt', 0)['entries']);
+		self::assertSame([100, 4], array_column($this->pages, 'limit'));
+	}
+
+	public function testABackendThatFailsInTheSecondRoundKeepsTheFirstRound(): void {
+		// Round 1 brings 20 proposals of which only file 11 is readable.
+		$this->hits = $this->marks(40);
+		foreach (array_keys($this->readable) as $id) {
+			if ($id !== 11) {
+				$this->file($id, 'Fremd ' . $id . '.mp4', false);
+			}
+		}
+		$this->failFromCall = 2;
+
+		$page = $this->page('Haushalt', 5);
+
+		self::assertCount(3, $page['entries']);
+		self::assertFalse($page['isPaginated']);
+		self::assertSame([0, 20], array_column($this->pages, 'offset'));
+	}
+
+	public function testAtMostThreeRoundsAreAsked(): void {
+		$this->hits = $this->marks(200);
+		foreach (array_keys($this->readable) as $id) {
+			$this->file($id, 'Fremd ' . $id . '.mp4', false);
+		}
+
+		$page = $this->page('Haushalt', 5);
+
+		self::assertSame([], $page['entries']);
+		self::assertFalse($page['isPaginated']);
+		self::assertSame([0, 20, 40], array_column($this->pages, 'offset'));
 	}
 }
