@@ -44,6 +44,9 @@ class StorageService {
 	/** How many file ids one slice carries at most. */
 	public const MAX_SLICE = 1000;
 
+	/** How many storage ids one lookup in oc_storages carries (Findling). */
+	public const ABSENT_LOOKUP_BAND = 200;
+
 	/** @var list<int>|null */
 	private ?array $mimeIds = null;
 
@@ -167,6 +170,74 @@ class StorageService {
 		}
 
 		return $entries;
+	}
+
+	/**
+	 * Which of the asked storages the container may forget at once (plan
+	 * 02-19, after Findling classifyAbsent, T-02-70).
+	 *
+	 * The container asks this for storages it holds references of and no
+	 * longer finds in the mount list. It must never delete out of an empty or
+	 * disturbed mount list alone, so only this side decides:
+	 *
+	 * - gone: no row in oc_storages. The user or the external storage was
+	 *   deleted, nothing will mount it again.
+	 * - deselected: the row is there, but the storage is not in the mount set
+	 *   (getMounts) or $capturable says no (an external storage the
+	 *   classification left out). A decision of the admin or of the
+	 *   classification, like an exclusion.
+	 * - present: everything else; the container keeps its references.
+	 *
+	 * Only positive asked ids come back, each once and in ascending order. The
+	 * lookup runs in bands of ABSENT_LOOKUP_BAND ids; $capturable is asked for
+	 * storages of the mount set only. Numbers in, numbers out: no path, no
+	 * storage key, no user.
+	 *
+	 * @param list<int> $storageIds
+	 * @param \Closure(int): bool $capturable
+	 * @return array{gone: list<int>, deselected: list<int>, present: list<int>}
+	 */
+	public function classifyAbsent(array $storageIds, \Closure $capturable): array {
+		$wanted = [];
+		foreach ($storageIds as $storageId) {
+			if (is_int($storageId) && $storageId > 0) {
+				$wanted[$storageId] = true;
+			}
+		}
+		$wanted = array_keys($wanted);
+		sort($wanted);
+		$answer = ['gone' => [], 'deselected' => [], 'present' => []];
+		if ($wanted === []) {
+			return $answer;
+		}
+
+		$existing = [];
+		foreach (array_chunk($wanted, self::ABSENT_LOOKUP_BAND) as $band) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('numeric_id')
+				->from('storages')
+				->where($qb->expr()->in('numeric_id', $qb->createNamedParameter($band, IQueryBuilder::PARAM_INT_ARRAY)));
+			$result = $qb->executeQuery();
+			try {
+				while (($row = $result->fetch()) !== false) {
+					$existing[(int)$row['numeric_id']] = true;
+				}
+			} finally {
+				$result->closeCursor();
+			}
+		}
+
+		foreach ($wanted as $storageId) {
+			if (!isset($existing[$storageId])) {
+				$answer['gone'][] = $storageId;
+			} elseif (!$this->inMountSet($storageId) || !$capturable($storageId)) {
+				$answer['deselected'][] = $storageId;
+			} else {
+				$answer['present'][] = $storageId;
+			}
+		}
+
+		return $answer;
 	}
 
 	/**
