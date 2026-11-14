@@ -36,7 +36,7 @@ created: 2026-11-14
 
 ## Per-Task Verification Map
 
-Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-16b) erzeugt. Jede Aufgabe hat einen `<automated>`-Befehl; Checkpoints prüfen mit einem schnellen Gate, die eigentliche Prüfung ist die Owner-Antwort. PHP- und Container-Belege (phpunit, Docker, Playwright, search-parity) kommen aus CI in Plan 03-20.
+Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-13b, 03-16b) erzeugt. Jede Aufgabe hat einen `<automated>`-Befehl; Checkpoints prüfen mit einem schnellen Gate, die eigentliche Prüfung ist die Owner-Antwort. PHP- und Container-Belege (phpunit, Docker, Playwright, search-parity) kommen aus CI in Plan 03-20.
 
 | Task-ID | Plan | Welle | Requirement | Threat-Ref | Testtyp | Automatischer Befehl | Datei | Status |
 |---|---|---|---|---|---|---|---|---|
@@ -71,6 +71,8 @@ Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-16b) erzeugt. Jede Aufgabe hat
 | 03-13-T1 | 03-13 | 4 | alle 12 | T-03-43 bis T-03-47 | tdd | `cd backend && uv run pytest tests/test_fetch_keep.py tests/test_capture.py tests/test_boundary.py -x -q` | W0 (Plan legt an) | pending |
 | 03-13-T2 | 03-13 | 4 | alle 12 | T-03-43 bis T-03-47 | tdd | `cd backend && uv run pytest tests/test_preview_worker.py -x -q` | W0 (Plan legt an) | pending |
 | 03-13-T3 | 03-13 | 4 | alle 12 | T-03-43 bis T-03-47 | auto | `cd backend && uv run pytest tests/test_preview_index_load.py -x -q -s` | W0 (Plan legt an) | pending |
+| 03-13b-T1 | 03-13b | 5 | TRANS-03, MEDIA-04 | T-03-82 bis T-03-84 | auto | `cd backend && uv run pytest tests/test_research_scripts.py -x -q && uv run ruff check ../scripts && uv run ruff format --check ../scripts` (Messung mit echter Engine im Scratch, Tabelle im SUMMARY; mehrdeutig: Owner-Checkpoint) | vorhanden | pending |
+| 03-13b-T2 | 03-13b | 5 | TRANS-03, MEDIA-04 | T-03-80, T-03-81 | tdd | `cd backend && uv run pytest tests/test_catch_rule.py tests/test_engine_constants.py tests/test_engine_child.py tests/test_vad_gate.py tests/test_preview_worker.py tests/test_research_scripts.py -x -q` | vorhanden | pending |
 | 03-14-T1 | 03-14 | 3 | SRCH-02, SRCH-03, MEDIA-04 | T-03-48, T-03-49, T-03-50 | tdd | `cd backend && uv run pytest tests/test_excerpt_states.py tests/test_sample_layer.py tests/test_sample_real_...` | vorhanden | pending |
 | 03-14-T2 | 03-14 | 3 | SRCH-02, SRCH-03, MEDIA-04 | T-03-48, T-03-49, T-03-50 | auto | `cd backend && uv run pytest tests/test_php_gates.py -x -q && grep -q "byPreview" ../php/lib/Command/StatusC...` | vorhanden | pending |
 | 03-15-T1 | 03-15 | 5 | TRANS-01, MEDIA-03, MEDIA-04 | T-03-51, T-03-52, T-03-53 | tdd | `cd backend && uv run pytest tests/test_main.py tests/test_preview_settings.py tests/test_preview_worker.py ...` | W0 (Plan legt an) | pending |
@@ -98,10 +100,10 @@ Zuordnung Anforderung zu Testdatei (aus der Research, unverändert gültig):
 | MEDIA-01 | test_media_decode.py | 03-05 |
 | MEDIA-02 | test_media_timeline.py | 03-05 |
 | MEDIA-03 | test_media_hardening.py, test_fetch_keep.py | 03-05, 03-13 |
-| MEDIA-04 | test_catch_rule.py, test_preview_worker.py, test_preview_corpus.py | 03-06, 03-13, 03-15 |
+| MEDIA-04 | test_catch_rule.py, test_preview_worker.py, test_preview_corpus.py | 03-06, 03-13, 03-13b, 03-15 |
 | TRANS-01 | test_engine_constants.py, test_engine_model.py, test_models.py, test_model_download.py, test_dockerfile.py | 03-06, 03-10, 03-07, 03-07b |
 | TRANS-02 | test_vad_gate.py | 03-06 |
-| TRANS-03 | test_catch_rule.py, test_engine_model.py | 03-06, 03-10 |
+| TRANS-03 | test_catch_rule.py, test_engine_child.py, test_engine_model.py | 03-06, 03-10, 03-13b |
 | TRANS-07 | test_preview_store.py, test_preview_worker.py | 03-09, 03-13 |
 | TRANS-08 | test_preview_worker.py -k timeline, test_engine_model.py | 03-13, 03-10 |
 | SRCH-01 | test_search_tiers.py, ProviderTest.php (CI) | 03-08, 03-12 |

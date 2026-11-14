@@ -120,7 +120,7 @@ Plans:
   3. Ein Nutzer ohne Leserecht (entzogene Freigabe, Gruppenordner-ACL `+read -share`, Papierkorb) sieht keinen Treffer aus der Datei; der Rechte-Paritätstest läuft im HTTP-Pfad in CI.
   4. Wird der Container während einer langen Datei beendet, setzt die Vorschau nach dem Neustart am letzten fertigen Stück fort; VAD lässt sich nirgends abschalten.
 
-**Plans**: 23 plans (9 Wellen)
+**Plans**: 24 plans (9 Wellen)
 Plans:
 
 - [ ] 03-01-PLAN.md: (W1) Owner: Paketfreigabe sherpa-onnx/numpy/py3langid, Texte Höchstdauer-Feld und Modell-Fehler, Deckel 24 h, Nachtrag A13/P13 zum freigegebenen T12
@@ -141,6 +141,7 @@ Plans:
 - [ ] 03-16-PLAN.md: (W4) PHP-Logik der Abspielseite: Zustände A1 bis A13 unter der Leck-Regel
 - [ ] 03-15-PLAN.md: (W5) Verdrahtung, Höchstdauer-Anhebung, Wahrheitsbedingung T6/T7, Korpus-Langtest
 - [ ] 03-16b-PLAN.md: (W5) Abspielseite: Template, CSS, Kataloge T2 bis T12 in DE/EN/FR
+- [ ] 03-13b-PLAN.md: (W5) Owner D-03-23: Wörter aus dem zweiten VAD-Durchgang nur bei sicherer Instanzsprache und gemessener Konfidenzschwelle
 - [ ] 03-17-PLAN.md: (W6) CI: Modelle in der Abnahme, Rechte-Paritätstest search-parity
 - [ ] 03-18-PLAN.md: (W6) CI: Playwright-Kernweg und Zustände mit Kontrast und Leck-Proben
 - [ ] 03-19-PLAN.md: (W7) Owner: Version 0.3.0, Upgrade von 0.2.0, Doku nach Textfreigabe
