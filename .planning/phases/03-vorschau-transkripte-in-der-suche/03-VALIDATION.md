@@ -36,7 +36,7 @@ created: 2026-11-14
 
 ## Per-Task Verification Map
 
-Aus den Plänen 03-01 bis 03-21 (inkl. 03-16b) erzeugt. Jede Aufgabe hat einen `<automated>`-Befehl; Checkpoints prüfen mit einem schnellen Gate, die eigentliche Prüfung ist die Owner-Antwort. PHP- und Container-Belege (phpunit, Docker, Playwright, search-parity) kommen aus CI in Plan 03-20.
+Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-16b) erzeugt. Jede Aufgabe hat einen `<automated>`-Befehl; Checkpoints prüfen mit einem schnellen Gate, die eigentliche Prüfung ist die Owner-Antwort. PHP- und Container-Belege (phpunit, Docker, Playwright, search-parity) kommen aus CI in Plan 03-20.
 
 | Task-ID | Plan | Welle | Requirement | Threat-Ref | Testtyp | Automatischer Befehl | Datei | Status |
 |---|---|---|---|---|---|---|---|---|
@@ -56,6 +56,8 @@ Aus den Plänen 03-01 bis 03-21 (inkl. 03-16b) erzeugt. Jede Aufgabe hat einen `
 | 03-06-T2 | 03-06 | 1 | TRANS-02, TRANS-03, MEDIA-04 | T-03-19, T-03-20, T-03-21 | tdd | `cd backend && uv run pytest tests/test_vad_gate.py -x -q` | W0 (Plan legt an) | pending |
 | 03-07-T1 | 03-07 | 2 | TRANS-01 | T-03-22 bis T-03-25 | auto | `cd backend && uv run pytest tests/test_models.py tests/test_model_download.py tests/test_boundary.py -x -q` | W0 (Plan legt an) | pending |
 | 03-07-T2 | 03-07 | 2 | TRANS-01 | T-03-22 bis T-03-25 | auto | `cd backend && uv run pytest tests/test_main.py tests/test_models.py tests/test_boundary.py -x -q` | W0 (Plan legt an) | pending |
+| 03-07b-T1 | 03-07b | 3 | TRANS-01 | T-03-74 bis T-03-79 | checkpoint | `gh release view models-2026-11 --repo street1983nk/nextcloud-audio-video-search --json isDraft,tagName,assets ...` | vorhanden | pending |
+| 03-07b-T2 | 03-07b | 3 | TRANS-01 | T-03-74 bis T-03-79 | tdd | `cd backend && uv run pytest tests/test_models.py tests/test_model_download.py tests/test_dockerfile.py tests/test_boundary.py tests/test_main.py ...` | vorhanden | pending |
 | 03-08-T1 | 03-08 | 1 | SRCH-01, SRCH-02 | T-03-26, T-03-27, T-03-28 | tdd | `cd backend && uv run pytest tests/test_search_tiers.py tests/test_api_routes.py tests/test_excerpt_states.p...` | W0 (Plan legt an) | pending |
 | 03-09-T1 | 03-09 | 2 | TRANS-07, TRANS-03, MEDIA-04 | T-03-29 bis T-03-32 | tdd | `cd backend && uv run pytest tests/test_preview_store.py tests/test_corrections.py tests/test_provenance.py ...` | W0 (Plan legt an) | pending |
 | 03-09-T2 | 03-09 | 2 | TRANS-07, TRANS-03, MEDIA-04 | T-03-29 bis T-03-32 | tdd | `cd backend && uv run pytest tests/test_coverage_count.py tests/test_preview_store.py tests/test_exclusion_f...` | W0 (Plan legt an) | pending |
@@ -97,7 +99,7 @@ Zuordnung Anforderung zu Testdatei (aus der Research, unverändert gültig):
 | MEDIA-02 | test_media_timeline.py | 03-05 |
 | MEDIA-03 | test_media_hardening.py, test_fetch_keep.py | 03-05, 03-13 |
 | MEDIA-04 | test_catch_rule.py, test_preview_worker.py, test_preview_corpus.py | 03-06, 03-13, 03-15 |
-| TRANS-01 | test_engine_constants.py, test_engine_model.py, test_models.py | 03-06, 03-10, 03-07 |
+| TRANS-01 | test_engine_constants.py, test_engine_model.py, test_models.py, test_model_download.py, test_dockerfile.py | 03-06, 03-10, 03-07, 03-07b |
 | TRANS-02 | test_vad_gate.py | 03-06 |
 | TRANS-03 | test_catch_rule.py, test_engine_model.py | 03-06, 03-10 |
 | TRANS-07 | test_preview_store.py, test_preview_worker.py | 03-09, 03-13 |

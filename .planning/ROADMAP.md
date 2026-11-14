@@ -120,7 +120,7 @@ Plans:
   3. Ein Nutzer ohne Leserecht (entzogene Freigabe, Gruppenordner-ACL `+read -share`, Papierkorb) sieht keinen Treffer aus der Datei; der Rechte-Paritätstest läuft im HTTP-Pfad in CI.
   4. Wird der Container während einer langen Datei beendet, setzt die Vorschau nach dem Neustart am letzten fertigen Stück fort; VAD lässt sich nirgends abschalten.
 
-**Plans**: 22 plans (9 Wellen)
+**Plans**: 23 plans (9 Wellen)
 Plans:
 
 - [ ] 03-01-PLAN.md: (W1) Owner: Paketfreigabe sherpa-onnx/numpy/py3langid, Texte Höchstdauer-Feld und Modell-Fehler, Deckel 24 h, Nachtrag A13/P13 zum freigegebenen T12
@@ -136,6 +136,7 @@ Plans:
 - [ ] 03-12-PLAN.md: (W2) PHP-Provider: limit/Cursor, Auffüllen, Prüf-Cache, Kennzeichen Vorläufig
 - [ ] 03-10-PLAN.md: (W3) Engine: Pakete, Speicherwächter, Parakeet im Kindprozess, Modelltest
 - [ ] 03-14-PLAN.md: (W3) /excerpt-Zustände unter der Leck-Regel, occ-Zeile Preview
+- [ ] 03-07b-PLAN.md: (W3) Owner: Modellquelle eigenes GitHub-Release models-2026-11, Allowlist aus gemessenem Redirect, HF-ENV im Image, Namensnennung NVIDIA
 - [ ] 03-13-PLAN.md: (W4) Vorschau-Worker: Stücke, Fortsetzen, Unterbrechen, Gründe, Index-Last
 - [ ] 03-16-PLAN.md: (W4) PHP-Logik der Abspielseite: Zustände A1 bis A13 unter der Leck-Regel
 - [ ] 03-15-PLAN.md: (W5) Verdrahtung, Höchstdauer-Anhebung, Wahrheitsbedingung T6/T7, Korpus-Langtest
