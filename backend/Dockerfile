@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# Image of the External App. Multi-stage: the build tools and the frp download
-# never reach the runtime layer, which carries the venv, three shell scripts,
-# frpc, curl for the health check, and nothing else.
+# Image of the External App. Multi-stage: the build tools and the frp and ffmpeg
+# downloads never reach the runtime layer, which carries the venv, three shell
+# scripts, frpc, ffmpeg and ffprobe, curl for the health check, and nothing else.
 #
 # Every base image is pinned by digest (tests/test_dockerfile.py). Dependabot
 # (docker ecosystem) raises the digests; a tag alone can be moved by anyone who
@@ -50,6 +50,49 @@ RUN set -eux; \
     install -m 0755 "/tmp/frp_${FRP_VERSION}_linux_${FRP_ARCH}/frpc" /usr/local/bin/frpc; \
     /usr/local/bin/frpc --version
 
+# ffmpeg and ffprobe decode every container to 16 kHz mono PCM (media/decode.py).
+# Static LGPL build of BtbN, release branch 8.1, from the last autobuild of a
+# month: daily builds vanish after 14 days and "latest" moves, the monthly last
+# one stays two years. Checksum per architecture, the build stops on any
+# mismatch, and on a build that says --enable-gpl. python.yml installs the same
+# asset with the same checksum, so the tests run against this binary
+# (tests/test_dockerfile.py holds the two in step).
+FROM ${BASE_IMAGE} AS ffmpeg
+ARG TARGETARCH
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Unpinned for the reason given in the frpc stage; xz-utils only unpacks.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    FFMPEG_RELEASE=autobuild-2026-10-31-12-59; \
+    FFMPEG_BUILD=ffmpeg-n8.1.3-27-g8dca1586f4; \
+    FFMPEG_AMD64_SHA256=a64f3171e6ad1f7d358d28890a907ee478c331d1177ec696a93418f79ac3f1f3; \
+    FFMPEG_ARM64_SHA256=2ea30086a637e3f0ad0f49a1b38db34121422b85e93cc82df2e01d9ee5200809; \
+    case "${TARGETARCH:-amd64}" in \
+        arm64) FFMPEG_ARCH=linuxarm64-lgpl-8.1; FFMPEG_SHA256="${FFMPEG_ARM64_SHA256}" ;; \
+        amd64) FFMPEG_ARCH=linux64-lgpl-8.1; FFMPEG_SHA256="${FFMPEG_AMD64_SHA256}" ;; \
+        *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/ffmpeg.tar.xz \
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/${FFMPEG_BUILD}-${FFMPEG_ARCH}.tar.xz"; \
+    echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c -; \
+    tar -C /tmp -xJf /tmp/ffmpeg.tar.xz \
+        "${FFMPEG_BUILD}-${FFMPEG_ARCH}/bin/ffmpeg" "${FFMPEG_BUILD}-${FFMPEG_ARCH}/bin/ffprobe"; \
+    install -m 0755 "/tmp/${FFMPEG_BUILD}-${FFMPEG_ARCH}/bin/ffmpeg" /usr/local/bin/ffmpeg; \
+    install -m 0755 "/tmp/${FFMPEG_BUILD}-${FFMPEG_ARCH}/bin/ffprobe" /usr/local/bin/ffprobe; \
+    FFMPEG_VERSION_TEXT="$(/usr/local/bin/ffmpeg -version)"; \
+    echo "${FFMPEG_VERSION_TEXT}"; \
+    /usr/local/bin/ffprobe -version > /dev/null; \
+    case "${FFMPEG_VERSION_TEXT}" in \
+        *"configuration: "*) ;; \
+        *) echo "ffmpeg -version names no configuration" >&2; exit 1 ;; \
+    esac; \
+    case "${FFMPEG_VERSION_TEXT}" in \
+        *--enable-gpl*) echo "ffmpeg is a GPL build, the image ships LGPL only" >&2; exit 1 ;; \
+    esac
+
 FROM ${BASE_IMAGE} AS runtime
 LABEL org.opencontainers.image.source="https://github.com/street1983nk/nextcloud-audio-video-search" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
@@ -83,6 +126,8 @@ RUN groupadd --gid 10001 exapp \
 COPY docker/entrypoint.sh docker/start.sh docker/healthcheck.sh /
 RUN chmod 0755 /entrypoint.sh /start.sh /healthcheck.sh
 COPY --from=frpc /usr/local/bin/frpc /usr/local/bin/frpc
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=build /app/.venv /app/.venv
 # nc_py_api serves js/, css/, img/ and l10n/ out of the working directory. The
 # backend has no page of its own, so no icons ship; the PHP app carries them.
