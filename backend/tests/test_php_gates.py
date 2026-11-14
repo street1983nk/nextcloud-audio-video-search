@@ -685,7 +685,9 @@ def missing_hit_checks(sources: dict[str, str]) -> list[str]:
         if at < 0:
             findings.append(f"{name}::{method} does not call {call}")
             continue
-        findings += [f"{name}::{method} reaches {needle} before {call}" for needle in later if 0 <= body.find(needle) < at]
+        findings += [
+            f"{name}::{method} reaches {needle} before {call}" for needle in later if 0 <= body.find(needle) < at
+        ]
     return findings
 
 
