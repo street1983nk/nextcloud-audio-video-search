@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from audio_video_search_backend import APP_ID, settings
+from audio_video_search_backend.store import repo
 from tests.conftest import BACKEND_ROOT, REPO_ROOT
 
 
@@ -117,6 +118,9 @@ def test_the_longest_recording_is_read_with_default_and_cap(saved: str, hours: i
 def test_a_missing_longest_recording_is_the_default() -> None:
     assert settings.read_max_duration_hours({}) == 12
     assert settings.DEFAULT_MAX_DURATION_HOURS == 12
+    # The store of plan 03-09 keeps the limit under the same key and default.
+    assert settings.MAX_DURATION_HOURS == repo.MAX_DURATION_KEY
+    assert settings.DEFAULT_MAX_DURATION_HOURS == repo.DEFAULT_MAX_DURATION_HOURS
 
 
 def test_the_cap_is_the_longest_time_mark_of_the_api() -> None:
