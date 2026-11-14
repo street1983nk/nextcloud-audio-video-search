@@ -88,7 +88,7 @@ final class QueueControllerTest extends TestCase {
 	}
 
 	public function testAClaimHandsOutTheDescribedItemsUnderAFreshToken(): void {
-		$rows = [['id' => 7, 'kind' => 'content', 'fileId' => 42, 'storageId' => 3, 'attempts' => 1]];
+		$rows = [['id' => 7, 'kind' => 'content', 'fileId' => 42, 'storageId' => 3, 'attempts' => 1, 'origin' => 'event']];
 		$item = array_fill_keys(QueueService::ITEM_KEYS, null);
 		$item['queueId'] = 7;
 		$open = array_fill_keys(QueueMapper::KINDS, 0);

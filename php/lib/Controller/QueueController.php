@@ -23,7 +23,7 @@ use Psr\Log\LoggerInterface;
  *
  * A claim answers {"claimToken", "items", "stats"}. Every item passed
  * QueueService::describe(), the second check at the hand over, and carries the
- * nine keys of QueueService::ITEM_KEYS and nothing else. Acknowledgement and
+ * ten keys of QueueService::ITEM_KEYS and nothing else. Acknowledgement and
  * unlock touch only rows of the token they name (T-02-11), and every list is
  * bounded (T-02-10). Invalid input is a 400 whose value never reaches the log.
  */

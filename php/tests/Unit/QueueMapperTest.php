@@ -47,10 +47,10 @@ final class QueueMapperTest extends TestCase {
 		$this->db->getQueryBuilder()->delete(QueueMapper::TABLE)->executeStatement();
 	}
 
-	/** @return list<array{kind: string, file: ?int, storage: int, attempts: int, locked: ?int, dirty: int}> */
+	/** @return list<array{kind: string, file: ?int, storage: int, attempts: int, locked: ?int, dirty: int, origin: string}> */
 	private function rows(): array {
 		$qb = $this->db->getQueryBuilder();
-		$qb->select('kind', 'file_id', 'storage_id', 'attempts', 'locked_at', 'dirty')
+		$qb->select('kind', 'file_id', 'storage_id', 'attempts', 'locked_at', 'dirty', 'origin')
 			->from(QueueMapper::TABLE)
 			->orderBy('id', 'ASC');
 		$result = $qb->executeQuery();
@@ -63,6 +63,7 @@ final class QueueMapperTest extends TestCase {
 				'attempts' => (int)$row['attempts'],
 				'locked' => $row['locked_at'] === null ? null : (int)$row['locked_at'],
 				'dirty' => (int)$row['dirty'],
+				'origin' => (string)$row['origin'],
 			];
 		}
 		$result->closeCursor();
@@ -188,6 +189,82 @@ final class QueueMapperTest extends TestCase {
 		self::assertSame(2, $open[QueueMapper::KIND_CONTENT]);
 		self::assertSame(1, $open[QueueMapper::KIND_EXCLUDE]);
 		self::assertSame(0, $open[QueueMapper::KIND_DELETE]);
+	}
+
+	public function testTheOriginIsStoredAndCrawlIsTheDefault(): void {
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_EVENT);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 8, 3, QueueMapper::ORIGIN_CRAWL);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 9, 3);
+
+		self::assertSame(['event', 'crawl', 'crawl'], array_column($this->rows(), 'origin'));
+	}
+
+	public function testTheClaimCarriesTheOriginOfEachRow(): void {
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_CRAWL);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 8, 3, QueueMapper::ORIGIN_EVENT);
+
+		$claimed = $this->mapper->claim(5, $this->token('a'));
+
+		self::assertSame([[7, 'crawl'], [8, 'event']], array_map(static fn (array $r): array => [$r['fileId'], $r['origin']], $claimed));
+	}
+
+	public function testAnEventLiftsAWaitingCrawlRowOfTheSameFile(): void {
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_CRAWL);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 8, 3, QueueMapper::ORIGIN_CRAWL);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_EVENT);
+
+		$rows = $this->rows();
+		self::assertSame([[7, 'event'], [8, 'crawl']], array_map(static fn (array $r): array => [$r['file'], $r['origin']], $rows));
+		self::assertSame([0, 0], array_column($rows, 'dirty'));
+	}
+
+	public function testACrawlNeverLowersAnEventRow(): void {
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_EVENT);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_CRAWL);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3);
+
+		$rows = $this->rows();
+		self::assertCount(1, $rows);
+		self::assertSame('event', $rows[0]['origin']);
+	}
+
+	public function testAnEventOfAnotherKindOrStorageLeavesTheCrawlRowAlone(): void {
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_CRAWL);
+		$this->mapper->enqueue(QueueMapper::KIND_METADATA, 7, 3, QueueMapper::ORIGIN_EVENT);
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 4, QueueMapper::ORIGIN_EVENT);
+
+		self::assertSame(
+			[[QueueMapper::KIND_CONTENT, 3, 'crawl'], [QueueMapper::KIND_METADATA, 3, 'event'], [QueueMapper::KIND_CONTENT, 4, 'event']],
+			array_map(static fn (array $r): array => [$r['kind'], $r['storage'], $r['origin']], $this->rows()),
+		);
+	}
+
+	public function testAnEventOnAClaimedCrawlRowIsHandedOutAgainAsAnEvent(): void {
+		// The claim already told the container crawl; the change that arrives
+		// now marks the row dirty, the acknowledgement frees it, and the next
+		// claim hands the change out as what it is.
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_CRAWL);
+		$first = $this->mapper->claim(5, $this->token('a'));
+		self::assertSame('crawl', $first[0]['origin']);
+
+		$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, QueueMapper::ORIGIN_EVENT);
+
+		self::assertSame(1, $this->rows()[0]['dirty']);
+		self::assertSame(0, $this->mapper->acknowledge($this->token('a'), [$first[0]['id']]));
+		$again = $this->mapper->claim(5, $this->token('b'));
+		self::assertCount(1, $again);
+		self::assertSame('event', $again[0]['origin']);
+	}
+
+	public function testAnUnknownOriginIsRefusedAndWritesNothing(): void {
+		try {
+			$this->mapper->enqueue(QueueMapper::KIND_CONTENT, 7, 3, 'urgent');
+			self::fail('an unknown origin was accepted');
+		} catch (\InvalidArgumentException $e) {
+			self::assertSame('unknown queue origin', $e->getMessage());
+		}
+
+		self::assertSame([], $this->rows());
 	}
 
 	public function testAnUnknownKindIsRefused(): void {

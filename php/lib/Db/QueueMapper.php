@@ -56,6 +56,19 @@ class QueueMapper {
 		self::KIND_METADATA,
 	];
 
+	public const ORIGIN_EVENT = 'event';
+	public const ORIGIN_CRAWL = 'crawl';
+
+	/**
+	 * The closed list of origins: who wrote a row (D-03-05, 03-RESEARCH.md
+	 * Pitfall 6). event for the file and cache events, crawl for the first
+	 * crawl and the reconcile. The container takes event rows first; the list
+	 * is the same there (nc_queue.py), a gate holds the two together.
+	 *
+	 * @var list<string>
+	 */
+	public const ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL];
+
 	/**
 	 * Which kinds a new row of the same file takes the place of. The last word
 	 * about a file wins: content after delete brings the file back (a move
@@ -94,10 +107,19 @@ class QueueMapper {
 	 * has no file id, and NULL never conflicts in a unique index, so for those
 	 * the existing row is looked up first; a duplicate there would only repeat
 	 * an idempotent removal.
+	 *
+	 * An event that meets a row already there lifts its origin from crawl to
+	 * event, never the other way round: a file that changed goes first even
+	 * when the crawl queued it before. That holds for a claimed row too, which
+	 * the conflict marks dirty and the acknowledgement hands out again, so the
+	 * change is handed out as an event.
 	 */
-	public function enqueue(string $kind, ?int $fileId, int $storageId): void {
+	public function enqueue(string $kind, ?int $fileId, int $storageId, string $origin = self::ORIGIN_CRAWL): void {
 		if (!in_array($kind, self::KINDS, true)) {
 			throw new \InvalidArgumentException('unknown queue kind');
+		}
+		if (!in_array($origin, self::ORIGINS, true)) {
+			throw new \InvalidArgumentException('unknown queue origin');
 		}
 
 		$now = $this->timeFactory->getTime();
@@ -110,6 +132,7 @@ class QueueMapper {
 		}
 
 		if ($fileId === null && $this->markExisting($kind, null, $storageId, $now)) {
+			$this->liftToEvent($kind, null, $storageId, $origin);
 			return;
 		}
 
@@ -117,6 +140,7 @@ class QueueMapper {
 			'kind' => $kind,
 			'file_id' => $fileId,
 			'storage_id' => $storageId,
+			'origin' => $origin,
 			'enqueued_at' => $now,
 			'locked_at' => null,
 			'lock_token' => null,
@@ -128,6 +152,24 @@ class QueueMapper {
 		}
 
 		$this->markExisting($kind, $fileId, $storageId, $now);
+		$this->liftToEvent($kind, $fileId, $storageId, $origin);
+	}
+
+	/**
+	 * The conflict branch of an event: the row of the same key that the crawl
+	 * wrote becomes an event row. A crawl never lowers an event row, and an
+	 * event row stays as it is.
+	 */
+	private function liftToEvent(string $kind, ?int $fileId, int $storageId, string $origin): void {
+		if ($origin !== self::ORIGIN_EVENT) {
+			return;
+		}
+		$lift = $this->db->getQueryBuilder();
+		$lift->update(self::TABLE)
+			->set('origin', $lift->createNamedParameter(self::ORIGIN_EVENT))
+			->where($this->sameKey($lift, $kind, $fileId, $storageId))
+			->andWhere($lift->expr()->eq('origin', $lift->createNamedParameter(self::ORIGIN_CRAWL)));
+		$lift->executeStatement();
 	}
 
 	/**
@@ -175,7 +217,7 @@ class QueueMapper {
 	 * clears the dirty mark, because the state the container reads now is the
 	 * state the row stands for.
 	 *
-	 * @return list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int}>
+	 * @return list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int, origin: string}>
 	 */
 	public function claim(int $limit, string $token): array {
 		$limit = max(0, min($limit, self::MAX_BATCH));
@@ -227,11 +269,11 @@ class QueueMapper {
 	/**
 	 * The rows of one claim, in the order of KINDS and then of their id.
 	 *
-	 * @return list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int}>
+	 * @return list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int, origin: string}>
 	 */
 	public function rowsOfToken(string $token): array {
 		$qb = $this->db->getQueryBuilder();
-		$qb->select('id', 'kind', 'file_id', 'storage_id', 'attempts')
+		$qb->select('id', 'kind', 'file_id', 'storage_id', 'attempts', 'origin')
 			->from(self::TABLE)
 			->where($qb->expr()->eq('lock_token', $qb->createNamedParameter($token)))
 			->orderBy('id', 'ASC');
@@ -244,6 +286,7 @@ class QueueMapper {
 				'fileId' => $row['file_id'] === null ? null : (int)$row['file_id'],
 				'storageId' => (int)$row['storage_id'],
 				'attempts' => (int)$row['attempts'],
+				'origin' => (string)$row['origin'],
 			];
 		}
 		$result->closeCursor();

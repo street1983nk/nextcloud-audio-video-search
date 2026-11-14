@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The sixteen rules:
+The seventeen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -65,6 +65,11 @@ The sixteen rules:
     only after ``->admissible(``, so the container never puts a file into the
     work stock past the exclusions. The four reconcile routes carry
     ``ExAppRequired`` (and with it the guard of rule 1).
+17. The work stock knows who wrote a row (plan 03-04, D-03-05, T-03-11):
+    ``QueueMapper::ORIGINS`` is exactly ``event`` and ``crawl``, ``enqueue``
+    refuses every other origin, ``QueueService::ITEM_KEYS`` carries
+    ``origin`` and ``describeRow`` drops a row whose origin is not on the
+    list. The container holds the same list (plan 03-11).
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -1037,3 +1042,108 @@ def test_self_rule16_fires_on_an_enqueue_past_the_pre_check() -> None:
     assert unguarded != REQUEUE_SAMPLE
     assert reconcile_requeue_findings(unguarded) == [f"{RECONCILE} has no ExApp route slice"]
     assert reconcile_requeue_findings("") == [f"{RECONCILE} is missing"]
+
+
+# -- rule 17 ------------------------------------------------------------------------
+
+QUEUE_MAPPER = "php/lib/Db/QueueMapper.php"
+EXPECTED_ORIGINS = ("event", "crawl")
+_PHP_STRING_CONSTANT = re.compile(r"const\s+(\w+)\s*=\s*'([^'\\]*)'\s*;")
+
+
+def php_string_list(source: str, constant: str) -> list[str] | None:
+    """The values of a list constant, self:: references resolved; None if it is missing.
+
+    An entry that is neither a string nor a known string constant stays as
+    written, so it can never pass for one of the expected values.
+    """
+    match = re.search(rf"const\s+{re.escape(constant)}\s*=\s*\[(?P<body>[^\]]*)\]", source)
+    if match is None:
+        return None
+    strings = dict(_PHP_STRING_CONSTANT.findall(source))
+    values = []
+    for entry in (part.strip() for part in match.group("body").split(",")):
+        literal = re.fullmatch(r"'([^'\\]*)'", entry)
+        reference = re.fullmatch(r"self::(\w+)", entry)
+        if literal is not None:
+            values.append(literal.group(1))
+        elif reference is not None and reference.group(1) in strings:
+            values.append(strings[reference.group(1)])
+        elif entry:
+            values.append(entry)
+    return values
+
+
+def queue_origin_findings(root: Path) -> list[str]:
+    """Whether the origins of the work stock are the closed pair and travel with the claim.
+
+    QueueMapper::ORIGINS is exactly event and crawl (the container holds the
+    same list, plan 03-11), enqueue refuses everything else, ITEM_KEYS carries
+    origin and describeRow drops a row whose origin is not on the list
+    (T-03-11). Written over a source tree, so a changed copy can make it fire.
+    """
+    mapper_path = root / QUEUE_MAPPER
+    service_path = root / QUEUE_SERVICE
+    missing = [f"{path.relative_to(root).as_posix()} is missing" for path in (mapper_path, service_path)]
+    if not mapper_path.is_file() or not service_path.is_file():
+        return [line for line, path in zip(missing, (mapper_path, service_path), strict=True) if not path.is_file()]
+    mapper = mapper_path.read_text(encoding="utf-8")
+    service = service_path.read_text(encoding="utf-8")
+    findings = []
+    origins = php_string_list(mapper, "ORIGINS")
+    if origins is None:
+        findings.append("QueueMapper has no ORIGINS")
+    elif sorted(origins) != sorted(EXPECTED_ORIGINS):
+        findings.append(f"QueueMapper::ORIGINS is {origins}, expected {list(EXPECTED_ORIGINS)}")
+    enqueue = php_method(mapper, "enqueue") or ""
+    if "in_array($origin, self::ORIGINS, true)" not in enqueue:
+        findings.append("QueueMapper::enqueue does not check the origin against ORIGINS")
+    item_keys = php_string_list(service, "ITEM_KEYS") or []
+    if "origin" not in item_keys:
+        findings.append("QueueService::ITEM_KEYS has no origin")
+    describe_row = php_method(service, "describeRow") or ""
+    if "QueueMapper::ORIGINS" not in describe_row:
+        findings.append("QueueService::describeRow hands an origin out unchecked")
+    return findings
+
+
+def test_rule17_the_origins_of_the_work_stock_are_event_and_crawl() -> None:
+    assert queue_origin_findings(REPO_ROOT) == []
+    assert php_string_list((REPO_ROOT / QUEUE_MAPPER).read_text(encoding="utf-8"), "ORIGINS") == ["event", "crawl"]
+
+
+def _origin_tree(root: Path, mapper: tuple[str, str] = ("", ""), service: tuple[str, str] = ("", "")) -> Path:
+    """A copy of the two sources of rule 17 below root, each with one replacement."""
+    for name, (old, new) in ((QUEUE_MAPPER, mapper), (QUEUE_SERVICE, service)):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        if old:
+            assert old in text, old
+            text = text.replace(old, new)
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_self_rule17_fires_on_a_changed_copy(tmp_path: Path) -> None:
+    assert queue_origin_findings(_origin_tree(tmp_path / "same")) == []
+    one = _origin_tree(
+        tmp_path / "one", mapper=("ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL]", "ORIGINS = ['event']")
+    )
+    assert queue_origin_findings(one) == ["QueueMapper::ORIGINS is ['event'], expected ['event', 'crawl']"]
+    third = _origin_tree(
+        tmp_path / "third",
+        mapper=("ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL]", "ORIGINS = [self::ORIGIN_EVENT, 'urgent']"),
+    )
+    assert queue_origin_findings(third) == ["QueueMapper::ORIGINS is ['event', 'urgent'], expected ['event', 'crawl']"]
+    unchecked = _origin_tree(
+        tmp_path / "unchecked", mapper=("in_array($origin, self::ORIGINS, true)", "is_string($origin)")
+    )
+    assert queue_origin_findings(unchecked) == ["QueueMapper::enqueue does not check the origin against ORIGINS"]
+    no_key = _origin_tree(tmp_path / "no_key", service=("'readerUid', 'origin']", "'readerUid']"))
+    assert queue_origin_findings(no_key) == ["QueueService::ITEM_KEYS has no origin"]
+    passed = _origin_tree(
+        tmp_path / "passed", service=("!in_array($row['origin'], QueueMapper::ORIGINS, true)", "$row['origin'] === ''")
+    )
+    assert queue_origin_findings(passed) == ["QueueService::describeRow hands an origin out unchecked"]
+    assert queue_origin_findings(tmp_path / "empty") == [f"{QUEUE_MAPPER} is missing", f"{QUEUE_SERVICE} is missing"]

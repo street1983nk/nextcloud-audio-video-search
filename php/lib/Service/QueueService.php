@@ -34,12 +34,16 @@ use Psr\Log\LoggerInterface;
  * was admissible when it was queued must still not be loaded once a rule
  * covers it (T-02-57).
  *
- * What leaves this class is a fixed set of nine keys with ids and numbers
- * only: no path, no file name, no mount point (T-02-09).
+ * What leaves this class is a fixed set of ten keys with ids, numbers and
+ * the origin code only: no path, no file name, no mount point (T-02-09).
  */
 class QueueService {
-	/** The keys of one item, in this order, and no other. */
-	public const ITEM_KEYS = ['queueId', 'kind', 'fileId', 'storageId', 'etag', 'size', 'mtime', 'prefilterKey', 'readerUid'];
+	/**
+	 * The keys of one item, in this order, and no other. origin (plan 03-04)
+	 * is one of QueueMapper::ORIGINS: event rows go first in the container
+	 * (D-03-05).
+	 */
+	public const ITEM_KEYS = ['queueId', 'kind', 'fileId', 'storageId', 'etag', 'size', 'mtime', 'prefilterKey', 'readerUid', 'origin'];
 
 	/** Kinds whose file has to be there and admissible when the row is handed out. */
 	private const NEEDS_FILE = [QueueMapper::KIND_CONTENT, QueueMapper::KIND_METADATA, QueueMapper::KIND_RESTORE];
@@ -102,12 +106,16 @@ class QueueService {
 		return $state !== null && $state['capturable'];
 	}
 
-	public function enqueue(string $kind, ?int $fileId, int $storageId): void {
-		$this->queueMapper->enqueue($kind, $fileId, $storageId);
+	/**
+	 * $origin is QueueMapper::ORIGIN_EVENT for the file and cache events and
+	 * QueueMapper::ORIGIN_CRAWL for the first crawl and the reconcile.
+	 */
+	public function enqueue(string $kind, ?int $fileId, int $storageId, string $origin = QueueMapper::ORIGIN_CRAWL): void {
+		$this->queueMapper->enqueue($kind, $fileId, $storageId, $origin);
 	}
 
 	/**
-	 * @return list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int}>
+	 * @return list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int, origin: string}>
 	 */
 	public function claim(int $limit, string $token): array {
 		return $this->queueMapper->claim($limit, $token);
@@ -127,7 +135,7 @@ class QueueService {
 	 * The items for the container, checked a second time. Rows that are no
 	 * longer admissible are deleted under the claim token and counted.
 	 *
-	 * @param list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int}> $rows
+	 * @param list<array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int, origin: string}> $rows
 	 * @return array{items: list<array<string, int|string|null>>, dropped: int}
 	 */
 	public function describe(string $token, array $rows): array {
@@ -151,7 +159,7 @@ class QueueService {
 	}
 
 	/**
-	 * @param array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int} $row
+	 * @param array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int, origin: string} $row
 	 * @return array<string, int|string|null>|null
 	 */
 	private function describeRow(array $row): ?array {
@@ -160,6 +168,12 @@ class QueueService {
 		$item['kind'] = $row['kind'];
 		$item['fileId'] = $row['fileId'];
 		$item['storageId'] = $row['storageId'];
+		// A row with an origin outside the closed list is dropped like any
+		// other row that cannot be described (T-03-11).
+		if (!in_array($row['origin'], QueueMapper::ORIGINS, true)) {
+			return null;
+		}
+		$item['origin'] = $row['origin'];
 		if ($row['kind'] === QueueMapper::KIND_DELETE && $row['fileId'] !== null && $this->liesInTheTrashBin($row['fileId'])) {
 			$item['kind'] = QueueMapper::KIND_TRASH;
 		}

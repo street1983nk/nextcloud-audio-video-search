@@ -167,9 +167,9 @@ final class QueueServiceTest extends TestCase {
 		});
 	}
 
-	/** @return array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int} */
-	private function row(int $id, string $kind, ?int $fileId, int $storageId = 3): array {
-		return ['id' => $id, 'kind' => $kind, 'fileId' => $fileId, 'storageId' => $storageId, 'attempts' => 1];
+	/** @return array{id: int, kind: string, fileId: ?int, storageId: int, attempts: int, origin: string} */
+	private function row(int $id, string $kind, ?int $fileId, int $storageId = 3, string $origin = QueueMapper::ORIGIN_CRAWL): array {
+		return ['id' => $id, 'kind' => $kind, 'fileId' => $fileId, 'storageId' => $storageId, 'attempts' => 1, 'origin' => $origin];
 	}
 
 	public function testAdmissibleIsFalseForATextFileAndForAStorageOutsideTheMountSet(): void {
@@ -295,7 +295,7 @@ final class QueueServiceTest extends TestCase {
 		self::assertSame(['ben:ben'], $this->askedAs);
 	}
 
-	public function testDescribeGivesExactlyTheNineKeys(): void {
+	public function testDescribeGivesExactlyTheTenKeys(): void {
 		$this->fileAccess->method('getByFileId')->with(42)->willReturn($this->entry(3, 'video/webm', 'files/a.webm'));
 		$this->mounts([['ana', 'OC\Files\Mount\LocalHomeMountProvider']]);
 		$this->mapper->expects(self::once())->method('drop')->with(self::TOKEN, [])->willReturn(0);
@@ -317,9 +317,56 @@ final class QueueServiceTest extends TestCase {
 				'mtime' => 1700000000,
 				'prefilterKey' => null,
 				'readerUid' => 'ana',
+				'origin' => 'crawl',
 			],
 			$item,
 		);
+	}
+
+	public function testDescribeHandsTheOriginOfEachRowOn(): void {
+		$this->fileAccess->method('getByFileId')->willReturnCallback(fn (int $fileId): ?ICacheEntry => $this->entry(3, 'video/webm', 'files/' . $fileId . '.webm'));
+		$this->mounts([['ana', 'OC\Files\Mount\LocalHomeMountProvider']]);
+		$this->mapper->expects(self::once())->method('drop')->with(self::TOKEN, [])->willReturn(0);
+
+		$described = $this->service()->describe(self::TOKEN, [
+			$this->row(1, QueueMapper::KIND_CONTENT, 42, origin: QueueMapper::ORIGIN_EVENT),
+			$this->row(2, QueueMapper::KIND_CONTENT, 43, origin: QueueMapper::ORIGIN_CRAWL),
+			$this->row(3, QueueMapper::KIND_DELETE, 44, 9, QueueMapper::ORIGIN_EVENT),
+		]);
+
+		self::assertSame([QueueMapper::ORIGIN_EVENT, QueueMapper::ORIGIN_CRAWL, QueueMapper::ORIGIN_EVENT], array_column($described['items'], 'origin'));
+		foreach ($described['items'] as $item) {
+			self::assertSame(QueueService::ITEM_KEYS, array_keys($item));
+		}
+	}
+
+	public function testARowWithAnUnknownOriginIsDroppedAtTheHandOver(): void {
+		$this->fileAccess->method('getByFileId')->with(42)->willReturn($this->entry(3, 'video/webm', 'files/a.webm'));
+		$this->mounts([['ana', 'OC\Files\Mount\LocalHomeMountProvider']]);
+		$this->mapper->expects(self::once())->method('drop')->with(self::TOKEN, [1, 2])->willReturn(2);
+
+		$described = $this->service()->describe(self::TOKEN, [
+			$this->row(1, QueueMapper::KIND_CONTENT, 42, origin: 'urgent'),
+			$this->row(2, QueueMapper::KIND_DELETE, 42, origin: ''),
+			$this->row(3, QueueMapper::KIND_CONTENT, 42),
+		]);
+
+		self::assertSame(2, $described['dropped']);
+		self::assertSame([3], array_column($described['items'], 'queueId'));
+	}
+
+	public function testEnqueueHandsTheOriginToTheMapper(): void {
+		$calls = [];
+		$this->mapper->expects(self::exactly(2))->method('enqueue')
+			->willReturnCallback(static function (string $kind, ?int $fileId, int $storageId, string $origin) use (&$calls): void {
+				$calls[] = [$kind, $fileId, $storageId, $origin];
+			});
+		$service = $this->service();
+
+		$service->enqueue(QueueMapper::KIND_CONTENT, 42, 3, QueueMapper::ORIGIN_EVENT);
+		$service->enqueue(QueueMapper::KIND_DELETE, 42, 3);
+
+		self::assertSame([['content', 42, 3, 'event'], ['delete', 42, 3, 'crawl']], $calls);
 	}
 
 	public function testDescribeDropsARowWhoseFileIsNoLongerAdmissible(): void {
