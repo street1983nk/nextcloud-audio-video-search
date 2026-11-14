@@ -21,10 +21,12 @@ LOCAL_DIR="${RUNNER_TEMP:-/tmp}/avs-lokal"
 S3_BUCKET=avs-medien
 
 # The phases of the acceptance test, in the order the workflow runs them. A
-# later phase inherits every change of the earlier ones.
+# later phase inherits every change of the earlier ones. search-parity (plan
+# 03-17) comes last and has a verdict of its own (parity.sh): it adds a speech
+# content, which the count of transcribed contents of compare.sh does not know.
 PHASES=(initial read-proof shares access-control upload overwrite copy rename tag move-cross trash
 	restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user reattach
-	foreign-change)
+	foreign-change search-parity)
 
 # The media endings of MEDIA-01, in lower case.
 MEDIA_ENDINGS='mp3|m4a|wav|ogg|oga|opus|flac|mp4|m4v|mov|mkv|webm|weba|mts|avi|wmv|3gp|mpeg'

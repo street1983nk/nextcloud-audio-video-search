@@ -19,7 +19,7 @@
 # Operations: upload_new overwrite copy_in_home rename_in_home tag_file
 #   move_home_to_team trash_file restore_file access_control exclude_user_after
 #   exclude_storage_after exclude_after revoke_cem vanish_cem delete_dan
-#   foreign_change reattach
+#   foreign_change reattach parity_place parity_revoke
 #
 # Test persons: ana, ben, cem (Samba and Nextcloud), dan (own home medium, is
 # deleted), eva (excluded before the first run), fritz (member of the group
@@ -693,9 +693,79 @@ reattach() {
 	record ana dan-kopie.webm
 }
 
+# -- phase search-parity (plan 03-17) ---------------------------------------------
+#
+# The speech clip (AVS_SPEECH_DE) at the places where the right to read differs;
+# parity.sh judges the hits against WebDAV. After the phases of phase 2 ben is
+# excluded (exclude-user-after), cem has no SMB mount any more (vanish), dan is
+# deleted, eva and fritz were excluded before the first run. So Samba refuses
+# the bytes to ana herself, and cem joins the team for the ACL of the team
+# folder: +read -share on one subfolder, -read on the other.
+#
+# parity_place puts every copy in place; parity_revoke later takes away what
+# was readable before (the share to cem, the second copy of ana into the
+# trash), after parity.sh before showed both as hits.
+
+parity_place() {
+	local clip="${AVS_SPEECH_DE:?AVS_SPEECH_DE is required}" dir="${WORK}/parity" folder share
+	[ -s "${clip}" ] || fail "the speech clip is missing"
+	mkdir -p "${dir}"
+	folder=$(get_id TEAM_FOLDER_ID)
+
+	step "ana home, shared with cem (revoked later)"
+	dav_put ana rede-geteilt.wav "${clip}"
+	record ana rede-geteilt.wav
+	share=$(ocs ana -X POST "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares" \
+		--data-urlencode 'path=/rede-geteilt.wav' --data-urlencode 'shareWith=cem' \
+		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' | jq -r '.ocs.data.id // empty')
+	[[ "${share}" =~ ^[0-9]+$ ]] || fail "the share of the shared copy has no id"
+	set_id PARITY_SHARE_ID "${share}"
+
+	step "ana home, a second copy (into the trash later)"
+	dav_put ana rede-papierkorb.wav "${clip}"
+	record ana rede-papierkorb.wav
+
+	step "team folder: cem with +read -share on one subfolder, -read on the other"
+	occ group:adduser team cem
+	dav_mkcol ana Team/rede-frei
+	dav_mkcol ana Team/rede-intern
+	dav_put ana Team/rede-frei/rede.wav "${clip}"
+	dav_put ana Team/rede-intern/rede.wav "${clip}"
+	record ana Team/rede-frei/rede.wav
+	record ana Team/rede-intern/rede.wav
+	occ groupfolders:permissions "${folder}" --user cem rede-frei -- +read -share
+	occ groupfolders:permissions "${folder}" --user cem rede-intern -- -read
+
+	step "SMB: Samba refuses the bytes to ana, set before Nextcloud ever sees the file"
+	put_share "${clip}" rede-gesperrt.wav ana 0644
+	deny_read rede-gesperrt.wav ana
+	record ana SMB/rede-gesperrt.wav
+
+	# As in access_control: the rule denies every web access to a tagged file,
+	# so a tone goes in first, then the tag, then the clip from the command line.
+	step "files_accesscontrol: a tone, the tag avs-sperre, then the clip"
+	ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=frequency=550:duration=5 \
+		-metadata comment=avs-rede-sperre "${dir}/ton.wav"
+	dav_put ana rede-sperre.wav "${dir}/ton.wav"
+	record ana rede-sperre.wav
+	assign_tag ana "$(get_id ID_ANA_REDE_SPERRE_WAV)" "$(get_id TAG_SPERRE)"
+	cp "${clip}" "${DATADIR}/ana/files/rede-sperre.wav"
+	occ files:scan --path=ana/files/rede-sperre.wav > /dev/null
+
+	step "eva (excluded before the first run): own copy, shared with cem"
+	dav_put eva rede-eva.wav "${clip}"
+	record eva rede-eva.wav
+	share eva /rede-eva.wav cem 1
+}
+
+parity_revoke() {
+	ocs ana -X DELETE "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares/$(get_id PARITY_SHARE_ID)" > /dev/null
+	curl -sfS -u "ana:$(password_of ana)" -X DELETE "$(dav_url ana rede-papierkorb.wav)"
+}
+
 OPERATIONS=(upload_new overwrite copy_in_home rename_in_home tag_file move_home_to_team trash_file
 	restore_file access_control exclude_user_after exclude_storage_after exclude_after revoke_cem
-	vanish_cem delete_dan foreign_change reattach)
+	vanish_cem delete_dan foreign_change reattach parity_place parity_revoke)
 
 main() {
 	local command="${1:-}"

@@ -432,9 +432,17 @@ jobs:
       # system, and the last step turns the list into the verdict. Each wait is
       # bounded (WAIT_LIMIT) and the step as a whole too, so the verdict and the
       # logs always come before the limit of the job.
+      # With the models in the volume the preview fetches every test medium
+      # through the gateway. The phases count gateway lines per file id, so they
+      # start only after that came to rest (bounded, never a verdict).
+      - name: Let the preview of the test media come to rest
+        env:
+          OCC: ./occ
+        run: bash app-src/ci/discovery/parity.sh settle
+
       - name: Run the phases
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        timeout-minutes: 90
+        timeout-minutes: 110
         env:
           WAIT_LIMIT: '300'
           OCC: ./occ
@@ -448,9 +456,38 @@ jobs:
           ./occ config:app:set audio_video_search sample_visible --value=true --type=boolean
           for phase in initial read-proof shares access-control upload overwrite copy rename tag move-cross \
             trash restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user \
-            reattach foreign-change; do
+            reattach foreign-change search-parity; do
             echo "::group::phase ${phase}"
             ok=1
+            # search-parity (plan 03-17) has a verdict of its own: the hits of the
+            # search against WebDAV (parity.sh), not the counts of compare.sh.
+            # The clip lands, the preview and the index finish, the positive
+            # controls show the shared and the trash copy as hits, then the share
+            # is revoked and the copy trashed, and only then the verdict.
+            if [ "${phase}" = search-parity ]; then
+              if ! { bash "${d}/parity.sh" baseline \
+                && bash "${d}/topology.sh" parity_place \
+                && ./occ audio_video_search:rescan --storage="$(id_of STORAGE_SMB_ANA)"; }; then
+                echo "FAIL ${phase}:operation" >> results.txt
+                ok=0
+              fi
+              bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
+              bash "${d}/parity.sh" wait || { echo "FAIL ${phase}:wait_preview" >> results.txt; ok=0; }
+              bash "${d}/parity.sh" before | tee "before-${phase}.txt"
+              grep '^FAIL ' "before-${phase}.txt" >> results.txt && ok=0
+              bash "${d}/topology.sh" parity_revoke || { echo "FAIL ${phase}:revoke" >> results.txt; ok=0; }
+              bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
+              bash "${d}/parity.sh" check | tee "compare-${phase}.txt"
+              grep '^FAIL \|SELF-TEST FAILED' "compare-${phase}.txt" >> results.txt
+              if [ "${ok}" = 1 ] && grep -qx 'PARITY CONTROL SHOWED THE DIFF' "compare-${phase}.txt" \
+                && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
+                echo "PHASE PASS ${phase}" >> results.txt
+              else
+                echo "PHASE FAIL ${phase}" >> results.txt
+              fi
+              echo "::endgroup::"
+              continue
+            fi
             bash "${d}/compare.sh" prepare "${phase}" | tee "prepare-${phase}.txt" || ok=0
             grep '^FAIL ' "prepare-${phase}.txt" >> results.txt
             bash "${d}/compare.sh" mark "${phase}" || ok=0
@@ -498,8 +535,8 @@ jobs:
           test -f results.txt || { echo "no results, the phases did not run"; exit 1; }
           cat results.txt
           passed=$(grep -c '^PHASE PASS ' results.txt || true)
-          echo "${passed} of 20 phases passed"
-          ! grep -q '^PHASE FAIL ' results.txt && [ "${passed}" = 20 ]
+          echo "${passed} of 21 phases passed"
+          ! grep -q '^PHASE FAIL ' results.txt && [ "${passed}" = 21 ]
 
       - name: Collect the logs
         if: always()
@@ -516,7 +553,7 @@ jobs:
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
           cp app-src/ci/discovery/ids.env logs/ 2>/dev/null || true
-          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt procure-lines.json logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt procure-lines.json before-*.txt logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/avs-discovery/ledger.tsv" logs/ 2>/dev/null || true
           sudo tail -n 300 /var/log/samba/log.smbd > logs/smbd.log 2>/dev/null || true
 

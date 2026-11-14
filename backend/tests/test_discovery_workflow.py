@@ -267,7 +267,7 @@ def test_the_phase_guard_fires_on_the_old_condition_and_without_limits() -> None
     broken = (
         source()
         .replace("if: ${{ !cancelled() && steps.setup.outcome == 'success' }}", "if: ${{ !cancelled() }}")
-        .replace("        timeout-minutes: 90\n", "")
+        .replace("        timeout-minutes: 110\n", "")
         .replace("          WAIT_LIMIT: '300'\n", "")
         .replace("        id: setup\n", "")
     )
@@ -456,6 +456,8 @@ OPERATIONS = (
     "delete_dan",
     "foreign_change",
     "reattach",
+    "parity_place",
+    "parity_revoke",
 )
 SUBCOMMANDS = ("samba", "part-a", "part-b", "control")
 TOPOLOGY_WORDS = (
@@ -546,6 +548,7 @@ PHASES = (
     "delete-user",
     "reattach",
     "foreign-change",
+    "search-parity",
 )
 # (shift in the expectation, the one check it has to make fail on its own)
 SELF_TEST_SHIFTS = (
@@ -808,8 +811,8 @@ def test_the_script_rule_fires_on_a_weak_transcribed_check_and_no_leak_line() ->
 
 def test_the_flow_rule_fires_on_a_missing_phase() -> None:
     text = source()
-    assert " reattach foreign-change; do" in text
-    broken = text.replace(" reattach foreign-change; do", " foreign-change; do")
+    assert " reattach foreign-change search-parity; do" in text
+    broken = text.replace(" reattach foreign-change search-parity; do", " reattach foreign-change; do")
 
     assert flow_findings(broken) == ["the job discovery does not run the phases of plan 02-04 in order"]
 
@@ -1127,3 +1130,137 @@ def test_the_model_rule_fires_on_a_model_step_in_the_control_leg() -> None:
     broken = text.replace(leak, leak.replace(marker, cache + marker, 1), 1)
 
     assert model_findings(broken) == ["leak-control contains avs-models", "leak-control contains actions/cache@"]
+
+
+# -- the phase search-parity (plan 03-17) ---------------------------------------------
+#
+# The hits of the unified search route against WebDAV, per person. The truth
+# never runs code of this app and never reads the state of the container; the
+# status command only serves the waiting. The comparison tests itself first,
+# and a run without a hit for a reading person cannot pass.
+
+PARITY = DISCOVERY / "parity.sh"
+PARITY_LINES = (
+    'echo "PHASE PASS search-parity"',
+    'echo "PHASE FAIL search-parity"',
+    'echo "PARITY CONTROL SHOWED THE DIFF"',
+    'echo "PARITY SELF-TEST FAILED"',
+    "at least one hit per reading person",
+    "sha256sum",
+    "PROPFIND",
+    "oc:fileid",
+    "oc:owner-id",
+    "/ocs/v2.php/search/providers/audio_video_search/search",
+    "--data-urlencode 'limit=25'",
+    "cursor=",
+    "Vorläufig|Preliminary|Provisoire",
+)
+# (name of the shift, the check it has to make fail on its own)
+PARITY_SHIFTS = (
+    ("extra-id", "set"),
+    ("missing-id", "set"),
+    ("duplicate", "unique"),
+    ("subline", "preliminary"),
+)
+PARITY_FORBIDDEN = ("audio_video_search_backend", "state.db", "docker exec", "docker cp", "php -r", "sqlite3")
+PARITY_STEP = (
+    'bash "${d}/parity.sh" baseline',
+    'bash "${d}/topology.sh" parity_place',
+    'bash "${d}/parity.sh" wait',
+    'bash "${d}/parity.sh" before',
+    'bash "${d}/topology.sh" parity_revoke',
+    'bash "${d}/parity.sh" check',
+)
+
+
+def parity_findings(script: str, workflow: str) -> list[str]:
+    """parity.sh judges independently and can fail; the workflow runs it as the last phase."""
+    findings: list[str] = []
+    code = "\n".join(code_lines(script))
+    findings += [f"parity.sh lacks {part}" for part in PARITY_LINES if part not in script]
+    findings += [f"parity.sh contains {word}" for word in PARITY_FORBIDDEN if word in script]
+    app_commands = set(re.findall(r"audio_video_search:[\w-]+", code))
+    if app_commands - {"audio_video_search:status"}:
+        findings.append(f"parity.sh runs {sorted(app_commands - {'audio_video_search:status'})}")
+    for shift, check in PARITY_SHIFTS:
+        if not re.search(rf"^\s*shifted {shift} {check} ", code, re.MULTILINE):
+            findings.append(f"the self test of parity.sh does not expect {check} to fail on {shift}")
+    body = re.search(r"^cmd_check\(\) \{\n(.*?)^\}", script, re.MULTILINE | re.DOTALL)
+    check = body.group(1) if body else ""
+    test_at = check.find("self_test || exit 1")
+    judge_at = check.find('judge "${person}"')
+    if test_at < 0 or judge_at < 0 or test_at > judge_at:
+        findings.append("parity.sh check does not run its self test before the verdict")
+
+    discovery = job_text(workflow, "discovery")
+    places = [discovery.find(part) for part in PARITY_STEP]
+    if any(place < 0 for place in places) or places != sorted(places):
+        findings.append("the phase search-parity does not run place, wait, before, revoke and check in order")
+    if "grep -qx 'PARITY CONTROL SHOWED THE DIFF'" not in discovery:
+        findings.append("the phase search-parity passes without the control line")
+    steps = dict(steps_of(discovery))
+    if "parity.sh settle" not in steps.get("Let the preview of the test media come to rest", ""):
+        findings.append("the phases do not wait for the preview of the test media")
+    verdict = steps.get("The verdict of all phases", "")
+    if f'[ "${{passed}}" = {len(PHASES)} ]' not in verdict:
+        findings.append(f"the verdict does not count {len(PHASES)} phases")
+    return findings
+
+
+def test_the_parity_phase_is_independent_able_to_fail_and_runs_last() -> None:
+    assert parity_findings(PARITY.read_text(encoding="utf-8"), source()) == []
+
+
+def test_the_parity_rule_fires_on_app_state_and_a_missing_control_line() -> None:
+    script = PARITY.read_text(encoding="utf-8")
+    broken = script.replace('echo "PARITY CONTROL SHOWED THE DIFF"', 'echo "control ok"') + (
+        '\nx() { docker exec "${C}" cat "${APP_PERSISTENT_STORAGE}/state.db"; occ audio_video_search:files; }\n'
+    )
+
+    assert parity_findings(broken, source()) == [
+        'parity.sh lacks echo "PARITY CONTROL SHOWED THE DIFF"',
+        "parity.sh contains state.db",
+        "parity.sh contains docker exec",
+        "parity.sh runs ['audio_video_search:files']",
+    ]
+
+
+def test_the_parity_rule_fires_on_a_missing_shift_and_a_late_self_test() -> None:
+    script = PARITY.read_text(encoding="utf-8")
+    assert script.count("\tshifted missing-id set ") == 1
+    assert script.count("\tself_test || exit 1\n") == 1
+    broken = script.replace("\tshifted missing-id set ", "\ttrue missing-id set ").replace(
+        "\tself_test || exit 1\n", "\ttrue\n"
+    )
+
+    assert parity_findings(broken, source()) == [
+        "the self test of parity.sh does not expect set to fail on missing-id",
+        "parity.sh check does not run its self test before the verdict",
+    ]
+
+
+def test_the_parity_rule_fires_on_a_weak_phase_in_the_workflow() -> None:
+    text = source()
+    script = PARITY.read_text(encoding="utf-8")
+    assert text.count("grep -qx 'PARITY CONTROL SHOWED THE DIFF'") == 1
+    broken = (
+        text.replace("grep -qx 'PARITY CONTROL SHOWED THE DIFF'", "true")
+        .replace('bash "${d}/topology.sh" parity_revoke', "true")
+        .replace('[ "${passed}" = 21 ]', '[ "${passed}" = 20 ]')
+    )
+
+    assert parity_findings(script, broken) == [
+        "the phase search-parity does not run place, wait, before, revoke and check in order",
+        "the phase search-parity passes without the control line",
+        "the verdict does not count 21 phases",
+    ]
+
+
+def test_the_parity_rule_fires_without_the_rest_of_the_preview() -> None:
+    text = source()
+    assert text.count("run: bash app-src/ci/discovery/parity.sh settle") == 1
+    broken = text.replace("run: bash app-src/ci/discovery/parity.sh settle", "run: true")
+
+    assert parity_findings(PARITY.read_text(encoding="utf-8"), broken) == [
+        "the phases do not wait for the preview of the test media"
+    ]

@@ -78,3 +78,52 @@ the read proof; it has to show the leak the main legs must never show
 | `delete_dan` | dan's references go, his content is only orphaned | D-02-13 |
 | `reattach` (dan's bytes into ana's home) | the new file attaches to the orphaned content and keeps its transcript | D-02-13 |
 | `foreign_change` (file replaced on the Samba side) | after a rescan the work stock holds the new hash | DISC-04 |
+
+## Phase search-parity (plan 03-17)
+
+The rights parity of the search in the HTTP path (SRCH-03), as the last phase
+of the same run. The job puts the speech models into the volume of the ExApp
+before it is registered (the air gap way of plan 03-07, cache key
+`avs-models-<MODEL_SHA256>` as in `python.yml`), and `/init` has to report 100
+with outcome `present` for both models and no download. The speech clip
+(`AVS_SPEECH_DE`, FLEURS DE, `ci/media/fetch_speech.py`) is the content; the
+search term is `AVS_SPEECH_WORD`.
+
+`topology.sh parity_place` puts the clip at these places:
+
+| Copy | Who reads it | Expected hit |
+|------|--------------|--------------|
+| `rede-geteilt.wav` in ana's home, shared with cem, the share revoked later | ana | ana; cem only before the revocation |
+| `rede-papierkorb.wav` in ana's home, deleted later (trash) | nobody after the deletion | ana only before the deletion |
+| `Team/rede-frei/rede.wav`, cem `+read -share` (cem joins `team`) | ana, cem, ben | ana, cem |
+| `Team/rede-intern/rede.wav`, cem `-read` | ana, ben | ana |
+| `rede-gesperrt.wav` on the Samba share, DENY READ for ana (ben is excluded and cem has no SMB mount any more by then) | ben only, who is excluded | none |
+| `rede-sperre.wav` in ana's home under the `avs-sperre` rule of files_accesscontrol (a tone first, then the tag, then the clip from the command line) | nobody | none |
+| `rede-eva.wav` in eva's home (excluded before the first run), shared with cem | eva, cem | none: excluded person and excluded owner |
+
+`parity.sh` holds the verdict:
+
+- Truth, without code of this app: every file of each person (ana, ben, cem,
+  eva, fritz; dan is deleted) through WebDAV PROPFIND folder by folder
+  (`oc:fileid`, `oc:owner-id`), every `.wav` fetched with GET as that person
+  and compared by `sha256sum` with the clip. Readable and the same bytes is an
+  expected hit, minus the rules the test itself set: the excluded persons (eva,
+  fritz, ben), copies they own, the folders `privat` and `archiv-spaeter` and
+  ana's mount `SMB-Teil`.
+- Product: `GET /ocs/v2.php/search/providers/audio_video_search/search` with
+  `limit=25` as each person, following the cursor to the last page.
+- Per person `parity <person> erwartet=<ids> gefunden=<ids>`, the same set,
+  no file id twice over the pages, every hit marked `Vorläufig`,
+  `Preliminary` or `Provisoire`; ana and cem need at least one hit each, so
+  "no hit for anybody" cannot pass. The truth has to say no as well: ana sees
+  the Samba and the files_accesscontrol copy and reads neither.
+- Self test before the verdict: an extra expected id, a missing id, a file id
+  twice and a hit without the preliminary word each have to fail on their own;
+  then `PARITY CONTROL SHOWED THE DIFF`, otherwise `PARITY SELF-TEST FAILED`
+  and no verdict.
+- `occ audio_video_search:status` serves the waiting only: the preview of the
+  clip is done (`byPreview.complete` above the count before the clip, nothing
+  running) and ana sees a first hit.
+- `parity.sh settle` runs once before the phases: with the models present the
+  preview fetches every test medium through the gateway, and those lines must
+  not fall into the window of a later phase. Bounded, never a verdict.
