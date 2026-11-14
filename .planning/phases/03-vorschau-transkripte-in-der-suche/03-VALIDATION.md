@@ -36,7 +36,7 @@ created: 2026-11-14
 
 ## Per-Task Verification Map
 
-Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-13b, 03-16b) erzeugt. Jede Aufgabe hat einen `<automated>`-Befehl; Checkpoints prüfen mit einem schnellen Gate, die eigentliche Prüfung ist die Owner-Antwort. PHP- und Container-Belege (phpunit, Docker, Playwright, search-parity) kommen aus CI in Plan 03-20.
+Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-13b, 03-16b, 03-18b) erzeugt. Jede Aufgabe hat einen `<automated>`-Befehl; Checkpoints prüfen mit einem schnellen Gate, die eigentliche Prüfung ist die Owner-Antwort. PHP- und Container-Belege (phpunit, Docker, Playwright, search-parity) kommen aus CI in Plan 03-20.
 
 | Task-ID | Plan | Welle | Requirement | Threat-Ref | Testtyp | Automatischer Befehl | Datei | Status |
 |---|---|---|---|---|---|---|---|---|
@@ -84,14 +84,17 @@ Aus den Plänen 03-01 bis 03-21 (inkl. 03-07b, 03-13b, 03-16b) erzeugt. Jede Auf
 | 03-17-T2 | 03-17 | 6 | SRCH-03, SRCH-01 | T-03-57, T-03-58, T-03-59 | auto | `cd backend && uv run pytest tests/test_discovery_workflow.py -x -q && bash -n ../ci/discovery/parity.sh && ...` | vorhanden | pending |
 | 03-18-T1 | 03-18 | 6 | alle 12 | T-03-60, T-03-61, T-03-62 | auto | `bash -n ci/make-testmedia.sh && bash -n ci/seed.sh && cd backend && uv run pytest tests/test_workflows.py t...` | vorhanden | pending |
 | 03-18-T2 | 03-18 | 6 | alle 12 | T-03-60, T-03-61, T-03-62 | auto | `cd ci/playwright && npx playwright test --list --grep @preview` | vorhanden | pending |
-| 03-19-T1 | 03-19 | 7 | alle 12 | T-03-63, T-03-64, T-03-65 | auto | `cd backend && uv run pytest tests/test_lockstep_versions.py tests/test_workflows.py tests/test_store_metada...` | vorhanden | pending |
-| 03-19-T2 | 03-19 | 7 | alle 12 | T-03-63, T-03-64, T-03-65 | checkpoint | `cd backend && uv run pytest tests/test_trilingual.py -x -q` | vorhanden | pending |
-| 03-19-T3 | 03-19 | 7 | alle 12 | T-03-63, T-03-64, T-03-65 | auto | `cd backend && uv run pytest tests/test_trilingual.py tests/test_public_texts.py tests/test_public_artifacts...` | vorhanden | pending |
-| 03-20-T1 | 03-20 | 8 | alle 12 | T-03-66 bis T-03-69 | checkpoint | `BASE=origin/main && test -z "$(git log --format='%an <%ae>' "$BASE"..HEAD \| grep -vx 'street1983nk <k.cheri...` | vorhanden | pending |
-| 03-20-T2 | 03-20 | 8 | alle 12 | T-03-66 bis T-03-69 | auto | `SHA=$(git rev-parse HEAD) && A=.planning/phases/03-vorschau-transkripte-in-der-suche/approvals && gh run li...` | vorhanden | pending |
-| 03-20-T3 | 03-20 | 8 | alle 12 | T-03-66 bis T-03-69 | checkpoint | `cd backend && uv run pytest -q && uv run ruff check . && PYRIGHT_PYTHON_FORCE_VERSION=latest uv run pyright...` | vorhanden | pending |
-| 03-21-T1 | 03-21 | 9 | SRCH-01, SRCH-02, SRCH-03, MEDIA-04 | T-03-70, T-03-71 | auto | `python -c "import sys,pathlib; bad=[p for p in sys.argv[1:] if any(c in pathlib.Path(p).read_text(encoding=...` | vorhanden | pending |
-| 03-21-T2 | 03-21 | 9 | SRCH-01, SRCH-02, SRCH-03, MEDIA-04 | T-03-70, T-03-71 | checkpoint | `cd backend && uv run pytest tests/test_trilingual.py tests/test_ui_assets.py -x -q` | vorhanden | pending |
+| 03-18b-T1 | 03-18b | 7 | SRCH-02, SRCH-03 | T-03-85 bis T-03-88 | checkpoint | `cd backend && uv run pytest tests/test_discovery_workflow.py -x -q` (Owner OC-1: Bildbeleg P12) | vorhanden | pending |
+| 03-18b-T2 | 03-18b | 7 | SRCH-02, SRCH-03 | T-03-85 bis T-03-88 | auto | `bash -n ci/discovery/playpage.sh && bash ci/discovery/playpage.sh --self-test` (offline, muss PLAY SELF-TEST PASSED zeigen) | W0 (Plan legt an) | pending |
+| 03-18b-T3 | 03-18b | 7 | SRCH-02, SRCH-03 | T-03-85 bis T-03-88 | auto | `cd backend && uv run pytest tests/test_discovery_workflow.py tests/test_workflow_pins.py tests/test_workflows.py -q` | vorhanden | pending |
+| 03-19-T1 | 03-19 | 8 | alle 12 | T-03-63, T-03-64, T-03-65 | auto | `cd backend && uv run pytest tests/test_lockstep_versions.py tests/test_workflows.py tests/test_store_metada...` | vorhanden | pending |
+| 03-19-T2 | 03-19 | 8 | alle 12 | T-03-63, T-03-64, T-03-65 | checkpoint | `cd backend && uv run pytest tests/test_trilingual.py -x -q` | vorhanden | pending |
+| 03-19-T3 | 03-19 | 8 | alle 12 | T-03-63, T-03-64, T-03-65 | auto | `cd backend && uv run pytest tests/test_trilingual.py tests/test_public_texts.py tests/test_public_artifacts...` | vorhanden | pending |
+| 03-20-T1 | 03-20 | 9 | alle 12 | T-03-66 bis T-03-69 | checkpoint | `BASE=origin/main && test -z "$(git log --format='%an <%ae>' "$BASE"..HEAD \| grep -vx 'street1983nk <k.cheri...` | vorhanden | pending |
+| 03-20-T2 | 03-20 | 9 | alle 12 | T-03-66 bis T-03-69 | auto | `SHA=$(git rev-parse HEAD) && A=.planning/phases/03-vorschau-transkripte-in-der-suche/approvals && gh run li...` | vorhanden | pending |
+| 03-20-T3 | 03-20 | 9 | alle 12 | T-03-66 bis T-03-69 | checkpoint | `cd backend && uv run pytest -q && uv run ruff check . && PYRIGHT_PYTHON_FORCE_VERSION=latest uv run pyright...` | vorhanden | pending |
+| 03-21-T1 | 03-21 | 10 | SRCH-01, SRCH-02, SRCH-03, MEDIA-04 | T-03-70, T-03-71 | auto | `python -c "import sys,pathlib; bad=[p for p in sys.argv[1:] if any(c in pathlib.Path(p).read_text(encoding=...` | vorhanden | pending |
+| 03-21-T2 | 03-21 | 10 | SRCH-01, SRCH-02, SRCH-03, MEDIA-04 | T-03-70, T-03-71 | checkpoint | `cd backend && uv run pytest tests/test_trilingual.py tests/test_ui_assets.py -x -q` | vorhanden | pending |
 
 Zuordnung Anforderung zu Testdatei (aus der Research, unverändert gültig):
 
@@ -108,7 +111,7 @@ Zuordnung Anforderung zu Testdatei (aus der Research, unverändert gültig):
 | TRANS-08 | test_preview_worker.py -k timeline, test_engine_model.py | 03-13, 03-10 |
 | SRCH-01 | test_search_tiers.py, ProviderTest.php (CI) | 03-08, 03-12 |
 | SRCH-02 | ProviderTest.php, PlayControllerTest.php (CI), test_trilingual.py | 03-12, 03-16, 03-16b |
-| SRCH-03 | test_excerpt_states.py, PlayControllerTest.php, search-parity (CI) | 03-14, 03-16, 03-17 |
+| SRCH-03 | test_excerpt_states.py, PlayControllerTest.php, search-parity und play-leak (CI) | 03-14, 03-16, 03-17, 03-18b |
 
 *Status: pending, green, red, flaky*
 

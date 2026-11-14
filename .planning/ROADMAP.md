@@ -120,7 +120,7 @@ Plans:
   3. Ein Nutzer ohne Leserecht (entzogene Freigabe, Gruppenordner-ACL `+read -share`, Papierkorb) sieht keinen Treffer aus der Datei; der Rechte-Paritätstest läuft im HTTP-Pfad in CI.
   4. Wird der Container während einer langen Datei beendet, setzt die Vorschau nach dem Neustart am letzten fertigen Stück fort; VAD lässt sich nirgends abschalten.
 
-**Plans**: 24 plans (9 Wellen)
+**Plans**: 25 plans (10 Wellen)
 Plans:
 
 - [ ] 03-01-PLAN.md: (W1) Owner: Paketfreigabe sherpa-onnx/numpy/py3langid, Texte Höchstdauer-Feld und Modell-Fehler, Deckel 24 h, Nachtrag A13/P13 zum freigegebenen T12
@@ -144,9 +144,10 @@ Plans:
 - [ ] 03-13b-PLAN.md: (W5) Owner D-03-23: Wörter aus dem zweiten VAD-Durchgang nur bei sicherer Instanzsprache und gemessener Konfidenzschwelle
 - [ ] 03-17-PLAN.md: (W6) CI: Modelle in der Abnahme, Rechte-Paritätstest search-parity
 - [ ] 03-18-PLAN.md: (W6) CI: Playwright-Kernweg und Zustände mit Kontrast und Leck-Proben
-- [ ] 03-19-PLAN.md: (W7) Owner: Version 0.3.0, Upgrade von 0.2.0, Doku nach Textfreigabe
-- [ ] 03-20-PLAN.md: (W8) Owner: Push auf phase-03, sechs Beine, Korrekturschleife
-- [ ] 03-21-PLAN.md: (W9) Owner: gemeinsame UI-Abnahme per Playwright
+- [ ] 03-18b-PLAN.md: (W7) Owner D-03-24: P12 als echte Abspielseiten-Probe (Phase play-leak) in discovery-e2e.yml
+- [ ] 03-19-PLAN.md: (W8) Owner: Version 0.3.0, Upgrade von 0.2.0, Doku nach Textfreigabe
+- [ ] 03-20-PLAN.md: (W9) Owner: Push auf phase-03, sechs Beine, Korrekturschleife
+- [ ] 03-21-PLAN.md: (W10) Owner: gemeinsame UI-Abnahme per Playwright
 
 **UI hint**: yes
 **Research flag**: Standardmuster (Spike-Code vorhanden, Findling-Rechteprüfung). Medienkorpus für Fuzz/Formate anlegen; Gesang/Musik für "keine Sprache" und Sprachen außerhalb DE/EN/FR sind ungemessen. Hinweis: Parakeet läuft hier schon als Kindprozess; der vollständige cgroup-Wächter folgt in Phase 5.
