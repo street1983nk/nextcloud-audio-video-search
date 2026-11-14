@@ -459,7 +459,8 @@ final class ExAppServiceTest extends TestCase {
 
 	/** @return array<string, mixed> */
 	private static function reconcileAnswer(array $override = []): array {
-		return $override + ['swept' => 2, 'vanished' => 1, 'orphaned' => 0, 'walkedMounts' => 3, 'requeued' => 4, 'rejected' => 1, 'reproofDue' => 0, 'skippedReason' => null];
+		// array_replace keeps the order of the contract, so assertSame can compare whole answers.
+		return array_replace(['swept' => 2, 'vanished' => 1, 'orphaned' => 0, 'walkedMounts' => 3, 'requeued' => 4, 'rejected' => 1, 'reproofDue' => 0, 'skippedReason' => null], $override);
 	}
 
 	public function testReconcileNowPostsTheReproveFlagAsAnAdminWithTheLongTimeout(): void {
