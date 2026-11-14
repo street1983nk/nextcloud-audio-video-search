@@ -103,6 +103,12 @@ Kein PHP geändert, daher kein Container-Lauf (kein Docker gestartet).
 - 7f323ec ci(02-20): `discovery-e2e.yml` ruft nach `vanish_cem` und `delete_dan` `./occ audio_video_search:reconcile`. Nicht lokal ausgeführt.
 - Gates danach: ruff, ruff format (76), pyright 0, vulture 0, pytest **1004 passed**.
 
+## Push 9 (Owner-Entscheid 14.11.2026 "Ja, push-9 (Empfohlen)")
+
+- Vorgehen wie 02-17b: `approvals/main-before-77359a8…` (main unverändert ea97b58), `ghcr-before-77359a8…` mit `STATE 404 Package not found` (Positivkontrolle findling_backend 1.6.2: Treffer), Freigabedatei `approvals/push-77359a8…` mit `push-phase-02 77359a8e62516ac7edfdb9997b7336727e23cef7`; `approvals/` per `git check-ignore` ausgenommen. Autoren- und Textprüfung über `origin/phase-02..HEAD` (20 Commits) ohne Treffer, Fast-Forward vorab geprüft.
+- Push: genau ein `git push origin HEAD:phase-02`, bf2342c..77359a8 um 05:31:33Z. Kein Workflow von Hand gestartet.
+- Läufe für 77359a8 (nicht abgewartet): 43561950802 Discovery acceptance, 43561950828 Python gates, 43561950809 PHP gates, 43561950761 Deploy through HaRP.
+
 ## Known Stubs
 
 Keine. Die Lücke aus 02-19 (occ :reconcile ohne Container-Route) ist geschlossen.
