@@ -9,7 +9,7 @@ Deutsch | [English](README.en.md) | [Français](README.fr.md)
 
 Audio & Video Search macht Audio- und Videodateien in Nextcloud durchsuchbar. Die App schreibt das Gesprochene lokal auf dem eigenen Server mit und findet so Besprechungen, Interviews und Aufzeichnungen über ihren Inhalt.
 
-**Status:** in Entwicklung, noch nicht im App Store. Stand 0.2.0: die App findet alle Audio- und Videodateien der Instanz, auch auf externen Speichern, und hält den Bestand aktuell; Ausschlüsse per occ. Eine Transkription gibt es noch nicht.
+**Status:** in Entwicklung, noch nicht im App Store. Stand 0.3.0: die App transkribiert alle Audio- und Videodateien der Instanz lokal, auch auf externen Speichern, zunächst als Vorschau; Treffer daraus tragen in der Suche "Vorläufig". Ein genaueres Transkript ist für spätere Versionen geplant.
 
 ## Was Audio & Video Search kann
 
@@ -17,7 +17,7 @@ Audio & Video Search macht Audio- und Videodateien in Nextcloud durchsuchbar. Di
 - Abspielansicht, die die Aufnahme an der Zeitstelle des Treffers öffnet
 - Statusbereich für Admins mit dem Zustand beider Apps
 - Verändert nie Ihre Dateien
-- Geplant: Transkription auf dem eigenen Server für Deutsch, Englisch und Französisch
+- Transkription auf dem eigenen Server für Deutsch, Englisch und Französisch, zuerst als Vorschau
 
 Mobil-Apps (Android, iOS) öffnen einen Treffer als Datei ab 0:00, ohne Sprung auf die Zeitstelle.
 
@@ -34,6 +34,7 @@ Beide Apps müssen installiert sein und dieselbe Version haben. Unterscheiden si
 
 - Nextcloud 33 bis 35 mit AppAPI und einem eingerichteten Deploy-Daemon (HaRP empfohlen)
 - CPU: amd64 oder arm64
+- Arbeitsspeicher: ca. 2,2 GB frei (1,7 GB plus 0,5 GB Reserve); Speicherplatz: ca. 0,67 GB für die Sprachmodelle
 
 ## Installation
 
@@ -45,7 +46,7 @@ Die PHP-App hängt sich in die Nextcloud-Suche, prüft die Rechte und liefert Da
 
 ## Datenschutz
 
-Alles läuft lokal auf dem eigenen Server, nichts verlässt den Server, keine Telemetrie.
+Alles läuft lokal auf dem eigenen Server: kein Audio, kein Text und keine Telemetrie verlässt den Server. Nach außen geht nur der einmalige Download der Sprachmodelle beim Aktivieren.
 Die App speichert Transkripte und Index im Datenvolumen ihres Containers.
 
 ## Lizenz
@@ -56,5 +57,6 @@ Bestandteile Dritter im Backend:
 
 - Deutsche Wortliste `wngerman` (Debian), GPL-2.0-or-later, für die Zerlegung zusammengesetzter Wörter; Lizenztext im Image unter `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
 - Für die Transkription lädt die ExApp beim Aktivieren Parakeet TDT 0.6B v3 von NVIDIA (CC-BY-4.0) und Silero VAD (MIT) aus dem eigenen GitHub-Release `models-2026-11` und prüft jede Datei gegen einen festen sha256; ohne Internetzugang können Admins dieselben Dateien selbst ablegen; Whisper (MIT) ist für spätere Versionen vorgesehen.
+- FFmpeg (statischer LGPL-Build von BtbN, Version 8.1) zum Dekodieren der Aufnahmen
 
 Symbole der PHP-App: Material Design Icons von Pictogrammers, Apache-2.0, Lizenztext unter [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).

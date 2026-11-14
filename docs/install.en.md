@@ -31,7 +31,7 @@ With every error, the link "Open Apps" leads to the app management.
 
 ## Test result (developers only)
 
-Phase 1 does not transcribe yet. For the integration proof, a command creates a short test result for a real audio or video file. It requires debug mode in `config.php`:
+For the integration proof without a real speech recording, a command creates a short test result for a real audio or video file. It requires debug mode in `config.php`:
 
 ```php
 'debug' => true,
@@ -71,6 +71,19 @@ The command removes the test result and its index entries; the file itself stays
 - Deleted files leave the search at once. Their transcript is kept for 7 days in case a copy turns up again.
 - Every file is read in full once.
 - With php-fpm, set `request_terminate_timeout` so a hanging SMB access does not hold a worker for good.
+
+## Transcription (preview)
+
+- The backend transcribes every discovered audio and video file locally with Parakeet TDT 0.6B v3 (int8) and Silero VAD. The result is a preview first: its hits carry the word "Preliminary" in the search, and the playback page shows "Preliminary transcript. It may contain errors."
+- German, English and French are recognised; passages in other languages are dropped.
+- Formats include MP3, M4A, WAV, OGG, Opus, FLAC, MP4, MOV, MKV and WebM. With several audio tracks, the one marked as default counts, otherwise the first.
+- New and changed files come before existing ones, existing files by modification date, newest first. Long files are processed in pieces of 10 minutes and can be found after each finished piece.
+- Longest recording 12 hours, adjustable up to 24 under Administration settings, Additional settings, "Longest recording in hours". Longer files are skipped as too long; if the limit is raised, they go back into the queue.
+- A file stays without a transcript if it contains no speech, is damaged or protected, its language is not supported or it is too long. If disk space runs short, the backend tries again later. Users see the reason on the playback page of their file, admins see the numbers with `occ audio_video_search:status` (without file names).
+- Memory: the preview needs about 1.7 GB of RAM plus a 0.5 GB reserve; with less free, it waits.
+- Models: when it is enabled, the backend downloads about 0.67 GB once from this project's GitHub release `models-2026-11`, only through `github.com` and `release-assets.githubusercontent.com`, and checks every file against a fixed sha256. Apart from this download, nothing leaves the server.
+- Without internet access: before the installation, create the volume `nc_app_audio_video_search_backend_data` and put the same files into it, `encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx` and `tokens.txt` under `models/parakeet/<checksum>/`, `silero_vad.onnx` under `models/silero/<checksum>/`, owned by the container user 10001. `<checksum>` is `3a78ea81526430808b60248acbaa45a3361ad99bdd0b05b7da6ad6548a4dd339`. The backend checks the files against the same sha256 and then downloads nothing.
+- Attribution: Parakeet TDT 0.6B v3 by NVIDIA, CC-BY-4.0; Silero VAD, MIT; FFmpeg, LGPL (static build, for decoding only).
 
 ## Notes
 

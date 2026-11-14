@@ -5,6 +5,18 @@ written before its tag; the GitHub release carries the same facts in English.
 
 ## 0.3.0
 
+- Preview transcription of every audio and video file on the server with Parakeet TDT 0.6B v3 (int8) and Silero VAD; its hits carry "Preliminary" in the search
+- German, English and French; passages in other languages are dropped
+- One search result per passage with time mark and excerpt, up to 3 per file on a page, more with "Load more"; hits only from files the user can read
+- The playback page jumps to the word and shows the excerpt with the note "Preliminary transcript. It may contain errors."
+- New and changed files first, then existing files by modification date, newest first; long files in pieces of 10 minutes, searchable piece by piece, resumed after a restart
+- Longest recording 12 h by default, adjustable up to 24 h; longer files are skipped as too long and come back when the limit is raised
+- Reasons without a transcript (no speech, damaged, protected, language not supported, too long, not enough disk space) on the playback page and as numbers in `occ audio_video_search:status`
+- Decoding with FFmpeg (static LGPL build) behind a fixed list of formats, local files only, with time limits
+- Speech models (about 0.67 GB) are downloaded once when the backend is enabled, from the release `models-2026-11` of this project, each file checked against a fixed sha256; without internet access they can be placed by hand
+- The preview needs about 1.7 GB of RAM plus a reserve and waits while less is free
+- Update from 0.2.0 migrates the stored state and the work queue
+
 ## 0.2.0
 
 - Discovery of every audio and video file of the instance: home folders, team folders, shares and external storages

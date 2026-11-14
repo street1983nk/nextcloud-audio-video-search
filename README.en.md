@@ -9,7 +9,7 @@
 
 Audio & Video Search makes audio and video files in Nextcloud searchable. It transcribes the spoken words locally on your own server, so meetings, interviews and recordings can be found by what was said.
 
-**Status:** in development, not in the App Store yet. As of 0.2.0 the app finds every audio and video file of the instance, external storages included, and keeps the list current; exclusions via occ. There is no transcription yet.
+**Status:** in development, not in the App Store yet. As of 0.3.0 the app transcribes every audio and video file of the instance locally, external storages included, first as a preview; its hits carry "Preliminary" in the search. A more accurate transcript is planned for later versions.
 
 ## What Audio & Video Search does
 
@@ -17,7 +17,7 @@ Audio & Video Search makes audio and video files in Nextcloud searchable. It tra
 - Playback view that opens the recording at the point in time of the result
 - Status area for admins with the state of both apps
 - Never modifies your files
-- Planned: transcription on your own server for German, English and French
+- Transcription on your own server for German, English and French, first as a preview
 
 Mobile apps (Android, iOS) open a result as a file from 0:00, without the jump to the point in time.
 
@@ -34,6 +34,7 @@ Both apps must be installed and run the same version. If the versions differ onl
 
 - Nextcloud 33 to 35 with AppAPI and a configured deploy daemon (HaRP recommended)
 - CPU: amd64 or arm64
+- Memory: about 2.2 GB free (1.7 GB plus a 0.5 GB reserve); disk space: about 0.67 GB for the speech models
 
 ## Installation
 
@@ -45,7 +46,7 @@ The PHP app hooks into the Nextcloud search, checks permissions and hands files 
 
 ## Privacy
 
-Everything runs locally on your own server, nothing leaves the server, no telemetry.
+Everything runs locally on your own server: no audio, no text and no telemetry leaves the server. The only outbound connection is the one-time download of the speech models when the app is enabled.
 The app keeps transcripts and index in the data volume of its container.
 
 ## License
@@ -56,5 +57,6 @@ Third-party components of the backend:
 
 - German word list `wngerman` (Debian), GPL-2.0-or-later, for splitting compound words; licence text in the image at `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
 - For transcription, the ExApp downloads Parakeet TDT 0.6B v3 by NVIDIA (CC-BY-4.0) and Silero VAD (MIT) from this project's own GitHub release `models-2026-11` when it is enabled and checks every file against a fixed sha256; without internet access, admins can place the same files themselves; Whisper (MIT) is planned for later versions.
+- FFmpeg (static LGPL build by BtbN, version 8.1) for decoding the recordings
 
 Icons of the PHP app: Material Design Icons by Pictogrammers, Apache-2.0, licence text in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
