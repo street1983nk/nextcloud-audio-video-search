@@ -36,7 +36,7 @@ from audio_video_search_backend import companion, nc
 from audio_video_search_backend.api import Services
 from audio_video_search_backend.engine import child
 from audio_video_search_backend.engine.catch import DROP_CONFIDENCE, DROP_LANGUAGE, KEEP
-from audio_video_search_backend.engine.constants import CHUNK_CONTEXT_MS, CHUNK_LOOKAHEAD_MS, CHUNK_MS
+from audio_video_search_backend.engine.constants import CHUNK_CONTEXT_MS, CHUNK_LOOKAHEAD_MS, CHUNK_MS, CONFIG_VERSION
 from audio_video_search_backend.engine.parakeet import EngineWord, Window
 from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.media import probe as probe_module
@@ -633,7 +633,9 @@ async def test_after_the_first_chunk_the_media_is_findable_as_a_preview(
         "FROM transcript t JOIN current c ON c.version_id = t.version_id WHERE c.media_id = ?",
         (media_id,),
     )
-    assert prov == [("parakeet", catalog.MODEL_SHA256, "balanced", int(Level.PREVIEW), "und", _sha_of(gateway, 11), 1)]
+    assert prov == [
+        ("parakeet", catalog.MODEL_SHA256, "balanced", int(Level.PREVIEW), "und", _sha_of(gateway, 11), CONFIG_VERSION)
+    ]
 
 
 # -- time axis (TRANS-08) -------------------------------------------------------------
