@@ -18,7 +18,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Zwei-App-Gerüst und Integrationsbeweis** - PHP-App und ExApp im Lockstep, Dummy-Treffer in der Unified Search, Abspielansicht ab `#t=`, Schlüssel/Provenienz/Schema festgelegt
  (completed 2026-11-07)
 
-- [x] **Phase 2: Erfassung aller Dateien** - Arbeitsvorrat, Ereignisse, Crawl inkl. Gruppenordner und externer Speicher, Ausschlüsse, Inhalts-Dedupe (completed 2026-11-14)
+- [x] **Phase 2: Erfassung aller Dateien** - Arbeitsvorrat, Ereignisse, Crawl inkl. Gruppenordner und externer Speicher, Ausschlüsse, Inhalts-Dedupe
+ (completed 2026-11-14)
 - [ ] **Phase 3: Vorschau-Transkripte in der Suche** - Gehärteter Medien-Eingang, Parakeet-Vorschau mit Wächter und Abfangregel, echte Treffer mit Rechteprüfung zur Abfragezeit
 - [ ] **Phase 4: Suchqualität und Export** - Wortformen/Komposita/Zahlen, Filter-Verträglichkeit, Download-Sperre, SRT/VTT/TXT und Nebendatei als Untertitel-Entwurf
 - [ ] **Phase 5: Ressourcen, Profile und Modellbezug** - cgroup-RAM-Wächter, OOM-Isolation, Profilvorwahl, Reihenfolge, Rechenfenster, Modell-Download mit sha256, Lizenzen
@@ -119,7 +120,33 @@ Plans:
   3. Ein Nutzer ohne Leserecht (entzogene Freigabe, Gruppenordner-ACL `+read -share`, Papierkorb) sieht keinen Treffer aus der Datei; der Rechte-Paritätstest läuft im HTTP-Pfad in CI.
   4. Wird der Container während einer langen Datei beendet, setzt die Vorschau nach dem Neustart am letzten fertigen Stück fort; VAD lässt sich nirgends abschalten.
 
-**Plans**: TBD
+**Plans**: 22 plans (9 Wellen)
+Plans:
+
+- [ ] 03-01-PLAN.md: (W1) Owner: Paketfreigabe sherpa-onnx/numpy/py3langid, Texte Höchstdauer-Feld und Modell-Fehler, Deckel 24 h, Nachtrag A13/P13 zum freigegebenen T12
+- [ ] 03-02-PLAN.md: (W1) Wave 0: Messskripte ohne lokale Pfade, gepinnte Sprachclips, fehlschlagender Kernweg @preview
+- [ ] 03-03-PLAN.md: (W1) Store v3: preview_job, file_ref.origin, Migration v2 nach v3, Job beim Erfassen
+- [ ] 03-04-PLAN.md: (W1) PHP: Herkunft event/crawl in avs_queue
+- [ ] 03-05-PLAN.md: (W1) Gehärteter Medien-Eingang: LGPL-ffmpeg im Image und CI, probe/decode, Format- und Zeitachsentests
+- [ ] 03-06-PLAN.md: (W1) Spike-3-Konstanten, Abfangregel, Dateiurteil, VAD-Gate (TDD)
+- [ ] 03-08-PLAN.md: (W1) Container-Suche: Stufen-Folge mit Offset und Stufe (TDD)
+- [ ] 03-07-PLAN.md: (W2) Modell-Downloader mit sha256 und Host-Allowlist, /init mit Fortschritt
+- [ ] 03-09-PLAN.md: (W2) Store: Vorschau-Jobs, Stück-Commit, Urteile, occ-Zähler (TDD)
+- [ ] 03-11-PLAN.md: (W2) Herkunft im Claim-Vertrag, Höchstdauer statt Größengrenze
+- [ ] 03-12-PLAN.md: (W2) PHP-Provider: limit/Cursor, Auffüllen, Prüf-Cache, Kennzeichen Vorläufig
+- [ ] 03-10-PLAN.md: (W3) Engine: Pakete, Speicherwächter, Parakeet im Kindprozess, Modelltest
+- [ ] 03-14-PLAN.md: (W3) /excerpt-Zustände unter der Leck-Regel, occ-Zeile Preview
+- [ ] 03-13-PLAN.md: (W4) Vorschau-Worker: Stücke, Fortsetzen, Unterbrechen, Gründe, Index-Last
+- [ ] 03-16-PLAN.md: (W4) PHP-Logik der Abspielseite: Zustände A1 bis A13 unter der Leck-Regel
+- [ ] 03-15-PLAN.md: (W5) Verdrahtung, Höchstdauer-Anhebung, Wahrheitsbedingung T6/T7, Korpus-Langtest
+- [ ] 03-16b-PLAN.md: (W5) Abspielseite: Template, CSS, Kataloge T2 bis T12 in DE/EN/FR
+- [ ] 03-17-PLAN.md: (W6) CI: Modelle in der Abnahme, Rechte-Paritätstest search-parity
+- [ ] 03-18-PLAN.md: (W6) CI: Playwright-Kernweg und Zustände mit Kontrast und Leck-Proben
+- [ ] 03-19-PLAN.md: (W7) Owner: Version 0.3.0, Upgrade von 0.2.0, Doku nach Textfreigabe
+- [ ] 03-20-PLAN.md: (W8) Owner: Push auf phase-03, sechs Beine, Korrekturschleife
+- [ ] 03-21-PLAN.md: (W9) Owner: gemeinsame UI-Abnahme per Playwright
+
+**UI hint**: yes
 **Research flag**: Standardmuster (Spike-Code vorhanden, Findling-Rechteprüfung). Medienkorpus für Fuzz/Formate anlegen; Gesang/Musik für "keine Sprache" und Sprachen außerhalb DE/EN/FR sind ungemessen. Hinweis: Parakeet läuft hier schon als Kindprozess; der vollständige cgroup-Wächter folgt in Phase 5.
 
 ### Phase 4: Suchqualität und Export
@@ -267,7 +294,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
-| 3. Vorschau-Transkripte in der Suche | 0/TBD | Not started | - |
+| 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
 | 4. Suchqualität und Export | 0/TBD | Not started | - |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
