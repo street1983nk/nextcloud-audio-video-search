@@ -44,7 +44,10 @@ use Psr\Log\LoggerInterface;
  *
  * An excluded user gets no hits at all (D-02-08, T-02-58): the group is empty
  * before the container is asked anything, and the answer is the one of a
- * search that found nothing.
+ * search that found nothing. Every proposal is also asked about with
+ * ExclusionService::isExcludedFile under the rules read at the start of this
+ * search, so a storage or a folder excluded after the first crawl gives no
+ * hit from the moment the rule is written (owner 14.11.2026).
  *
  * Nothing a user typed or owns is logged: the reasons for an empty group are
  * debug lines without term, without path and without the user.
@@ -122,6 +125,10 @@ final class Provider implements IFilteringProvider {
 
 	#[\Override]
 	public function search(IUser $user, ISearchQuery $query): SearchResult {
+		// The rules of now for every search, also in a process that lives
+		// longer than one request: a rule written a moment ago holds here
+		// before SchedulerJob turns it into work (owner 14.11.2026).
+		$this->exclusions->reload();
 		$term = mb_substr(trim($query->getTerm()), 0, self::MAX_TERM_LENGTH);
 		if ($term === '') {
 			return SearchResult::complete($this->getName(), []);
@@ -184,6 +191,13 @@ final class Provider implements IFilteringProvider {
 
 			$fileId = $hit['fileId'];
 			$checked++;
+			// A storage, a folder or an owner excluded after the first crawl
+			// may still have references in the container until SchedulerJob
+			// removes them; such a hit never appears. A question that fails
+			// is a yes (ExclusionService).
+			if ($this->exclusions->isExcludedFile($fileId)) {
+				continue;
+			}
 			try {
 				$file = $this->readerContext->actAs($uid, static fn (): ?File => FileAccess::readableFile($userFolder, $fileId));
 			} catch (\Throwable $e) {

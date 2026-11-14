@@ -272,6 +272,8 @@ final class PageController extends Controller {
 	 */
 	private function excerpt(string $uid, int $fileId, int $startMs): array {
 		try {
+			// The rules of now, as in the search (owner 14.11.2026).
+			$this->exclusions->reload();
 			$excluded = $this->exclusions->isExcludedUser($uid) || $this->exclusions->isExcludedFile($fileId);
 		} catch (\Throwable $e) {
 			$this->logger->warning('Audio & Video Search: the exclusions could not be asked for the playback page, no excerpt is shown', [

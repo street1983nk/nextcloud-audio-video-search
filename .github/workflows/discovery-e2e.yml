@@ -138,6 +138,8 @@ jobs:
           ./occ config:system:set trusted_domains 2 --value=localhost
           ./occ config:system:set overwrite.cli.url --value="${NC_URL}"
           ./occ config:system:set debug --value=true --type=boolean
+          # Info lines too: SchedulerJob, ExclusionClearJob and the crawl planning log on info.
+          ./occ log:manage --level=info
           ./occ config:system:set skeletondirectory --value=''
           PHP_CLI_SERVER_WORKERS=8 php -d max_execution_time=120 -S 0.0.0.0:8080 -t ./ \
             > "${RUNNER_TEMP}/php-server.log" 2>&1 &
@@ -465,6 +467,8 @@ jobs:
           ./occ config:system:set trusted_domains 2 --value=localhost
           ./occ config:system:set overwrite.cli.url --value="${NC_URL}"
           ./occ config:system:set debug --value=true --type=boolean
+          # Info lines too: SchedulerJob, ExclusionClearJob and the crawl planning log on info.
+          ./occ log:manage --level=info
           ./occ config:system:set skeletondirectory --value=''
           PHP_CLI_SERVER_WORKERS=8 php -d max_execution_time=120 -S 0.0.0.0:8080 -t ./ \
             > "${RUNNER_TEMP}/php-server.log" 2>&1 &
