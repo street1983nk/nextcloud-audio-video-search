@@ -186,6 +186,47 @@ def test_a_value_that_could_not_be_read_is_a_finding_and_never_a_match() -> None
     assert _pyproject_version('[project]\nname = "x"\n') is None
 
 
+# -- the Playwright spec of the admin section (plan 02-21) ---------------------
+
+# admin.spec.ts compares the version line of the admin section with a constant;
+# a bump that forgets it turns the main run of deploy-harp.yml red only in CI.
+ADMIN_SPEC = REPO_ROOT / "ci" / "playwright" / "admin.spec.ts"
+PLAYWRIGHT_VERSION = "the VERSION in ci/playwright/admin.spec.ts"
+_SPEC_VERSION = re.compile(r"^const VERSION = '([^']*)';$", re.MULTILINE)
+
+
+def _playwright_findings(spec: str, php: str | None) -> list[str]:
+    """The constant of the admin spec against the version of the PHP app."""
+    return []
+
+
+def test_the_admin_spec_expects_the_version_of_the_tree() -> None:
+    assert _playwright_findings(_read(ADMIN_SPEC), _of_the_tree()[0]) == []
+
+
+def test_the_spec_rule_passes_a_clean_sample() -> None:
+    assert _playwright_findings("const VERSION = '1.2.3';\n", "1.2.3") == []
+
+
+def test_the_spec_rule_fires_on_a_forgotten_bump() -> None:
+    assert _playwright_findings("x\nconst VERSION = '0.1.0';\ny\n", "0.2.0") == [
+        f"{PLAYWRIGHT_VERSION} is '0.1.0' and {PHP_VERSION} is '0.2.0'"
+    ]
+
+
+def test_the_spec_rule_fires_on_a_staged_copy_of_the_real_spec() -> None:
+    staged = _SPEC_VERSION.sub("const VERSION = '9.9.9';", _read(ADMIN_SPEC), count=1)
+    findings = _playwright_findings(staged, _of_the_tree()[0])
+
+    assert len(findings) == 1
+    assert findings[0].startswith(f"{PLAYWRIGHT_VERSION} is '9.9.9'")
+
+
+def test_the_spec_rule_fires_when_the_constant_cannot_be_read() -> None:
+    assert _playwright_findings("", "0.2.0") == [f"{PLAYWRIGHT_VERSION} could not be read at all"]
+    assert _playwright_findings("let VERSION = '0.2.0';", "0.2.0") == [f"{PLAYWRIGHT_VERSION} could not be read at all"]
+
+
 # -- the server window: two declarations and the matrix that runs them ---------
 
 PHP_WINDOW = "the server window in php/appinfo/info.xml"
