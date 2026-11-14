@@ -97,7 +97,9 @@ final class ExAppServiceTest extends TestCase {
 
 	/** @param array<mixed> $value */
 	private function json(array $value): IResponse&MockObject {
-		$encoded = json_encode($value);
+		// Without JSON_PRESERVE_ZERO_FRACTION a float 12.0 goes out as "12" and
+		// comes back as the int 12, so a float case would never reach the check.
+		$encoded = json_encode($value, JSON_PRESERVE_ZERO_FRACTION);
 		self::assertIsString($encoded);
 
 		return $this->answer($encoded);
