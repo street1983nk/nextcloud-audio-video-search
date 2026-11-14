@@ -243,6 +243,123 @@ class ExclusionService {
 	}
 
 	/**
+	 * The four lists as they are in force, keyed by list name, or null while
+	 * they cannot be read. What plan 02-18 remembers as applied.
+	 *
+	 * @return array<string, list<string>>|null
+	 */
+	public function snapshot(): ?array {
+		$rules = $this->rules();
+
+		return $rules === false ? null : $rules['lists'];
+	}
+
+	/**
+	 * What was added and what was lifted since a remembered rule set, per
+	 * list. A remembered list that is no list, an unknown key and an entry
+	 * that is no usable rule count as no rule: then everything in force is
+	 * new, which applies a rule twice rather than never. User ids are compared
+	 * without regard to case. null while the rules in force cannot be read.
+	 *
+	 * @param array<mixed> $applied
+	 * @return array{added: array<string, list<string>>, lifted: array<string, list<string>>}|null
+	 */
+	public function changesSince(array $applied): ?array {
+		$current = $this->snapshot();
+		if ($current === null) {
+			return null;
+		}
+
+		$added = [];
+		$lifted = [];
+		foreach (self::LISTS as $list) {
+			$before = [];
+			$remembered = $applied[$list] ?? [];
+			if (is_array($remembered) && array_is_list($remembered)) {
+				foreach ($remembered as $entry) {
+					$value = is_string($entry) ? $this->normalised($list, $entry)[0] : null;
+					if ($value !== null && self::position($list, $before, $value) === null) {
+						$before[] = $value;
+					}
+				}
+			}
+			$added[$list] = array_values(array_filter($current[$list], static fn (string $entry): bool => self::position($list, $before, $entry) === null));
+			$lifted[$list] = array_values(array_filter($before, static fn (string $entry): bool => self::position($list, $current[$list], $entry) === null));
+		}
+
+		return ['added' => $added, 'lifted' => $lifted];
+	}
+
+	/**
+	 * Do the rules about storages in these lists (users, groups, mount
+	 * configurations) reach this storage? The same reading as for the rules
+	 * in force: an owner named or in a group named, or a configuration named
+	 * that reaches the storage. Folder prefixes are no rule about a storage.
+	 * A mount cache or a group backend that fails reaches the storage: for an
+	 * added rule that removes rather than keeps, for a lifted one it crawls
+	 * once more.
+	 *
+	 * @param array<string, list<string>> $lists
+	 */
+	public function storageRuleCovers(array $lists, int $storageId): bool {
+		$users = array_map(static fn (string $uid): string => mb_strtolower($uid), $lists[self::LIST_USERS] ?? []);
+		$groups = $lists[self::LIST_GROUPS] ?? [];
+		$mounts = array_map(static fn (string $mountId): int => (int)$mountId, $lists[self::LIST_MOUNTS] ?? []);
+		if ($users === [] && $groups === [] && $mounts === []) {
+			return false;
+		}
+
+		try {
+			$facts = $this->storageFacts($storageId);
+			if (array_intersect($facts['mountIds'], $mounts) !== []) {
+				return true;
+			}
+			$owner = $facts['owner'];
+			if ($owner === null) {
+				return false;
+			}
+			if (in_array(mb_strtolower($owner), $users, true)) {
+				return true;
+			}
+			foreach ($groups as $gid) {
+				if ($this->groupManager->isInGroup($owner, $gid)) {
+					return true;
+				}
+			}
+		} catch (\Throwable $e) {
+			$this->logger->warning('Audio & Video Search: a storage could not be compared with changed exclusions, it is treated as reached', [
+				'storage_id' => $storageId,
+				'class' => $e::class,
+			]);
+
+			return true;
+		}
+
+		return false;
+	}
+
+	/** Is this group one of the excluded groups in force? Not while the rules cannot be read. */
+	public function groupListed(string $gid): bool {
+		$rules = $this->rules();
+		if ($rules === false || $gid === '') {
+			return false;
+		}
+
+		return self::position(self::LIST_GROUPS, $rules['lists'][self::LIST_GROUPS], $gid) !== null;
+	}
+
+	/**
+	 * Read the rules and every verdict again on the next question. The rules
+	 * are read once per instance; a background job or a listener that may run
+	 * in a long process asks for the rules of now with this first.
+	 */
+	public function reload(): void {
+		$this->rules = null;
+		$this->storageVerdicts = [];
+		$this->userVerdicts = [];
+	}
+
+	/**
 	 * The entries of one list as they are in force, or null when the stored
 	 * value cannot be read as a list of usable rules.
 	 *
@@ -565,9 +682,7 @@ class ExclusionService {
 			$this->appConfig->setValueString(Application::APP_ID, $list, $json);
 		}
 
-		$this->rules = null;
-		$this->storageVerdicts = [];
-		$this->userVerdicts = [];
+		$this->reload();
 	}
 
 	/**

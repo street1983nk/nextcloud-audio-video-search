@@ -4,13 +4,18 @@ declare(strict_types=1);
 
 namespace OCA\AudioVideoSearch\BackgroundJobs;
 
+use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
+use OCA\AudioVideoSearch\Db\QueueMapper;
 use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\ExclusionService;
+use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\StorageClassifier;
 use OCA\AudioVideoSearch\Service\StorageService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\IJobList;
 use OCP\BackgroundJob\TimedJob;
+use OCP\IAppConfig;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -35,6 +40,28 @@ use Psr\Log\LoggerInterface;
  * external storage gets a crawl, and one that became capturable crawls again
  * from cursor 0, because its earlier files were refused.
  *
+ * Exclusions set after the fact (plan 02-18, DISC-03, D-02-04): every run
+ * compares ExclusionService::fingerprint with the one it applied last, so a
+ * rule written by occ audio_video_search:exclude and one written directly
+ * with occ config:app:set are found alike (T-02-65). A change becomes work
+ * for the container, once:
+ *
+ * - a new user, group or storage switch: exclude_storage for every storage
+ *   these rules reach (ExclusionService::storageRuleCovers; D-02-08,
+ *   D-02-11: the storages of the user, not the copies of others on the same
+ *   share)
+ * - a new folder prefix: an ExclusionClearJob per mount, which walks it in
+ *   bands and queues exclude per covered file
+ * - a lifted rule: the crawls of the mounts it may have hidden files in start
+ *   over (cursor 0, a new generation); no removal
+ *
+ * The applied state (APPLIED_RULES_KEY, then APPLIED_FINGERPRINT_KEY) is
+ * written only after every row is queued and every clearing job is planned,
+ * so a run that fails half way repeats the whole change (T-02-67). Rules
+ * that cannot be read change nothing here: the three checks of
+ * ExclusionService already exclude everything, and a typo must not remove
+ * every storage.
+ *
  * Log lines carry counts only.
  */
 class SchedulerJob extends TimedJob {
@@ -46,6 +73,12 @@ class SchedulerJob extends TimedJob {
 	/** Seconds per run for classifying external storages; a probe may wait on a remote server. */
 	public const CLASSIFY_SECONDS = 60;
 
+	/** The fingerprint of the exclusions the last applied change was made for. */
+	public const APPLIED_FINGERPRINT_KEY = 'applied_exclusion_fingerprint';
+
+	/** The four lists of that change, as JSON, to tell added from lifted entries. */
+	public const APPLIED_RULES_KEY = 'applied_exclusions';
+
 	public function __construct(
 		ITimeFactory $time,
 		private IJobList $jobList,
@@ -54,6 +87,9 @@ class SchedulerJob extends TimedJob {
 		private ExAppService $exAppService,
 		private StorageClassifier $classifier,
 		private LoggerInterface $logger,
+		private ExclusionService $exclusions,
+		private QueueService $queueService,
+		private IAppConfig $appConfig,
 	) {
 		parent::__construct($time);
 		$this->setInterval(self::INTERVAL_SECONDS);
@@ -69,6 +105,13 @@ class SchedulerJob extends TimedJob {
 		if (!in_array($state, self::CRAWL_STATES, true)) {
 			$this->logger->debug('Audio & Video Search: the backend is not ready, no crawl planned', ['state' => $state]);
 			return;
+		}
+
+		try {
+			$this->applyExclusionChanges();
+		} catch (\Throwable $e) {
+			// The applied state stays as it was; the next run repeats the change.
+			$this->logger->warning('Audio & Video Search: changed exclusions could not be applied yet', ['class' => $e::class]);
 		}
 
 		$created = 0;
@@ -121,6 +164,99 @@ class SchedulerJob extends TimedJob {
 				'skipped_external' => $skipped,
 			]);
 		}
+	}
+
+	/**
+	 * Turn a change of the exclusions since the last applied one into work:
+	 * see the class comment.
+	 */
+	private function applyExclusionChanges(): void {
+		$this->exclusions->reload();
+		$fingerprint = $this->exclusions->fingerprint();
+		$applied = $this->appConfig->getValueString(Application::APP_ID, self::APPLIED_FINGERPRINT_KEY, '');
+		if ($applied !== '' && hash_equals($applied, $fingerprint)) {
+			return;
+		}
+		$changes = $this->exclusions->changesSince($this->appliedRules());
+		$snapshot = $this->exclusions->snapshot();
+		if ($changes === null || $snapshot === null) {
+			$this->logger->debug('Audio & Video Search: the exclusions cannot be read, no change applied');
+			return;
+		}
+
+		/** @var list<array{0: int, 1: int}> $mounts */
+		$mounts = [];
+		foreach ($this->storageService->getMounts() as $mount) {
+			$storageId = (int)$mount['storage_id'];
+			$rootId = (int)$mount['overridden_root'];
+			if ($storageId > 0 && $rootId > 0) {
+				$mounts[] = [$storageId, $rootId];
+			}
+		}
+		$storages = array_values(array_unique(array_map(static fn (array $mount): int => $mount[0], $mounts)));
+
+		$added = $changes['added'];
+		$removed = 0;
+		foreach ($storages as $storageId) {
+			if ($this->exclusions->storageRuleCovers($added, $storageId)) {
+				$this->queueService->enqueue(QueueMapper::KIND_EXCLUDE_STORAGE, null, $storageId);
+				$removed++;
+			}
+		}
+		$clearing = 0;
+		if ($added[ExclusionService::LIST_FOLDERS] !== []) {
+			foreach ($mounts as [$storageId, $rootId]) {
+				$this->jobList->add(ExclusionClearJob::class, ExclusionClearJob::argument($storageId, $rootId, 0));
+				$clearing++;
+			}
+		}
+
+		$lifted = $changes['lifted'];
+		$restarted = 0;
+		$liftedPrefix = $lifted[ExclusionService::LIST_FOLDERS] !== [];
+		foreach ($mounts as [$storageId, $rootId]) {
+			if (!$liftedPrefix && !$this->exclusions->storageRuleCovers($lifted, $storageId)) {
+				continue;
+			}
+			if ($this->exclusions->isExcluded($storageId, '') || $this->crawlMapper->find($storageId, $rootId) === null) {
+				// Still left out as a whole, or never crawled: the planning below starts it.
+				continue;
+			}
+			$this->crawlMapper->reset($storageId, $rootId);
+			$restarted++;
+		}
+
+		$this->appConfig->setValueString(
+			Application::APP_ID,
+			self::APPLIED_RULES_KEY,
+			json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+		);
+		$this->appConfig->setValueString(Application::APP_ID, self::APPLIED_FINGERPRINT_KEY, $fingerprint);
+		$this->logger->info('Audio & Video Search: applied changed exclusions', [
+			'removed_storages' => $removed,
+			'clearing_jobs' => $clearing,
+			'restarted_crawls' => $restarted,
+		]);
+	}
+
+	/**
+	 * The lists of the last applied change; nothing usable means nothing was
+	 * applied, so every rule in force counts as new.
+	 *
+	 * @return array<mixed>
+	 */
+	private function appliedRules(): array {
+		$raw = $this->appConfig->getValueString(Application::APP_ID, self::APPLIED_RULES_KEY, '');
+		if ($raw === '') {
+			return [];
+		}
+		try {
+			$decoded = json_decode($raw, true, 8, JSON_THROW_ON_ERROR);
+		} catch (\JsonException) {
+			return [];
+		}
+
+		return is_array($decoded) ? $decoded : [];
 	}
 
 	/**
