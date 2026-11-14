@@ -160,6 +160,9 @@ class QueueService {
 		$item['kind'] = $row['kind'];
 		$item['fileId'] = $row['fileId'];
 		$item['storageId'] = $row['storageId'];
+		if ($row['kind'] === QueueMapper::KIND_DELETE && $row['fileId'] !== null && $this->liesInTheTrashBin($row['fileId'])) {
+			$item['kind'] = QueueMapper::KIND_TRASH;
+		}
 		if (!in_array($row['kind'], self::NEEDS_FILE, true)) {
 			return $item;
 		}
@@ -190,6 +193,33 @@ class QueueService {
 		$item['readerUid'] = $this->readerUid($storageId, $fileId);
 
 		return $item;
+	}
+
+	/**
+	 * Was the deletion of this file a move into the trash bin? Decided at the
+	 * cache entry when the row is handed out, not by the event (plan 02-18,
+	 * T-02-68): NodeDeletedEvent comes for both, and the trash bin keeps the
+	 * file id and moves its row out of every walk root of the same storage
+	 * (files_trashbin/files of a home, the trash of a team folder). A file
+	 * gone from the cache, or now on a storage outside the mount set, was
+	 * deleted. A cache that cannot be asked keeps the deletion: no hit either
+	 * way, the content is only marked (D-02-13).
+	 */
+	private function liesInTheTrashBin(int $fileId): bool {
+		try {
+			$entry = $this->fileAccess->getByFileId($fileId);
+			if ($entry === null) {
+				return false;
+			}
+			$storageId = (int)$entry->getStorageId();
+
+			return $this->storageService->inMountSet($storageId)
+				&& $this->storageService->mountRelativePath($storageId, (string)$entry->getPath()) === null;
+		} catch (\Throwable $e) {
+			$this->logger->debug('Audio & Video Search: a deleted file could not be looked up, handed out as deleted', ['class' => $e::class]);
+
+			return false;
+		}
 	}
 
 	/**

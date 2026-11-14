@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\AppInfo;
 
 use OCA\AudioVideoSearch\Listener\CacheEventListener;
 use OCA\AudioVideoSearch\Listener\FileEventListener;
+use OCA\AudioVideoSearch\Listener\GroupEventListener;
 use OCA\AudioVideoSearch\Listener\UserEventListener;
 use OCA\AudioVideoSearch\Search\Provider;
 use OCP\AppFramework\App;
@@ -39,6 +40,12 @@ class Application extends App implements IBootstrap {
 	public function register(IRegistrationContext $context): void {
 		$context->registerSearchProvider(Provider::class);
 
+		// The last two live in files_trashbin (plan 02-18). They are registered
+		// by name and not behind class_exists: the coordinator registers the
+		// autoloader of each app just before its register(), so files_trashbin
+		// is not loadable yet when this app registers, and class_exists would
+		// drop both events on every instance. ::class loads nothing, and a name
+		// that never matches an event costs nothing when the trash bin is off.
 		foreach ([
 			\OCP\Files\Events\Node\NodeCreatedEvent::class,
 			\OCP\Files\Events\Node\NodeWrittenEvent::class,
@@ -46,8 +53,18 @@ class Application extends App implements IBootstrap {
 			\OCP\Files\Events\Node\NodeCopiedEvent::class,
 			\OCP\Files\Events\Node\NodeRenamedEvent::class,
 			\OCP\Files\Events\Node\NodeDeletedEvent::class,
+			\OCA\Files_Trashbin\Events\MoveToTrashEvent::class,
+			\OCA\Files_Trashbin\Events\NodeRestoredEvent::class,
 		] as $event) {
 			$context->registerEventListener($event, FileEventListener::class);
+		}
+
+		// Joining or leaving an excluded group changes no rule and no file.
+		foreach ([
+			\OCP\Group\Events\UserAddedEvent::class,
+			\OCP\Group\Events\UserRemovedEvent::class,
+		] as $event) {
+			$context->registerEventListener($event, GroupEventListener::class);
 		}
 
 		// What a scanner finds (occ files:scan, the rescan of external

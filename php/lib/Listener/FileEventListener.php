@@ -8,6 +8,8 @@ use OCA\AudioVideoSearch\Db\QueueMapper;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\StorageService;
+use OCA\Files_Trashbin\Events\MoveToTrashEvent;
+use OCA\Files_Trashbin\Events\NodeRestoredEvent;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Files\Events\Node\NodeCopiedEvent;
@@ -36,7 +38,14 @@ use Psr\Log\LoggerInterface;
  *   (DISC-06); across storages content for the target and delete for a source
  *   id that differs; a target that is no longer admissible (renamed away from
  *   a media ending): delete
- * - deleted: delete (plan 02-18 tells the trash bin apart)
+ * - deleted: delete; QueueService::describe hands it out as trash when the
+ *   file id lies in the trash bin then (plan 02-18, T-02-68)
+ * - moved to the trash bin (files_trashbin): trash; restored from it:
+ *   restore. Without files_trashbin only the deletion comes, a delete.
+ *
+ * Forgetting an orphaned content after seven days, and the deletion of a
+ * file from the trash bin, belong to phase 8 (D-02-13); until then the
+ * content is only marked.
  *
  * Tags raise no node event and change no etag in oc_filecache (RESEARCH,
  * Befund 8), so tagging queues nothing; system tag events are not subscribed.
@@ -69,6 +78,11 @@ class FileEventListener implements IEventListener {
 				$this->queueRename($event->getSource(), $event->getTarget());
 			} elseif ($event instanceof NodeDeletedEvent) {
 				$this->queueDeletion($event->getNode());
+			} elseif ($event instanceof MoveToTrashEvent) {
+				// instanceof loads no class: without files_trashbin both branches never match.
+				$this->queueTrash($event->getNode());
+			} elseif ($event instanceof NodeRestoredEvent) {
+				$this->queueRestore($event->getTarget());
 			}
 		} catch (\Throwable $e) {
 			// The class only: the message of a file system error carries a path.
@@ -124,6 +138,37 @@ class FileEventListener implements IEventListener {
 		if ($identity !== null && $this->storageService->inMountSet($identity[1])) {
 			$this->queueService->enqueue(QueueMapper::KIND_DELETE, $identity[0], $identity[1]);
 		}
+	}
+
+	/**
+	 * Into the trash bin: the reference is set aside and gives no hit, its
+	 * content is only marked (D-02-09). MoveToTrashEvent comes before the move
+	 * and NodeDeletedEvent after it; the delete of the second replaces this
+	 * row, and QueueService::describe hands it out as trash again once it sees
+	 * the file id in the trash bin. Like a deletion, whatever the type says.
+	 */
+	private function queueTrash(Node $node): void {
+		if (!$node instanceof File) {
+			return;
+		}
+		$identity = self::identity($node);
+		if ($identity !== null && $this->storageService->inMountSet($identity[1])) {
+			$this->queueService->enqueue(QueueMapper::KIND_TRASH, $identity[0], $identity[1]);
+		}
+	}
+
+	/**
+	 * Out of the trash bin: restore, which the container answers without a
+	 * download when the bytes are the same (D-02-09, plan 02-15b for SMB and
+	 * SFTP). Restored to a place the work stock does not take, the file leaves.
+	 */
+	private function queueRestore(Node $target): void {
+		$admissible = $this->admissibleFile($target);
+		if ($admissible !== null) {
+			$this->queueService->enqueue(QueueMapper::KIND_RESTORE, $admissible[0], $admissible[1]);
+			return;
+		}
+		$this->queueDeletion($target);
 	}
 
 	/**
