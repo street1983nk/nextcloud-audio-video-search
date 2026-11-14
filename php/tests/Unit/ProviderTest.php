@@ -52,6 +52,24 @@ final class ProviderTest extends TestCase {
 	/** @var list<string> every user the exclusions were asked about */
 	private array $askedUsers = [];
 
+	/** @var list<int> the files a rule of the admin excludes, set after the first crawl */
+	private array $excludedFiles = [];
+
+	/** @var list<int> every file the exclusions were asked about */
+	private array $askedFiles = [];
+
+	/**
+	 * The double keeps the rules it read like the real service (read once per
+	 * instance, again only after reload), for the tests about the rules of now.
+	 */
+	private bool $cachedRules = false;
+
+	/** @var array{users: list<string>, files: list<int>}|null the rules the double read last */
+	private ?array $ruleSnapshot = null;
+
+	/** @var list<string> the questions to the exclusions in their order */
+	private array $exclusionCalls = [];
+
 	/** @var list<string> every log line with its context, as one text */
 	private array $logged = [];
 
@@ -72,6 +90,11 @@ final class ProviderTest extends TestCase {
 		$this->allowedCalls = 0;
 		$this->excludedUsers = [];
 		$this->askedUsers = [];
+		$this->excludedFiles = [];
+		$this->askedFiles = [];
+		$this->cachedRules = false;
+		$this->ruleSnapshot = null;
+		$this->exclusionCalls = [];
 		$this->logged = [];
 		$this->readable = [];
 		$this->links = [];
@@ -132,10 +155,21 @@ final class ProviderTest extends TestCase {
 		$session->method('getUser')->willReturn($alice);
 
 		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('reload')->willReturnCallback(function (): void {
+			$this->exclusionCalls[] = 'reload';
+			$this->ruleSnapshot = null;
+		});
 		$exclusions->method('isExcludedUser')->willReturnCallback(function (string $uid): bool {
+			$this->exclusionCalls[] = 'user';
 			$this->askedUsers[] = $uid;
 
-			return in_array($uid, $this->excludedUsers, true);
+			return in_array($uid, $this->rulesInForce()['users'], true);
+		});
+		$exclusions->method('isExcludedFile')->willReturnCallback(function (int $fileId): bool {
+			$this->exclusionCalls[] = 'file';
+			$this->askedFiles[] = $fileId;
+
+			return in_array($fileId, $this->rulesInForce()['files'], true);
 		});
 
 		$logger = $this->createMock(LoggerInterface::class);
@@ -155,6 +189,21 @@ final class ProviderTest extends TestCase {
 			$logger,
 			$exclusions,
 		);
+	}
+
+	/**
+	 * What the double of the exclusions answers with: the rules of the test
+	 * now, or with cachedRules the ones it read first since the last reload.
+	 *
+	 * @return array{users: list<string>, files: list<int>}
+	 */
+	private function rulesInForce(): array {
+		$now = ['users' => $this->excludedUsers, 'files' => $this->excludedFiles];
+		if (!$this->cachedRules) {
+			return $now;
+		}
+
+		return $this->ruleSnapshot ??= $now;
 	}
 
 	private function user(): IUser&MockObject {
@@ -373,6 +422,57 @@ final class ProviderTest extends TestCase {
 
 		self::assertCount(1, $entries);
 		self::assertSame('Eigen.mp4', $entries[0]['title']);
+	}
+
+	public function testAHitOfAFileExcludedAfterTheCrawlNeverAppears(): void {
+		$this->file(11, 'Archiv.mp4');
+		$this->file(12, 'Eigen.mp4');
+		$this->hits = [self::hit(11, 1000), self::hit(12, 2000)];
+		$this->excludedFiles = [11];
+
+		$entries = $this->entries();
+
+		self::assertCount(1, $entries);
+		self::assertSame('Eigen.mp4', $entries[0]['title']);
+		self::assertSame([11, 12], $this->askedFiles);
+		self::assertSame([['audio_video_search.page.play', ['fileId' => 12, 't' => '2.0']]], $this->links);
+	}
+
+	public function testAnExclusionSetBetweenTwoSearchesHoldsForTheSecondOne(): void {
+		$this->cachedRules = true;
+		$this->file(11, 'Archiv.mp4');
+		$this->hits = [self::hit(11, 1000)];
+		$provider = $this->provider();
+
+		$before = $provider->search($this->user(), $this->query('Haushalt'))->jsonSerialize();
+		$this->excludedFiles = [11];
+		$after = $provider->search($this->user(), $this->query('Haushalt'))->jsonSerialize();
+
+		self::assertCount(1, $before['entries']);
+		self::assertSame([], $after['entries']);
+	}
+
+	public function testEverySearchReadsTheRulesBeforeItAsksAnything(): void {
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 1000)];
+
+		$this->entries();
+
+		self::assertSame(['reload', 'user', 'file'], $this->exclusionCalls);
+	}
+
+	public function testAUserExcludedBetweenTwoSearchesGetsNothingFromTheSecondOne(): void {
+		$this->cachedRules = true;
+		$this->file(11, 'Sitzung.mp4');
+		$this->hits = [self::hit(11, 1000)];
+		$provider = $this->provider();
+
+		$provider->search($this->user(), $this->query('Haushalt'));
+		$this->excludedUsers = ['alice'];
+		$after = $provider->search($this->user(), $this->query('Haushalt'))->jsonSerialize();
+
+		self::assertSame([], $after['entries']);
+		self::assertSame(1, $this->searchCalls);
 	}
 
 	public function testTheAttributesCarryFileIdAndARelativePath(): void {

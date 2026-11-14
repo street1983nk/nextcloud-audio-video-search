@@ -76,6 +76,18 @@ final class PlayControllerTest extends TestCase {
 
 	private bool $exclusionsFail = false;
 
+	/**
+	 * The double keeps the rules it read like the real service (read once per
+	 * instance, again only after reload), for the tests about the rules of now.
+	 */
+	private bool $cachedRules = false;
+
+	/** @var array{users: list<string>, files: list<int>}|null the rules the double read last */
+	private ?array $ruleSnapshot = null;
+
+	/** @var list<string> the questions to the exclusions in their order */
+	private array $exclusionCalls = [];
+
 	/** The real service instead of the double, for the case of a rule list nobody can read. */
 	private ?ExclusionService $realExclusions = null;
 
@@ -102,6 +114,9 @@ final class PlayControllerTest extends TestCase {
 		$this->excludedUsers = [];
 		$this->excludedFiles = [];
 		$this->exclusionsFail = false;
+		$this->cachedRules = false;
+		$this->ruleSnapshot = null;
+		$this->exclusionCalls = [];
 		$this->realExclusions = null;
 		$this->askedUsers = [];
 		$this->askedFiles = [];
@@ -163,18 +178,24 @@ final class PlayControllerTest extends TestCase {
 		});
 
 		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('reload')->willReturnCallback(function (): void {
+			$this->exclusionCalls[] = 'reload';
+			$this->ruleSnapshot = null;
+		});
 		$exclusions->method('isExcludedUser')->willReturnCallback(function (string $uid): bool {
+			$this->exclusionCalls[] = 'user';
 			$this->askedUsers[] = $uid;
 			if ($this->exclusionsFail) {
 				throw new \RuntimeException('the rules are gone for alice and Sitzung.webm');
 			}
 
-			return in_array($uid, $this->excludedUsers, true);
+			return in_array($uid, $this->rulesInForce()['users'], true);
 		});
 		$exclusions->method('isExcludedFile')->willReturnCallback(function (int $fileId): bool {
+			$this->exclusionCalls[] = 'file';
 			$this->askedFiles[] = $fileId;
 
-			return in_array($fileId, $this->excludedFiles, true);
+			return in_array($fileId, $this->rulesInForce()['files'], true);
 		});
 
 		return new PageController(
@@ -279,6 +300,21 @@ final class PlayControllerTest extends TestCase {
 	/** @return array<string, mixed> */
 	private function play(int $fileId): array {
 		return $this->response($fileId)->getParams();
+	}
+
+	/**
+	 * What the double of the exclusions answers with: the rules of the test
+	 * now, or with cachedRules the ones it read first since the last reload.
+	 *
+	 * @return array{users: list<string>, files: list<int>}
+	 */
+	private function rulesInForce(): array {
+		$now = ['users' => $this->excludedUsers, 'files' => $this->excludedFiles];
+		if (!$this->cachedRules) {
+			return $now;
+		}
+
+		return $this->ruleSnapshot ??= $now;
 	}
 
 	private function response(int $fileId): TemplateResponse {
@@ -545,6 +581,30 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame([7], $this->askedFiles);
 		self::assertSame(0, $this->allowedCalls);
 		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAFileExcludedBetweenTwoVisitsShowsNoExcerptOnTheSecond(): void {
+		$this->cachedRules = true;
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$before = self::answer($this->response(7));
+		$this->excludedFiles = [7];
+		$after = self::answer($this->response(7));
+
+		self::assertSame('ok', $before['params']['excerptState']);
+		self::assertSame('none', $after['params']['excerptState']);
+		self::assertSame('', $after['params']['excerpt']);
+		self::assertCount(1, $this->excerptCalls);
+	}
+
+	public function testEveryExcerptReadsTheRulesBeforeItAsksAnything(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$this->response(7);
+
+		self::assertSame(['reload', 'user', 'file'], $this->exclusionCalls);
 	}
 
 	public function testExclusionsThatCannotBeAskedShowNoExcerptAndLogNeitherUserNorFile(): void {

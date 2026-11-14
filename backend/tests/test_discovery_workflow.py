@@ -590,6 +590,10 @@ EXCLUSIONS_AFTER = {
     "exclude-storage-after": 'bash "${d}/topology.sh" exclude_storage_after && bash "${d}/compare.sh" exclusions',
     "exclude-after": 'bash "${d}/topology.sh" exclude_after && bash "${d}/compare.sh" exclusions',
 }
+# Both jobs log on level info (owner 14.11.2026): the lines of SchedulerJob,
+# ExclusionClearJob and the planning of crawls are info lines, and run
+# 43561950802 had only warnings to look at.
+LOG_LEVEL_INFO = "./occ log:manage --level=info"
 # What compare.sh exclusions has to contain: its subcommand, the forced run and
 # the two jobs of the app it runs.
 EXCLUSIONS_RUN = (
@@ -688,6 +692,9 @@ def flow_findings(workflow: str) -> list[str]:
     for phase, operation in RECONCILE_AFTER.items():
         if not re.search(rf"^\s*{re.escape(phase)}\) {re.escape(operation)} ;;$", discovery, re.MULTILINE):
             findings.append(f"the phase {phase} does not start a reconcile right after its operation")
+    for job in ("discovery", "leak-control"):
+        if LOG_LEVEL_INFO not in job_text(workflow, job):
+            findings.append(f"the job {job} does not log on level info")
     for phase, operation in EXCLUSIONS_AFTER.items():
         if not re.search(rf"^\s*{re.escape(phase)}\) {re.escape(operation)} ;;$", discovery, re.MULTILINE):
             findings.append(f"the phase {phase} does not apply its exclusion right after its operation")
@@ -827,6 +834,17 @@ def test_the_flow_rule_fires_without_applying_the_exclusion_after_its_operation(
     broken = text.replace(line, f"{phase}) {operation} ;;")
 
     assert flow_findings(broken) == [f"the phase {phase} does not apply its exclusion right after its operation"]
+
+
+def test_the_flow_rule_fires_without_the_info_log_level() -> None:
+    text = source()
+    assert text.count(LOG_LEVEL_INFO) == 2
+    broken = text.replace(LOG_LEVEL_INFO, "./occ log:manage --level=warning")
+
+    assert flow_findings(broken) == [
+        "the job discovery does not log on level info",
+        "the job leak-control does not log on level info",
+    ]
 
 
 @pytest.mark.parametrize("part", EXCLUSIONS_RUN)

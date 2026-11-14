@@ -48,6 +48,12 @@ The sixteen rules:
     ``PageController`` asks ``isExcludedUser`` and ``isExcludedFile`` before
     ``searchAllowed`` and before the excerpt of the container, so an excluded
     user and an excluded file get no text there either.
+    Since 14.11.2026 (owner: filter at once) every hit is judged by the rules
+    of now: ``Provider::search`` and ``PageController::excerpt`` call
+    ``reload`` before their first question, and ``Provider::entries`` asks
+    ``isExcludedFile`` before it builds an entry. A storage or a folder
+    excluded after the first crawl gives no hit from the moment the rule is
+    written, whenever SchedulerJob removes its references.
 15. The app puts its own background jobs back (plan 02-17b): the list
     ``JobRegistry::JOBS`` names exactly the jobs of ``<background-jobs>`` in
     ``php/appinfo/info.xml``, and ``HandshakeController::handshake`` asks
@@ -581,6 +587,15 @@ EXCLUSION_CHECKS = (
 )
 
 
+# Every hit by the rules of now (owner 14.11.2026): per method, the call and
+# what must not come before it.
+HIT_CHECKS = (
+    (SEARCH_PROVIDER, "search", "$this->exclusions->reload(", ("->isExcludedUser(", "->searchAllowed(", "->search(")),
+    (SEARCH_PROVIDER, "entries", "$this->exclusions->isExcludedFile(", ("->entry(",)),
+    (PLAYBACK_PAGE, "excerpt", "$this->exclusions->reload(", ("->isExcludedUser(", "->isExcludedFile(", "->excerpt(")),
+)
+
+
 def php_code(source: str) -> str:
     """A PHP source without its comments and with every string emptied, so braces can be counted."""
     out: list[str] = []
@@ -656,6 +671,55 @@ def missing_exclusion_checks(sources: dict[str, str]) -> list[str]:
     if describe is None or "$this->admissible(" not in describe:
         findings.append(f"{QUEUE_SERVICE}::describeRow does not ask admissible again")
     return findings
+
+
+def missing_hit_checks(sources: dict[str, str]) -> list[str]:
+    """The places of HIT_CHECKS that do not make their call, or make it too late."""
+    findings = []
+    for name, method, call, later in HIT_CHECKS:
+        body = php_method(sources.get(name, ""), method)
+        if body is None:
+            findings.append(f"{name} has no {method}")
+            continue
+        at = body.find(call)
+        if at < 0:
+            findings.append(f"{name}::{method} does not call {call}")
+            continue
+        findings += [f"{name}::{method} reaches {needle} before {call}" for needle in later if 0 <= body.find(needle) < at]
+    return findings
+
+
+def test_rule14_every_hit_is_judged_by_the_rules_of_now() -> None:
+    assert missing_hit_checks(_lib_sources()) == []
+
+
+def test_self_rule14_fires_on_a_hit_judged_by_old_rules_or_not_at_all() -> None:
+    sources = _lib_sources()
+    reload = "$this->exclusions->reload();"
+
+    no_fresh_search = _mutated(sources, SEARCH_PROVIDER, reload, "")
+    assert missing_hit_checks(no_fresh_search) == [
+        f"{SEARCH_PROVIDER}::search does not call $this->exclusions->reload("
+    ]
+
+    # Read again, but only after the first question.
+    late = _mutated(sources, PLAYBACK_PAGE, reload, "")
+    late = _mutated(late, PLAYBACK_PAGE, "\t\tif ($excluded) {\n", f"\t\t{reload}\n\t\tif ($excluded) {{\n")
+    assert missing_hit_checks(late) == [
+        f"{PLAYBACK_PAGE}::excerpt reaches ->isExcludedUser( before $this->exclusions->reload(",
+        f"{PLAYBACK_PAGE}::excerpt reaches ->isExcludedFile( before $this->exclusions->reload(",
+    ]
+
+    no_file = _mutated(sources, SEARCH_PROVIDER, "$this->exclusions->isExcludedFile(", "$this->nothing(")
+    assert missing_hit_checks(no_file) == [
+        f"{SEARCH_PROVIDER}::entries does not call $this->exclusions->isExcludedFile("
+    ]
+
+    assert missing_hit_checks({}) == [
+        f"{SEARCH_PROVIDER} has no search",
+        f"{SEARCH_PROVIDER} has no entries",
+        f"{PLAYBACK_PAGE} has no excerpt",
+    ]
 
 
 def test_rule14_the_exclusions_are_decided_in_one_place_and_asked_at_three() -> None:
