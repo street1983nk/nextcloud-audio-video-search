@@ -104,6 +104,10 @@ def test_the_texts_of_the_duration_field_are_the_approved_ones() -> None:
         (" 7 ", 7),
         ("1.5", 12),
         ("1e3", 12),
+        ("0000", 12),
+        ("007", 7),
+        ("99999999999999999999", 24),
+        ("\u0665", 12),
     ],
 )
 def test_the_longest_recording_is_read_with_default_and_cap(saved: str, hours: int) -> None:
