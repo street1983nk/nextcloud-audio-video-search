@@ -62,6 +62,6 @@ Prérequis :
 		<nextcloud min-version="33" max-version="35"/>
 	</dependencies>
 	<background-jobs><job>OCA\AudioVideoSearch\BackgroundJobs\SchedulerJob</job><job>OCA\AudioVideoSearch\BackgroundJobs\ExternalRescanJob</job></background-jobs>
-	<commands><command>OCA\AudioVideoSearch\Command\SampleCommand</command><command>OCA\AudioVideoSearch\Command\FilesCommand</command><command>OCA\AudioVideoSearch\Command\StatusCommand</command><command>OCA\AudioVideoSearch\Command\RescanCommand</command><command>OCA\AudioVideoSearch\Command\ExcludeCommand</command></commands>
+	<commands><command>OCA\AudioVideoSearch\Command\SampleCommand</command><command>OCA\AudioVideoSearch\Command\FilesCommand</command><command>OCA\AudioVideoSearch\Command\StatusCommand</command><command>OCA\AudioVideoSearch\Command\RescanCommand</command><command>OCA\AudioVideoSearch\Command\ExcludeCommand</command><command>OCA\AudioVideoSearch\Command\ReconcileCommand</command></commands>
 	<settings><admin>OCA\AudioVideoSearch\Settings\Admin</admin><admin-section>OCA\AudioVideoSearch\Settings\Section</admin-section></settings>
 </info>

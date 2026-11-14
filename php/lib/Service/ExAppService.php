@@ -74,6 +74,12 @@ class ExAppService {
 	/** Ten seconds for the two admin routes of occ (plan 02-10): counting 140,000 rows takes well under one. */
 	public const ADMIN_TIMEOUT_SECONDS = 10.0;
 
+	/** One reconcile round walks mounts and asks PHP for slices: a longer ceiling (plan 02-19). */
+	public const RECONCILE_TIMEOUT_SECONDS = 120.0;
+
+	/** The counters of POST /reconcile/run of the container, in this order, and no other. */
+	public const RECONCILE_KEYS = ['swept', 'vanished', 'orphaned', 'walkedMounts', 'requeued', 'rejected', 'reproofDue', 'skippedReason'];
+
 	/** The closed lists of the container (backend store/repo.py STATES, STAGES). */
 	public const WORK_STATES = ['active', 'unreadable', 'vanished', 'trashed'];
 	public const WORK_STAGES = ['pending', 'probing', 'fetching', 'keyed', 'failed'];
@@ -452,6 +458,46 @@ class ExAppService {
 		}
 
 		return $counts;
+	}
+
+	/**
+	 * One round of the reconcile of the container at once (occ
+	 * audio_video_search:reconcile, plan 02-19). $reprove asks the container
+	 * to renew the read proof of every grouped reference now (D-02-12).
+	 *
+	 * The answer is the closed set of counters of RECONCILE_KEYS: whole
+	 * numbers of zero or more, and skippedReason null or a reason code. Any
+	 * other shape is no answer.
+	 *
+	 * @return array{swept: int, vanished: int, orphaned: int, walkedMounts: int, requeued: int, rejected: int, reproofDue: int, skippedReason: ?string}|null
+	 */
+	public function reconcileNow(bool $reprove): ?array {
+		$uid = $this->firstAdmin();
+		if ($uid === null) {
+			return null;
+		}
+		$answer = $this->call('/reconcile/run', $uid, ['reprove' => $reprove], self::RECONCILE_TIMEOUT_SECONDS);
+		if ($answer === null || !self::hasExactKeys($answer, self::RECONCILE_KEYS)) {
+			return null;
+		}
+
+		$counters = [];
+		foreach (self::RECONCILE_KEYS as $key) {
+			$value = $answer[$key];
+			if ($key === 'skippedReason') {
+				if ($value !== null && (!is_string($value) || preg_match(self::REASON_PATTERN, $value) !== 1)) {
+					$this->logger->warning('Audio & Video Search: malformed reconcile answer');
+					return null;
+				}
+			} elseif (!is_int($value) || $value < 0) {
+				$this->logger->warning('Audio & Video Search: malformed reconcile answer');
+				return null;
+			}
+			$counters[$key] = $value;
+		}
+
+		/** @var array{swept: int, vanished: int, orphaned: int, walkedMounts: int, requeued: int, rejected: int, reproofDue: int, skippedReason: ?string} $counters */
+		return $counters;
 	}
 
 	// -- lockstep ---------------------------------------------------------------
