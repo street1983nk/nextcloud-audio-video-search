@@ -16,7 +16,7 @@ import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import httpx
 import pytest
@@ -296,6 +296,8 @@ def test_the_origin_of_the_claim_reaches_the_intake_item(origin: str) -> None:
 
 def test_the_container_knows_the_same_two_origins_as_the_store() -> None:
     assert nc_queue.ORIGINS == repo.ORIGINS == frozenset({"event", "crawl"})
+    # The field type of the claim allows exactly the values of the list.
+    assert frozenset(get_args(nc_queue.Origin.__value__)) == nc_queue.ORIGINS
 
 
 async def test_a_claim_with_an_unknown_origin_is_dropped_whole_and_counted() -> None:

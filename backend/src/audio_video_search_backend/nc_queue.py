@@ -36,12 +36,18 @@ MAX_BATCH: Final = 256
 MAX_UID_LENGTH: Final = 64
 MAX_ETAG_LENGTH: Final = 64
 _FIRST_NON_SUCCESS: Final = 300
+# QueueMapper::ORIGINS (plan 03-04, D-03-05): how PHP came to a row, an event of
+# a person or the crawl. The same set as repo.ORIGINS; tests/test_php_gates.py
+# (rule 17) holds the three lists together. A row with any other origin is
+# outside the contract like every other foreign value.
+ORIGINS: Final = frozenset({"event", "crawl"})
 
 Kind = Literal["exclude_storage", "exclude", "delete", "trash", "restore", "content", "metadata"]
+type Origin = Literal["event", "crawl"]
 
 
 class ClaimItem(BaseModel):
-    """One row as QueueService::describe hands it out: exactly the nine keys."""
+    """One row as QueueService::describe hands it out: exactly the ten keys."""
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -54,6 +60,7 @@ class ClaimItem(BaseModel):
     mtime: int | None = Field(ge=0)
     prefilterKey: str | None = Field(pattern=r"^[0-9a-f]{64}$")
     readerUid: str | None = Field(min_length=1, max_length=MAX_UID_LENGTH)
+    origin: Origin
 
     @model_validator(mode="after")
     def _a_file_kind_describes_a_file(self) -> Self:
@@ -74,6 +81,7 @@ class ClaimItem(BaseModel):
             mtime=self.mtime,
             prefilter_key=self.prefilterKey,
             reader_uid=self.readerUid,
+            origin=self.origin,
         )
 
 
