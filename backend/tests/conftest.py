@@ -19,6 +19,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET = "test-secret-not-real"  # noqa: S105 - a test value, never a real secret
 VERSION = "0.1.0"
+# ffmpeg_bin, ffprobe_bin and encoders for the media tests (plan 03-05).
+pytest_plugins = ("tests.media_fixtures",)
 
 
 @pytest.fixture(autouse=True)
