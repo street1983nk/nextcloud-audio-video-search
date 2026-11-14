@@ -59,6 +59,19 @@ occ audio_video_search:sample <fileId> --remove
 
 La commande supprime le résultat de test et ses entrées d'index ; le fichier lui-même reste inchangé. Elle ne supprime jamais une vraie transcription. La suppression exige aussi le mode débogage. L'interface n'a aucune action de suppression.
 
+## Détection
+
+- Les stockages externes sont pris en compte par défaut. Pour en désactiver un : `occ audio_video_search:exclude --storage=<id du montage>` (id via `occ files_external:list`).
+- Les stockages dont les identifiants ne valent que pour la session sont ignorés. « Identifiants de connexion, sauvegarder dans la base de données » les rend exploitables.
+- Exclure des utilisateurs, des groupes et des dossiers : `occ audio_video_search:exclude --user=<uid>`, `--group=<gid>` ou `--folder=<chemin>`. Cela fonctionne aussi avant l'installation du backend.
+- Un stockage SMB monté par l'administrateur avec des identifiants propres à chaque utilisateur appartient à cet utilisateur pour les exclusions.
+- `occ audio_video_search:status` indique combien de contenus sont transcrits (X sur Y).
+- Les modifications faites directement sur le NAS apparaissent au plus tard après 24 heures, immédiatement avec `occ audio_video_search:rescan --all`, durablement plus vite avec `occ files_external:notify`.
+- Les droits de lecture sur SMB et SFTP sont vérifiés à nouveau au moins tous les 7 jours.
+- Les fichiers supprimés disparaissent aussitôt de la recherche. Leur transcription est conservée 7 jours au cas où une copie réapparaît.
+- Chaque fichier est lu une fois en entier.
+- Avec php-fpm, définir `request_terminate_timeout` pour qu'un accès SMB bloqué n'occupe pas un worker indéfiniment.
+
 ## Remarques
 
 - La lecture à partir d'un moment précis peut démarrer lentement sur un stockage externe qui ne permet pas de sauter dans le flux de données, car le serveur lit le fichier jusqu'à la position de départ.

@@ -9,7 +9,7 @@ Deutsch | [English](README.en.md) | [Français](README.fr.md)
 
 Audio & Video Search macht Audio- und Videodateien in Nextcloud durchsuchbar. Die App schreibt das Gesprochene lokal auf dem eigenen Server mit und findet so Besprechungen, Interviews und Aufzeichnungen über ihren Inhalt.
 
-**Status:** in Entwicklung, noch nicht im App Store. Stand Phase 1: beide Apps arbeiten zusammen, ein Testtreffer für Entwickler zeigt den Weg von der Suche bis zur Zeitstelle. Eine Transkription gibt es noch nicht.
+**Status:** in Entwicklung, noch nicht im App Store. Stand 0.2.0: die App findet alle Audio- und Videodateien der Instanz, auch auf externen Speichern, und hält den Bestand aktuell; Ausschlüsse per occ. Eine Transkription gibt es noch nicht.
 
 ## Was Audio & Video Search kann
 

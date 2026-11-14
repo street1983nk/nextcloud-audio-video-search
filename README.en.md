@@ -9,7 +9,7 @@
 
 Audio & Video Search makes audio and video files in Nextcloud searchable. It transcribes the spoken words locally on your own server, so meetings, interviews and recordings can be found by what was said.
 
-**Status:** in development, not yet in the App Store. State of phase 1: both apps work together, and a test result for developers shows the way from search to the point in time. There is no transcription yet.
+**Status:** in development, not in the App Store yet. As of 0.2.0 the app finds every audio and video file of the instance, external storages included, and keeps the list current; exclusions via occ. There is no transcription yet.
 
 ## What Audio & Video Search does
 

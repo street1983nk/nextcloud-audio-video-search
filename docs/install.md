@@ -59,6 +59,19 @@ occ audio_video_search:sample <fileId> --remove
 
 Der Befehl entfernt den Testtreffer und seine Indexeinträge; die Datei selbst bleibt unverändert. Ein echtes Transkript entfernt er nie. Auch das Entfernen braucht den Debug-Modus. Die Oberfläche hat keine Löschaktion.
 
+## Erfassung
+
+- Externe Speicher werden ab Werk erfasst. Abschalten: `occ audio_video_search:exclude --storage=<Mount-ID>` (ID aus `occ files_external:list`).
+- Speicher mit Anmeldedaten nur für die Sitzung werden übersprungen. Mit "Anmeldedaten, in Datenbank speichern" werden sie erfassbar.
+- Nutzer, Gruppen und Ordner ausschließen: `occ audio_video_search:exclude --user=<uid>`, `--group=<gid>` oder `--folder=<Pfad>`. Das geht auch, bevor das Backend installiert ist.
+- Ein vom Admin eingebundener SMB-Speicher mit Anmeldedaten je Nutzer gehört beim Ausschluss dem jeweiligen Nutzer.
+- `occ audio_video_search:status` zeigt, wie viele Inhalte transkribiert sind (X von Y).
+- Änderungen direkt auf dem NAS erscheinen spätestens nach 24 Stunden, sofort mit `occ audio_video_search:rescan --all`, dauerhaft schneller mit `occ files_external:notify`.
+- Leserechte auf SMB und SFTP werden mindestens alle 7 Tage neu geprüft.
+- Gelöschte Dateien verschwinden sofort aus der Suche. Ihr Transkript bleibt 7 Tage für eine Kopie, die wieder auftaucht.
+- Jede Datei wird einmal komplett gelesen.
+- Bei php-fpm `request_terminate_timeout` setzen, damit ein hängender SMB-Zugriff keinen Worker dauerhaft belegt.
+
 ## Hinweise
 
 - Abspielen ab einer Zeitstelle kann auf externen Speichern ohne Sprung im Datenstrom (nicht seekbar) langsam starten, weil der Server die Datei bis zur Startstelle liest.

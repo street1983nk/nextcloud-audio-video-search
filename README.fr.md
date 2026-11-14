@@ -9,7 +9,7 @@
 
 Audio & Video Search rend les fichiers audio et vidéo de Nextcloud consultables. L'application transcrit la parole localement sur votre propre serveur, pour retrouver réunions, interviews et enregistrements grâce à leur contenu.
 
-**Statut :** en développement, pas encore dans l'App Store. État de la phase 1 : les deux applications fonctionnent ensemble, un résultat de test pour les développeurs montre le chemin de la recherche jusqu'au moment précis. Il n'y a pas encore de transcription.
+**Statut :** en développement, pas encore dans l'App Store. Depuis la 0.2.0, l'application trouve tous les fichiers audio et vidéo de l'instance, stockages externes compris, et tient la liste à jour ; exclusions via occ. Il n'y a pas encore de transcription.
 
 ## Ce que fait Audio & Video Search
 

@@ -59,6 +59,19 @@ occ audio_video_search:sample <fileId> --remove
 
 The command removes the test result and its index entries; the file itself stays unchanged. It never removes a real transcript. Removing also requires debug mode. The interface has no delete action.
 
+## Discovery
+
+- External storages are captured by default. To switch one off: `occ audio_video_search:exclude --storage=<mount id>` (id from `occ files_external:list`).
+- Storages with session-only credentials are skipped. "Log-in credentials, save in database" makes them capturable.
+- Exclude users, groups and folders: `occ audio_video_search:exclude --user=<uid>`, `--group=<gid>` or `--folder=<path>`. This also works before the backend is installed.
+- An SMB storage mounted by the admin with credentials per user belongs to that user when it comes to exclusions.
+- `occ audio_video_search:status` shows how many contents are transcribed (X of Y).
+- Changes made directly on the NAS show up within 24 hours, at once with `occ audio_video_search:rescan --all`, permanently faster with `occ files_external:notify`.
+- Read access on SMB and SFTP is checked again at least every 7 days.
+- Deleted files leave the search at once. Their transcript is kept for 7 days in case a copy turns up again.
+- Every file is read in full once.
+- With php-fpm, set `request_terminate_timeout` so a hanging SMB access does not hold a worker for good.
+
 ## Notes
 
 - Playback from a point in time can start slowly on external storage that cannot seek within the data stream, because the server reads the file up to the start position.
