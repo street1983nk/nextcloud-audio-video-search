@@ -26,6 +26,8 @@ does not stay green.
 import json
 import re
 
+import pytest
+
 from tests.conftest import REPO_ROOT
 
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -567,6 +569,17 @@ VERDICT_ORDER = (
 )
 
 
+# Phases whose effect only the reconcile of the container brings (plan 02-20):
+# the renewed proof, a storage that left the mount list, a deleted user. The
+# loop of the container runs every 300 s, compare.sh wait may return before
+# it, so the phase starts one round at once (owner 14.11.2026).
+RECONCILE_AFTER = {
+    "reprove": 'bash "${d}/topology.sh" revoke_cem && ./occ audio_video_search:reconcile --reprove',
+    "vanish": 'bash "${d}/topology.sh" vanish_cem && ./occ audio_video_search:reconcile',
+    "delete-user": 'bash "${d}/topology.sh" delete_dan && ./occ audio_video_search:reconcile',
+}
+
+
 def code_lines(script: str) -> list[str]:
     """The lines of a bash script that are not comments."""
     return [line for line in script.splitlines() if not line.lstrip().startswith("#")]
@@ -649,6 +662,9 @@ def flow_findings(workflow: str) -> list[str]:
         findings.append("the verdict step does not run with if: always() over the phase results")
     if "bash app-src/ci/discovery/controls.sh leak" not in job_text(workflow, "leak-control"):
         findings.append("the job leak-control does not run controls.sh leak")
+    for phase, operation in RECONCILE_AFTER.items():
+        if not re.search(rf"^\s*{re.escape(phase)}\) {re.escape(operation)} ;;$", discovery, re.MULTILINE):
+            findings.append(f"the phase {phase} does not start a reconcile right after its operation")
     return findings
 
 
@@ -763,6 +779,17 @@ def test_the_flow_rule_fires_on_a_missing_phase() -> None:
     broken = text.replace(" reattach foreign-change; do", " foreign-change; do")
 
     assert flow_findings(broken) == ["the job discovery does not run the phases of plan 02-04 in order"]
+
+
+@pytest.mark.parametrize("phase", sorted(RECONCILE_AFTER))
+def test_the_flow_rule_fires_without_the_reconcile_after_its_operation(phase: str) -> None:
+    text = source()
+    line = f"{phase}) {RECONCILE_AFTER[phase]} ;;"
+    operation = RECONCILE_AFTER[phase].split(" && ")[0]
+    assert text.count(line) == 1
+    broken = text.replace(line, f"{phase}) {operation} ;;")
+
+    assert flow_findings(broken) == [f"the phase {phase} does not start a reconcile right after its operation"]
 
 
 def test_the_flow_rule_fires_when_the_access_log_control_comes_first() -> None:
