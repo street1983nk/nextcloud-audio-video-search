@@ -340,7 +340,7 @@ def test_excerpt_shows_a_correction(api: TestClient) -> None:
 
 
 def test_excerpt_of_an_unknown_file(api: TestClient) -> None:
-    assert _post(api, "/excerpt", {"fileId": 9, "atMs": 0}).json() == {"known": False, "excerpt": None}
+    assert _post(api, "/excerpt", {"fileId": 9, "atMs": 0}).json() == {"known": False}
 
 
 @pytest.mark.parametrize("body", [{"fileId": 0, "atMs": 0}, {"fileId": 1, "atMs": -5}, {"fileId": 1}])
@@ -358,7 +358,7 @@ def test_remove_takes_the_sample_out_of_store_and_index(api: TestClient) -> None
 
     assert removed == {"result": "removed", "mediaId": answer["mediaId"]}
     assert _search(api, "Audiosuche")["hits"] == []
-    assert _post(api, "/excerpt", {"fileId": 42, "atMs": AT_MS}).json() == {"known": False, "excerpt": None}
+    assert _post(api, "/excerpt", {"fileId": 42, "atMs": AT_MS}).json() == {"known": False}
     assert _post(api, "/sample/remove", {"fileId": 42}).json() == {"result": "not_found", "mediaId": None}
 
 

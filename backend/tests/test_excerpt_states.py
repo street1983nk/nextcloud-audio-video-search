@@ -328,7 +328,7 @@ def _prepare(store: Store, case: str) -> int:
     if case == "queued":
         return media_id
     job = _running(store, media_id)
-    if case in ("complete", "running", "piece_then_yield", "piece_then_disk_full"):
+    if case in ("complete", "running", "piece_then_yield", "piece_then_disk_full", "piece_then_engine_failed"):
         _first_piece(store, job)
     if case == "complete":
         assert store.finish_preview(job, "transcript", now=NOW)
@@ -336,6 +336,8 @@ def _prepare(store: Store, case: str) -> int:
         assert store.yield_preview(job, now=NOW)
     elif case == "piece_then_disk_full":
         _settle(store, job, "disk_full")
+    elif case == "piece_then_engine_failed":
+        _settle(store, job, "engine_failed")
     elif case not in ("running", "running_no_piece"):
         _settle(store, job, case)
     return media_id
@@ -391,6 +393,9 @@ CASES = [
     ("disk_full", 0, _answer(None, None, reason="disk_full")),
     ("piece_then_disk_full", 300_000, _answer(TEXT, "preview", partial=True, reason="disk_full")),
     ("piece_then_disk_full", 900_000, _answer(None, "preview", partial=True, pending=True, reason="disk_full")),
+    # Skipped after a finished piece: nothing is in work any more, the text of the piece stays.
+    ("piece_then_engine_failed", 300_000, _answer(TEXT, "preview", reason="engine_failed")),
+    ("piece_then_engine_failed", 900_000, _answer(TEXT, "preview", reason="engine_failed")),
 ]
 
 

@@ -35,6 +35,15 @@ OTHER = 41
 UNKNOWN = 9
 SPOKEN = "Haushaltsgeheimnis"
 REAL_TEXT = f"Das {SPOKEN}"
+# The excerpt of the real transcript through an active reference without a preview job (plan 03-14).
+REAL_ANSWER = {
+    "known": True,
+    "excerpt": REAL_TEXT,
+    "stage": "preview",
+    "partial": False,
+    "pendingHere": False,
+    "reason": None,
+}
 
 
 @pytest.fixture
@@ -123,7 +132,7 @@ def _no_text_for_the_sample(client: TestClient, before: httpx.Response) -> None:
     assert before.status_code == 200
     assert before.json()["hits"] == []
     unknown = _excerpt(client, UNKNOWN)
-    assert unknown.json() == {"known": False, "excerpt": None}
+    assert unknown.json() == {"known": False}
 
     search = _search(client)
     excerpt = _excerpt(client)
@@ -141,7 +150,7 @@ def test_the_real_transcript_is_found_through_an_active_reference(api: TestClien
     _reference(store, OTHER, media_id)
 
     assert _hits(api) == [(OTHER, False)]
-    assert _excerpt(api, OTHER).json() == {"known": True, "excerpt": REAL_TEXT}
+    assert _excerpt(api, OTHER).json() == REAL_ANSWER
 
 
 def test_a_sample_on_a_content_with_a_real_transcript_gives_no_hit_and_no_excerpt(api: TestClient) -> None:
@@ -199,7 +208,7 @@ def test_only_the_file_with_the_active_reference_gets_the_real_text(api: TestCli
 
     assert _hits(api) == [(OTHER, False)]
     assert store.file_ids_for_media(media_id) == [OTHER]
-    assert _excerpt(api, OTHER).json() == {"known": True, "excerpt": REAL_TEXT}
+    assert _excerpt(api, OTHER).json() == REAL_ANSWER
     assert _same_answer(_excerpt(api), _excerpt(api, UNKNOWN))
 
 
@@ -210,7 +219,7 @@ def test_an_active_reference_of_the_same_file_keeps_hit_and_excerpt_beside_its_s
     store.put_sample(FILE, media_id)
 
     assert _hits(api) == [(FILE, False)]
-    assert _excerpt(api).json() == {"known": True, "excerpt": REAL_TEXT}
+    assert _excerpt(api).json() == REAL_ANSWER
 
 
 def test_a_sample_at_the_sample_level_keeps_its_hit_and_its_excerpt(api: TestClient) -> None:
@@ -227,7 +236,14 @@ def test_a_sample_at_the_sample_level_keeps_its_hit_and_its_excerpt(api: TestCli
     assert _hits(api, "Audiosuche") == [(FILE, True)]
     assert store.file_ids_for_media(media_id) == [FILE]
     assert store.media_for_file(FILE) == media_id
-    assert _excerpt(api, at_ms=AT_MS).json() == {"known": True, "excerpt": sample_api.SAMPLE_TEXT}
+    assert _excerpt(api, at_ms=AT_MS).json() == {
+        "known": True,
+        "excerpt": sample_api.SAMPLE_TEXT,
+        "stage": "sample",
+        "partial": False,
+        "pendingHere": False,
+        "reason": None,
+    }
 
 
 def test_a_sample_whose_content_has_no_version_yet_names_its_content_but_gives_no_text(api: TestClient) -> None:
