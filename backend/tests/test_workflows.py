@@ -588,7 +588,9 @@ def test_the_model_key_of_deploy_harp_prints_the_model_sha256_of_the_catalogue()
 
 def test_the_phase_3_rule_fires_when_the_main_run_takes_preview_or_the_switch_is_gone() -> None:
     source = harp_source()
-    broken = source.replace("|@missing|@preview", "|@missing").replace(PREVIEW_RUN, "npx playwright test --grep @preview")
+    broken = source.replace("|@missing|@preview", "|@missing").replace(
+        PREVIEW_RUN, "npx playwright test --grep @preview"
+    )
     assert broken != source
 
     assert preview_findings(broken) == [
@@ -633,5 +635,5 @@ def test_the_phase_3_rule_fires_on_a_leak_probe_without_control_and_a_seed_witho
 
     assert preview_findings(broken) == [
         "the seed does not bring the media of phase 3",
-        "the leak probe lacks \"${control_count}\" -lt 1",
+        'the leak probe lacks "${control_count}" -lt 1',
     ]
