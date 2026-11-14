@@ -34,7 +34,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 - [ ] **TRANS-01**: Jede Datei bekommt zuerst ein Vorschau-Transkript (Parakeet-TDT-0.6B-v3 int8 mit Schluck-Wächter, Einstellungen laut Spike 3), in Minuten durchsuchbar
 - [ ] **TRANS-02**: VAD ist immer an und nicht abschaltbar
-- [ ] **TRANS-03**: Halluzinations-Abfangregel je Segment: Segmente mit erkannter Sprache außerhalb der Instanz-Sprachen und Sicherheit < 0,5 sowie Segmente in fremder Schrift werden verworfen; echte Aufnahmen in nicht unterstützter Sprache werden als "Sprache nicht unterstützt" übersprungen, nicht still geleert
+- [ ] **TRANS-03**: Halluzinations-Abfangregel je Segment: Segmente in fremder Schrift und Segmente, deren Sprache sicher außerhalb der Instanz-Sprachen liegt, werden verworfen (für Parakeet gilt die in Phase 3 gemessene Kombinationsregel aus Schrift, Text-Sprachkennung und Wortkonfidenz, 03-RESEARCH.md; "Sicherheit < 0,5" ist die Whisper-Fassung, Owner 14.11.2026); echte Aufnahmen in nicht unterstützter Sprache werden als "Sprache nicht unterstützt" übersprungen, nicht still geleert
 - [ ] **TRANS-04**: Ein besseres Transkript ersetzt das vorherige atomar; die Suche bleibt dabei durchgehend verfügbar und zeigt nie einen Mischzustand
 - [ ] **TRANS-05**: Ein Ersatz verliert keinen korrekt erkannten Text der Vorschau (Abdeckungs-Wächter je Fenster)
 - [x] **TRANS-06**: Jedes Transkript führt seine Herkunft (Engine, Modell-sha256, Konfigurationsversion, Profilstufe); ein veraltetes Ergebnis überschreibt nie ein neueres

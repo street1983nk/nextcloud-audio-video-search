@@ -42,6 +42,14 @@ Nicht in dieser Phase: besseres Transkript (turbo/large-v3, ROVER, Profile), Spr
 - Treffer und Ausschnitt nur über Verweise mit state active (D-02-01a, D-02-15c), Probe-Regeln D-02-15/15a/Nachtrag, Ausschluss D-02-04/08/16, Lesebeweis ohne Abschaltweg D-02-10.
 - Kein Inhalt verlässt den Server; Parakeet und Silero über eigenen Downloader mit festem sha256.
 
+### Owner-Entscheide nach der Research (14.11.2026)
+- **D-03-15:** "Mehr laden": Gibt es zu wenig Treffer-Dateien, wird die Seite mit weiteren Stellen derselben Datei aufgefüllt (Stufen zu je 3 Stellen je Datei, PHP füllt auf genau `limit` auf), damit "Mehr laden" erscheint und keine Stelle unerreichbar bleibt. Präzisiert D-03-02.
+- **D-03-16:** Zweiter VAD-Durchgang mit Schwelle 0,3 (Mindestsprache 0,1 s) nur für Dateien bis 60 s, die im ersten Durchgang kein behaltenes Wort hatten. VAD bleibt immer an; die Schwelle ist eine feste Konstante mit Test, kein Schalter.
+- **D-03-17:** Keine eigene Größengrenze mehr (der alte Standard 100 MB entfällt); maßgeblich ist die Höchstdauer 12 h (D-03-08). Vor dem Ablegen der Temp-Datei wird freier Plattenplatz geprüft; reicht er nicht, wird mit Grund "zu wenig Speicherplatz" übersprungen und später erneut versucht. Dieser Grund braucht einen neuen Text (DE/EN/FR) auf der Abspielseite: dem Owner vor dem Bau zeigen und in 03-UI-SPEC.md nachtragen.
+- **D-03-18:** Neue Laufzeitabhängigkeit py3langid 0.4.0 (BSD-3, nur numpy) für die Text-Sprachkennung der Abfangregel; Herkunft, Lizenz und Wheels für amd64/arm64 vor dem Einbau prüfen, exakt pinnen.
+- **D-03-19:** TRANS-03 gilt mit der gemessenen Parakeet-Regel aus 03-RESEARCH.md (Schrift unter 50 % lateinisch, Text-Sprache außerhalb DE/EN/FR mit p >= 0,9 und mindestens 3 Wörtern, Wortkonfidenz-Schwellen 0,6 bzw. 0,5) und dem Dateiurteil aus der Research; Anforderungstext angepasst.
+- Die Messskripte liegen unter `scripts/research/phase3/` (ohne Audiodaten); lokale Pfade (ffmpeg) vor jedem Push durch Parameter ersetzen.
+
 ### Claude's Discretion
 - Fortsetzen nach Neustart: Granularität und Ablage der Stück-Zustände (SQLite-Stufen-Tabelle nach Findling-Muster).
 - Wortgenauer Sprung: Parakeet-Wortzeiten bevorzugt (TRANS-08), Rundung wie bestehende `clock()`-Regel (nie vor dem Wort).
