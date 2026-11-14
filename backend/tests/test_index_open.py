@@ -209,5 +209,5 @@ def test_set_meta_refuses_the_stores_own_marks_and_odd_keys(store: Store, key: s
     with pytest.raises(ValueError, match="key"):
         store.set_meta(key, "1")
 
-    assert store.schema_version() == 2
+    assert store.schema_version() == 3
     assert store.index_generation() == 0

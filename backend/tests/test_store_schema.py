@@ -22,6 +22,7 @@ TABLES = {
     "current",
     "correction",
     "index_outbox",
+    "preview_job",
 }
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -91,14 +92,14 @@ def _count(path: Path, table: str, media_id: int) -> int:
 
 
 def test_fresh_database_has_meta_marks(store: Store, tmp_path: Path) -> None:
-    assert store.schema_version() == 2
+    assert store.schema_version() == 3
     with _raw(tmp_path / "state.db") as conn:
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    assert meta["schema_version"] == "2"
+    assert meta["schema_version"] == "3"
     assert "index_generation" in meta
 
 
-def test_all_nine_tables_exist(store: Store, tmp_path: Path) -> None:
+def test_all_tables_exist(store: Store, tmp_path: Path) -> None:
     del store
     with _raw(tmp_path / "state.db") as conn:
         names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -134,7 +135,7 @@ def test_open_twice_is_idempotent(tmp_path: Path) -> None:
     first.close()
     second = Store.open(tmp_path / "state.db")
     try:
-        assert second.schema_version() == 2
+        assert second.schema_version() == 3
         assert second.media_for_file_sha256(SHA_A) == media_id
     finally:
         second.close()
@@ -150,7 +151,7 @@ def test_read_only_store_refuses_writes(store: Store, tmp_path: Path) -> None:
     del store
     reader = Store.open(tmp_path / "state.db", read_only=True)
     try:
-        assert reader.schema_version() == 2
+        assert reader.schema_version() == 3
         with pytest.raises(sqlite3.OperationalError):
             reader.media_for_file_sha256(SHA_A)
     finally:

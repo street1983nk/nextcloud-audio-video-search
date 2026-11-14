@@ -1,5 +1,8 @@
 """Schema v2 of state.db and the migration from v1 (plan 02-02, T-02-05, T-02-06).
 
+Since plan 03-03 a v1 file runs on from v2 to v3 in the same open
+(tests/test_store_migration_v3.py holds that step); the v2 parts are checked here.
+
 The v1 schema below is a frozen copy of store/schema.sql as phase 1 shipped it
 (0.1.0), so the migration is tested against the shape that exists in the field,
 not against whatever schema.sql says today.
@@ -165,18 +168,18 @@ def _dump(path: Path) -> list[str]:
         return list(conn.iterdump())
 
 
-def test_the_schema_version_is_two() -> None:
-    assert SCHEMA_VERSION == 2
+def test_the_schema_version_is_three() -> None:
+    assert SCHEMA_VERSION == 3
 
 
-def test_a_v1_file_is_lifted_to_v2_without_loss(tmp_path: Path) -> None:
+def test_a_v1_file_is_lifted_past_v2_without_loss(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     _make_v1(path)
     before = {table: _rows(path, table) for table in KEPT}
 
     store = Store.open(path)
     try:
-        assert store.schema_version() == 2
+        assert store.schema_version() == 3
         sample_ref = store.file_ref(42)
         sample_media = store.sample_media(42)
         other = store.file_ref(43)
@@ -202,7 +205,7 @@ def test_a_v1_file_is_lifted_to_v2_without_loss(tmp_path: Path) -> None:
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
     assert storage_type == "INTEGER"
     assert {"file_ref_media", "file_ref_storage", "file_ref_prefilter", "file_ref_stage"} <= indexes
-    assert meta == {"schema_version": "2", "index_generation": "3", "index_schema_version": "1"}
+    assert meta == {"schema_version": "3", "index_generation": "3", "index_schema_version": "1"}
 
 
 def test_the_sample_still_finds_its_file_after_the_migration(tmp_path: Path) -> None:
@@ -247,10 +250,10 @@ def test_a_newer_schema_is_refused_with_a_clear_message(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     _make_v1(path)
     with closing(sqlite3.connect(path)) as conn, conn:
-        conn.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+        conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
     before = _dump(path)
 
-    with pytest.raises(RuntimeError, match="unsupported store schema version 3"):
+    with pytest.raises(RuntimeError, match="unsupported store schema version 4"):
         Store.open(path)
 
     assert _dump(path) == before
@@ -267,7 +270,7 @@ def test_a_reader_never_migrates(tmp_path: Path) -> None:
     assert _dump(path) == before
 
 
-def test_a_fresh_file_is_v2_at_once(tmp_path: Path) -> None:
+def test_a_fresh_file_has_the_v2_columns_at_once(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     Store.open(path).close()
 
