@@ -10,6 +10,16 @@ partial transcript from one kept word on and tells "language not supported" from
 M-9 in 03-RESEARCH.md (``scripts/research/phase3/verdict.py``); they are
 constants, never a setting or an environment value (tests/test_vad_gate.py).
 
+D-03-22: Parakeet often gives no token at all, or only word salad that the rule
+drops, for a language it does not know (FLEURS Turkish, Chinese, Japanese,
+Hindi, Vietnamese). Such a file with much VAD speech and no kept word is
+"language not supported", not "no speech". Measured in plan 03-13 with the
+real engine and the counting of the worker (``verdict22.py``, ``eval22.py``):
+music, singing, noise and silence keep a VAD share of at most 45 %, the
+memos of an instance language without a kept word at most 2,1 s of speech;
+single clips of the unsupported languages have from 4,3 s and from 55 % on.
+The borders are the middles of the two gaps.
+
 The text language and its probability come in as arguments; the language
 identification itself belongs to the engine (plan 03-10).
 """
@@ -34,6 +44,9 @@ UNSUPPORTED_DROPS: Final = 5
 CONF_DROPS: Final = 10
 CONF_SPEECH_MS: Final = 10_000
 CONF_SPEECH_SHARE: Final = 0.3
+# D-03-22 (plan 03-13): no kept word, but at least this much VAD speech at this share.
+SPEECH_ONLY_MS: Final = 3_000
+SPEECH_ONLY_SHARE: Final = 0.5
 
 # The verdicts of a window.
 KEEP: Final = "keep"
@@ -77,6 +90,8 @@ def file_verdict(
     if drop_script + drop_language >= UNSUPPORTED_DROPS or (
         drop_conf >= CONF_DROPS and speech_ms >= CONF_SPEECH_MS and share >= CONF_SPEECH_SHARE
     ):
+        return UNSUPPORTED_LANGUAGE
+    if speech_ms >= SPEECH_ONLY_MS and share >= SPEECH_ONLY_SHARE:
         return UNSUPPORTED_LANGUAGE
     return NO_SPEECH
 
