@@ -16,12 +16,12 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ### Erfassung (DISC)
 
-- [ ] **DISC-01**: Ohne Konfiguration werden alle Audio- und Videodateien aller Nutzer erfasst, inklusive Gruppenordner
-- [ ] **DISC-02**: Externe Speicher (SMB, S3 usw.) werden erfasst; Admin kann sie per Schalter ausschließen
-- [ ] **DISC-03**: Admin kann Nutzer, Gruppen und Ordner ausschließen; Ausschlüsse greifen vor dem ersten Durchlauf und wirken rückwirkend (vorhandene Transkripte werden entfernt)
-- [ ] **DISC-04**: Neue und geänderte Dateien werden innerhalb weniger Minuten erkannt (Ereignisse), Änderungen außerhalb von Nextcloud über einen periodischen Abgleich
-- [ ] **DISC-05**: Gleicher Inhalt wird nur einmal gerechnet (Inhalts-Schlüssel), auch bei Kopien, Verschieben, Umbenennen und je Nutzer eingebundenen externen Speichern
-- [ ] **DISC-06**: Verschieben, Umbenennen oder Taggen löst keine Neuberechnung aus
+- [x] **DISC-01**: Ohne Konfiguration werden alle Audio- und Videodateien aller Nutzer erfasst, inklusive Gruppenordner
+- [x] **DISC-02**: Externe Speicher (SMB, S3 usw.) werden erfasst; Admin kann sie per Schalter ausschließen
+- [x] **DISC-03**: Admin kann Nutzer, Gruppen und Ordner ausschließen; Ausschlüsse greifen vor dem ersten Durchlauf und wirken rückwirkend (vorhandene Transkripte werden entfernt)
+- [x] **DISC-04**: Neue und geänderte Dateien werden innerhalb weniger Minuten erkannt (Ereignisse), Änderungen außerhalb von Nextcloud über einen periodischen Abgleich
+- [x] **DISC-05**: Gleicher Inhalt wird nur einmal gerechnet (Inhalts-Schlüssel), auch bei Kopien, Verschieben, Umbenennen und je Nutzer eingebundenen externen Speichern
+- [x] **DISC-06**: Verschieben, Umbenennen oder Taggen löst keine Neuberechnung aus
 
 ### Medien-Eingang (MEDIA)
 
@@ -151,12 +151,12 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | PLAT-02 | Phase 1 | Complete |
 | PLAT-03 | Phase 1 | Complete |
 | PLAT-04 | Phase 5 | Pending |
-| DISC-01 | Phase 2 | Pending |
-| DISC-02 | Phase 2 | Pending |
-| DISC-03 | Phase 2 | Pending |
-| DISC-04 | Phase 2 | Pending |
-| DISC-05 | Phase 2 | Pending |
-| DISC-06 | Phase 2 | Pending |
+| DISC-01 | Phase 2 | Complete |
+| DISC-02 | Phase 2 | Complete |
+| DISC-03 | Phase 2 | Complete |
+| DISC-04 | Phase 2 | Complete |
+| DISC-05 | Phase 2 | Complete |
+| DISC-06 | Phase 2 | Complete |
 | MEDIA-01 | Phase 3 | Pending |
 | MEDIA-02 | Phase 3 | Pending |
 | MEDIA-03 | Phase 3 | Pending |
@@ -218,6 +218,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | REL-05 | Phase 11 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 69 total
 - Mapped to phases: 69
 - Unmapped: 0
