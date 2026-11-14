@@ -7,10 +7,13 @@ import httpx
 import pytest
 
 from audio_video_search_backend import nc
+from audio_video_search_backend.models import catalog
 
-ALLOWED = frozenset({"huggingface.co", "us.aws.cdn.hf.co"})
-START = "https://huggingface.co/repo/resolve/abc/model.onnx"
-CDN = "https://us.aws.cdn.hf.co/xet-bridge-us/blob?Signature=x"
+# The chain of a GitHub release asset (plan 03-07b): github.com answers 302 to
+# the asset host with a signed URL.
+ALLOWED = frozenset({"github.com", "release-assets.githubusercontent.com"})
+START = "https://github.com/o/r/releases/download/t/model.onnx"
+CDN = "https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sig=x"
 BODY = b"0123456789" * 1000
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -67,21 +70,21 @@ async def test_a_redirect_to_an_allowed_host_downloads(tmp_path: Path) -> None:
     assert code == nc.MODEL_FETCHED
     assert dest.read_bytes() == BODY
     assert b"".join(seen) == BODY
-    assert recorder.hosts() == ["huggingface.co", "us.aws.cdn.hf.co"]
+    assert recorder.hosts() == ["github.com", "release-assets.githubusercontent.com"]
 
 
 async def test_a_relative_redirect_stays_on_the_host(tmp_path: Path) -> None:
-    # tokens.txt: huggingface.co answers 307 with a path on itself.
-    target = "https://huggingface.co/api/resolve-cache/models/repo/abc/tokens.txt"
+    # A relative Location keeps the host of the answering hop.
+    target = "https://github.com/o/r/releases/download/t/cache/tokens.txt"
     recorder = Recorder(
         {
-            START: _redirect("/api/resolve-cache/models/repo/abc/tokens.txt", 307),
+            START: _redirect("/o/r/releases/download/t/cache/tokens.txt", 307),
             target: httpx.Response(200, content=BODY),
         }
     )
 
     assert await _fetch(recorder, tmp_path / "t.part") == nc.MODEL_FETCHED
-    assert recorder.hosts() == ["huggingface.co", "huggingface.co"]
+    assert recorder.hosts() == ["github.com", "github.com"]
 
 
 async def test_a_redirect_to_a_foreign_host_asks_nothing_there_and_leaves_no_file(tmp_path: Path) -> None:
@@ -91,25 +94,25 @@ async def test_a_redirect_to_a_foreign_host_asks_nothing_there_and_leaves_no_fil
 
     assert await _fetch(recorder, dest) == nc.MODEL_FOREIGN_HOST
     assert not dest.exists()
-    assert recorder.hosts() == ["huggingface.co"]
+    assert recorder.hosts() == ["github.com"]
 
 
 async def test_a_lookalike_host_is_foreign(tmp_path: Path) -> None:
-    lookalike = "https://us.aws.cdn.hf.co.evil.example.org/blob"
+    lookalike = "https://release-assets.githubusercontent.com.evil.example/blob"
     recorder = Recorder({START: _redirect(lookalike)})
 
     assert await _fetch(recorder, tmp_path / "m.part") == nc.MODEL_FOREIGN_HOST
-    assert recorder.hosts() == ["huggingface.co"]
+    assert recorder.hosts() == ["github.com"]
 
 
 async def test_a_redirect_to_plain_http_is_refused(tmp_path: Path) -> None:
-    plain = "http://us.aws.cdn.hf.co/xet-bridge-us/blob"
+    plain = "http://release-assets.githubusercontent.com/github-production-release-asset/1/abc"
     recorder = Recorder({START: _redirect(plain), plain: httpx.Response(200, content=BODY)})
     dest = tmp_path / "model.onnx.part"
 
     assert await _fetch(recorder, dest) == nc.MODEL_FOREIGN_HOST
     assert not dest.exists()
-    assert recorder.hosts() == ["huggingface.co"]
+    assert recorder.hosts() == ["github.com"]
 
 
 async def test_a_start_url_outside_the_list_sends_no_request(tmp_path: Path) -> None:
@@ -183,6 +186,47 @@ async def test_a_transport_error_is_network(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The real allowlist of the catalog (plan 03-07b, D-03-21)
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_with_catalog(recorder: Recorder, start: str, dest: Path) -> str:
+    async with _client(recorder) as client:
+        return await nc.fetch_model_asset(
+            start, dest, expected_size=len(BODY), allowed_hosts=catalog.ASSET_HOSTS, client=client
+        )
+
+
+async def test_the_catalog_allowlist_takes_the_github_release_chain(tmp_path: Path) -> None:
+    start = catalog.SILERO_FILES[0].url
+    recorder = Recorder({start: _redirect(CDN), CDN: httpx.Response(200, content=BODY)})
+    dest = tmp_path / "silero_vad.onnx.part"
+
+    assert await _fetch_with_catalog(recorder, start, dest) == nc.MODEL_FETCHED
+    assert dest.read_bytes() == BODY
+    assert recorder.hosts() == ["github.com", "release-assets.githubusercontent.com"]
+
+
+async def test_the_catalog_allowlist_refuses_the_hugging_face_cdn(tmp_path: Path) -> None:
+    start = catalog.SILERO_FILES[0].url
+    hf_cdn = "https://us.aws.cdn.hf.co/xet-bridge-us/blob?Signature=x"
+    recorder = Recorder({start: _redirect(hf_cdn), hf_cdn: httpx.Response(200, content=BODY)})
+    dest = tmp_path / "silero_vad.onnx.part"
+
+    assert await _fetch_with_catalog(recorder, start, dest) == nc.MODEL_FOREIGN_HOST
+    assert not dest.exists()
+    assert recorder.hosts() == ["github.com"]
+
+
+async def test_the_catalog_allowlist_sends_nothing_to_hugging_face(tmp_path: Path) -> None:
+    recorder = Recorder({})
+    start = "https://huggingface.co/csukuangfj/x/resolve/2bda32ec/encoder.int8.onnx"
+
+    assert await _fetch_with_catalog(recorder, start, tmp_path / "e.part") == nc.MODEL_FOREIGN_HOST
+    assert recorder.requests == []
+
+
+# ---------------------------------------------------------------------------
 # What leaves the container: no credential, no cookie, a neutral user agent.
 # ---------------------------------------------------------------------------
 
@@ -198,9 +242,9 @@ async def test_no_request_carries_a_credential_or_a_cookie(tmp_path: Path, monke
     # The environment holds the AppAPI secret (conftest); none of it may travel.
     # The first hop sets a cookie and sends the client back to its own host, so
     # a client that kept its jar would send it along.
-    cache = "https://huggingface.co/api/resolve-cache/model.onnx"
+    cache = "https://github.com/o/r/releases/download/t/cache/model.onnx"
     redirect = httpx.Response(
-        307, headers={"Location": "/api/resolve-cache/model.onnx", "Set-Cookie": "session=abc; Path=/"}
+        307, headers={"Location": "/o/r/releases/download/t/cache/model.onnx", "Set-Cookie": "session=abc; Path=/"}
     )
     recorder = Recorder({START: redirect, cache: httpx.Response(200, content=BODY)})
     monkeypatch.setattr(nc, "new_model_client", lambda: _client(recorder))

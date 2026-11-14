@@ -114,6 +114,32 @@ def test_the_runtime_stage_rule_fires_on_a_list_in_the_build_stage() -> None:
     assert "wngerman" not in runtime_stage(moved)
 
 
+HUB_ENV = ("HF_HUB_OFFLINE=1", "HF_HUB_DISABLE_TELEMETRY=1")
+
+
+def sets_the_hub_env(source: str) -> bool:
+    """Whether the image (the last stage) keeps huggingface-hub off the network."""
+    runtime = runtime_stage(source)
+    return all(assignment in runtime for assignment in HUB_ENV)
+
+
+def test_the_runtime_sets_the_hugging_face_hub_offline_and_without_telemetry() -> None:
+    # huggingface-hub arrives with faster-whisper; models only come through the
+    # own downloader (plan 03-07b, STACK.md "What NOT to Use").
+    assert sets_the_hub_env(DOCKERFILE)
+
+
+def test_the_hub_env_rule_fires_on_a_build_stage_only_env() -> None:
+    moved = (
+        "FROM base AS build\nENV HF_HUB_OFFLINE=1 \\\n    HF_HUB_DISABLE_TELEMETRY=1\n"
+        "FROM base AS runtime\nENV PYTHONUNBUFFERED=1\n"
+    )
+
+    assert not sets_the_hub_env(moved)
+    # Positive control: the same text with the ENV in the runtime stage passes.
+    assert sets_the_hub_env(moved + "ENV HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1\n")
+
+
 # The ffmpeg stage (plan 03-05). BtbN, last autobuild of October 2026, LGPL.
 FFMPEG_AMD64 = "a64f3171e6ad1f7d358d28890a907ee478c331d1177ec696a93418f79ac3f1f3"
 FFMPEG_ARM64 = "2ea30086a637e3f0ad0f49a1b38db34121422b85e93cc82df2e01d9ee5200809"

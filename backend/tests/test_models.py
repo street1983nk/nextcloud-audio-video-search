@@ -1,6 +1,7 @@
 """The model catalog and the file side of the download (plan 03-07), without a network."""
 
 import asyncio
+import dataclasses
 import hashlib
 import os
 import re
@@ -38,12 +39,62 @@ def test_the_catalog_holds_the_research_digests_and_nothing_else() -> None:
     assert all(entry.size > 0 for entry in _all_files())
 
 
-def test_every_parakeet_url_is_pinned_to_the_commit() -> None:
-    for entry in catalog.PARAKEET_FILES:
-        assert entry.url == (
-            f"https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/{COMMIT}/{entry.name}"
-        )
-    assert catalog.SILERO_FILES[0].url.endswith("/releases/download/asr-models/silero_vad.onnx")
+# D-03-21 (plan 03-07b): the files come from the project's own release, not
+# from Hugging Face, whose CDN host changes with the region. Written out here
+# instead of read from the catalog.
+RELEASE_REPOSITORY = "street1983nk/nextcloud-audio-video-search"
+RELEASE_TAG = "models-2026-11"
+# Lengths of plan 03-07, unchanged by the mirror (byte-identical files).
+FIXED_SIZES = {
+    "encoder.int8.onnx": 652_184_281,
+    "decoder.int8.onnx": 11_845_275,
+    "joiner.int8.onnx": 6_355_277,
+    "tokens.txt": 93_939,
+    "silero_vad.onnx": 643_854,
+}
+# The redirect chain of every asset, measured with curl on 14.11.2026 (03-07b-SUMMARY):
+# github.com 302 to release-assets.githubusercontent.com, which answers 200.
+MEASURED_HOSTS = frozenset({"github.com", "release-assets.githubusercontent.com"})
+
+
+def test_every_url_points_at_the_own_model_release() -> None:
+    expected = f"https://github.com/{RELEASE_REPOSITORY}/releases/download/{RELEASE_TAG}"
+    assert len(_all_files()) == 5
+    for entry in _all_files():
+        assert entry.url == f"{expected}/{entry.name}"
+
+
+def test_the_release_tag_never_looks_like_an_app_version() -> None:
+    # Workflows start on tags v1.2.3; the model tag must never be one.
+    assert not re.fullmatch(r"v\d.*", RELEASE_TAG)
+    assert re.fullmatch(r"v\d.*", "v0.1.0")  # positive control
+    assert f"/releases/download/{RELEASE_TAG}/" in catalog.PARAKEET_FILES[0].url
+
+
+def test_the_allowlist_is_exactly_the_measured_hosts() -> None:
+    assert catalog.ASSET_HOSTS == MEASURED_HOSTS
+
+
+def test_no_url_and_no_host_names_hugging_face() -> None:
+    def names_hugging_face(text: str) -> bool:
+        return "huggingface" in text or "hf.co" in text or "k2-fsa" in text
+
+    assert not any(names_hugging_face(host) for host in catalog.ASSET_HOSTS)
+    assert not any(names_hugging_face(entry.url) for entry in _all_files())
+    # Positive control: the same check finds the hosts of plan 03-07.
+    assert names_hugging_face("us.aws.cdn.hf.co")
+    assert names_hugging_face("https://huggingface.co/x/resolve/abc/tokens.txt")
+    assert names_hugging_face("https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")
+
+
+def test_the_digests_and_lengths_did_not_change() -> None:
+    assert {entry.name: (entry.sha256, entry.size) for entry in _all_files()} == {
+        name: (RESEARCH_DIGESTS[name], size) for name, size in FIXED_SIZES.items()
+    }
+    # The commit of the sherpa-onnx export stays named as the origin of the mirror.
+    assert COMMIT in (BACKEND_ROOT / "src" / "audio_video_search_backend" / "models" / "catalog.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_every_url_starts_on_an_allowed_host_over_https() -> None:
@@ -82,7 +133,7 @@ OTHER = b"other bytes " * 100
 def _entry(name: str, payload: bytes) -> catalog.ModelFile:
     return catalog.ModelFile(
         name=name,
-        url=f"https://huggingface.co/x/resolve/{COMMIT}/{name}",
+        url=f"https://github.com/{RELEASE_REPOSITORY}/releases/download/{RELEASE_TAG}/{name}",
         sha256=hashlib.sha256(payload).hexdigest(),
         size=len(payload),
     )
@@ -143,6 +194,27 @@ async def test_a_matching_download_is_installed(tmp_path: Path, small_model: cat
     assert fetch.calls == [small_model.url]
     assert fetch.hosts == [catalog.ASSET_HOSTS]
     assert seen[-1] == len(GOOD)
+
+
+async def test_wrong_bytes_for_a_catalog_file_are_refused_and_right_bytes_are_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real catalog entry of silero_vad.onnx, served bytes of its exact length
+    # that are not the file: only the fixed sha256 can tell.
+    real = catalog.SILERO_FILES[0]
+    forged = b"\0" * real.size
+    monkeypatch.setitem(catalog.MODELS, "silero", (real,))
+
+    assert await procure.procure(tmp_path, "silero", fetch=FakeFetch(forged)) == procure.WRONG_DIGEST
+    assert _files(procure.model_dir(tmp_path, "silero")) == []
+
+    # Positive control, same setup: an entry whose digest is the one of these
+    # bytes takes them. Only the expected digest differs.
+    matching = dataclasses.replace(real, sha256=hashlib.sha256(forged).hexdigest())
+    monkeypatch.setitem(catalog.MODELS, "silero", (matching,))
+
+    assert await procure.procure(tmp_path, "silero", fetch=FakeFetch(forged)) == procure.PROCURED
+    assert (procure.model_dir(tmp_path, "silero") / real.name).read_bytes() == forged
 
 
 async def test_a_download_with_the_wrong_digest_leaves_nothing(tmp_path: Path, small_model: catalog.ModelFile) -> None:
