@@ -22,6 +22,7 @@ this file passes the dash and emoji gate itself.
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -48,7 +49,13 @@ OPEN_QUOTE, CLOSE_QUOTE = chr(0xAB), chr(0xBB)
 FRENCH_SPACING = re.compile(f" [:;?!{CLOSE_QUOTE}]|{OPEN_QUOTE} ")
 # t('…') in PHP ($this->l10n->t('…'), $l->t('…')) and t('audio_video_search', '…') in JS.
 PHP_T_CALL = re.compile(r"->t\(\s*'((?:[^'\\]|\\.)*)'")
+# $l->n('…', '…', $count) in PHP; the catalogue key is _singular_::_plural_.
+PHP_N_CALL = re.compile(r"->n\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*'((?:[^'\\]|\\.)*)'")
 JS_T_CALL = re.compile(r"\bt\(\s*'audio_video_search'\s*,\s*'((?:[^'\\]|\\.)*)'")
+
+
+Table = Mapping[str, str | list[str]]
+Catalogues = Mapping[str, Table]
 
 
 def missing_doc_languages(names: list[str]) -> list[str]:
@@ -75,33 +82,67 @@ def store_languages_missing(source: str) -> list[str]:
     return findings
 
 
+def forms(value: str | list[str]) -> list[str]:
+    """The texts of one catalogue value: the value itself, or each form of a plural key."""
+    return [value] if isinstance(value, str) else list(value)
+
+
+def plural_key(singular: str, plural: str) -> str:
+    """The catalogue key Nextcloud looks up for $l->n(singular, plural, count)."""
+    return f"_{singular}_::_{plural}_"
+
+
 def catalogue_findings(
-    catalogues: dict[str, dict[str, str]], languages: tuple[str, ...] = LANGUAGES, prefix: str = "l10n"
+    catalogues: Catalogues, languages: tuple[str, ...] = LANGUAGES, prefix: str = "l10n"
 ) -> list[str]:
-    """Missing languages, keys that exist in one catalogue only, and empty values."""
+    """Missing languages, keys that exist in one catalogue only, and empty values (also one empty plural form)."""
     findings = [f"{prefix}/{language}.json is missing" for language in languages if language not in catalogues]
     every_key = set().union(*(set(table) for table in catalogues.values())) if catalogues else set()
     for language, table in sorted(catalogues.items()):
         findings += [f"{prefix}/{language}.json lacks {key!r}" for key in sorted(every_key - set(table))]
         findings += [
-            f"{prefix}/{language}.json has an empty value for {key!r}" for key, value in table.items() if not value
+            f"{prefix}/{language}.json has an empty value for {key!r}"
+            for key, value in table.items()
+            if not value or not all(forms(value))
         ]
     return findings
 
 
-def german_twin_findings(catalogues: dict[str, dict[str, str]]) -> list[str]:
+def plural_findings(table: Table, plural_form: str, language: str) -> list[str]:
+    """A plural key needs one form per plural of the language, each with %n; any other key one text.
+
+    The number of forms comes out of the nplurals of the catalogue's own
+    pluralForm, so French (three forms in Nextcloud's rule) cannot get away
+    with two.
+    """
+    count = int(plural_form.split("nplurals=", 1)[1].split(";", 1)[0])
+    findings = []
+    for key, value in table.items():
+        is_plural = key.startswith("_") and key.endswith("_") and "_::_" in key
+        if not is_plural:
+            if not isinstance(value, str):
+                findings.append(f"{language}: {key!r} is no plural key but holds forms")
+            continue
+        if isinstance(value, str) or len(value) != count:
+            findings.append(f"{language}: {key!r} needs {count} forms")
+            continue
+        findings += [f"{language}: a form of {key!r} lacks %n" for form in value if "%n" not in form]
+    return findings
+
+
+def german_twin_findings(catalogues: Catalogues) -> list[str]:
     """de and de_DE are one impersonal text; a difference is a finding."""
     if catalogues.get("de") == catalogues.get("de_DE"):
         return []
     return ["de.json and de_DE.json differ"]
 
 
-def character_findings(catalogues: dict[str, dict[str, str]]) -> list[str]:
-    """An en or em dash or an emoji in any key or value of any language."""
+def character_findings(catalogues: Catalogues) -> list[str]:
+    """An en or em dash or an emoji in any key or value (every plural form) of any language."""
     findings = []
     for language, table in sorted(catalogues.items()):
         for key, value in table.items():
-            for text in (key, value):
+            for text in (key, *forms(value)):
                 if any(dash in text for dash in DASHES):
                     findings.append(f"{language}: dash in {text!r}")
                 if EMOJI.search(text):
@@ -109,22 +150,24 @@ def character_findings(catalogues: dict[str, dict[str, str]]) -> list[str]:
     return findings
 
 
-def french_spacing_findings(table: dict[str, str]) -> list[str]:
+def french_spacing_findings(table: Table) -> list[str]:
     """A plain space before : ; ? ! or » or after « in a French value; placeholders and URLs aside."""
     findings = []
     for key, value in table.items():
-        bare = PLACEHOLDER.sub("", URL.sub("", value))
-        if FRENCH_SPACING.search(bare):
-            findings.append(f"fr: plain space instead of U+00A0 in {key!r}")
+        for form in forms(value):
+            bare = PLACEHOLDER.sub("", URL.sub("", form))
+            if FRENCH_SPACING.search(bare):
+                findings.append(f"fr: plain space instead of U+00A0 in {key!r}")
     return findings
 
 
-def placeholder_findings(catalogues: dict[str, dict[str, str]]) -> list[str]:
-    """Every value carries exactly the placeholders of its English key."""
+def placeholder_findings(catalogues: Catalogues) -> list[str]:
+    """Every value carries exactly the placeholders of its English key (%n of a plural key: plural_findings)."""
     findings = []
     for language, table in sorted(catalogues.items()):
         for key, value in table.items():
-            if sorted(PLACEHOLDER.findall(key)) != sorted(PLACEHOLDER.findall(value)):
+            wanted = sorted(PLACEHOLDER.findall(key))
+            if any(sorted(PLACEHOLDER.findall(form)) != wanted for form in forms(value)):
                 findings.append(f"{language}: placeholders differ in {key!r}")
     return findings
 
@@ -145,12 +188,13 @@ def js_twin_findings(json_text: str, js_text: str, app: str) -> list[str]:
 
 
 def source_strings(text: str) -> list[str]:
-    """Every literal handed to t() in a PHP, template or JS source."""
+    """Every literal handed to t() in a PHP, template or JS source, and the key of every PHP n() call."""
     found = PHP_T_CALL.findall(text) + JS_T_CALL.findall(text)
+    found += [plural_key(singular, plural) for singular, plural in PHP_N_CALL.findall(text)]
     return [literal.replace("\\'", "'") for literal in found]
 
 
-def load_catalogues(root: Path = L10N) -> dict[str, dict[str, str]]:
+def load_catalogues(root: Path = L10N) -> dict[str, dict[str, str | list[str]]]:
     """Every <root>/<lang>.json as language -> translations."""
     return {
         path.stem: json.loads(path.read_text(encoding="utf-8"))["translations"] for path in sorted(root.glob("*.json"))
@@ -210,7 +254,18 @@ def test_french_uses_no_break_spaces() -> None:
         assert french_spacing_findings(table) == [], root
     # The positive control: the French catalogue really carries U+00A0, so the
     # gate is not green only because no colon occurs.
-    assert NBSP in "".join(load_catalogues(PHP_L10N)["fr"].values())
+    assert NBSP in "".join(form for value in load_catalogues(PHP_L10N)["fr"].values() for form in forms(value))
+
+
+def test_every_plural_key_has_one_form_per_plural_of_its_language() -> None:
+    plural_keys = 0
+    for root, languages in both_roots():
+        for language in languages:
+            source = json.loads((root / f"{language}.json").read_text(encoding="utf-8"))
+            assert plural_findings(source["translations"], source["pluralForm"], language) == [], f"{root}/{language}"
+            plural_keys += sum(1 for value in source["translations"].values() if isinstance(value, list))
+    # The positive control: the PHP catalogues carry the plural of the too long hint, so the gate judges something.
+    assert plural_keys >= len(PHP_LANGUAGES)
 
 
 def test_every_value_keeps_the_placeholders_of_its_key() -> None:
@@ -260,7 +315,32 @@ def test_the_php_catalogue_holds_the_texts_of_the_ui_spec() -> None:
     assert catalogues["fr"]["Test result"] == "Résultat de test"
     assert catalogues["fr"]["Playback: %s"] == f"Lecture{NBSP}: %s"
     assert catalogues["en"]["Checking" + chr(0x2026)] == "Checking" + chr(0x2026)
-    assert all(key == value for key, value in catalogues["en"].items())
+    # English is the key; a plural key holds its own singular and plural.
+    for key, value in catalogues["en"].items():
+        if isinstance(value, list):
+            assert plural_key(*value) == key
+        else:
+            assert key == value
+    # Phase 3 (03-UI-SPEC.md, T2, T9, T12): spot checks of the playback page hints.
+    assert catalogues["de"]["Preliminary transcript. It may contain errors."] == (
+        "Vorläufiges Transkript. Es kann Fehler enthalten."
+    )
+    too_long = plural_key(
+        "This file is longer than %n hour and was therefore not transcribed.",
+        "This file is longer than %n hours and was therefore not transcribed.",
+    )
+    assert catalogues["de"][too_long] == [
+        "Diese Datei ist länger als %n Stunde und wurde deshalb nicht transkribiert.",
+        "Diese Datei ist länger als %n Stunden und wurde deshalb nicht transkribiert.",
+    ]
+    assert catalogues["fr"][too_long] == [
+        "Ce fichier dure plus de %n heure et n'a donc pas été transcrit.",
+        "Ce fichier dure plus de %n heures et n'a donc pas été transcrit.",
+        "Ce fichier dure plus de %n heures et n'a donc pas été transcrit.",
+    ]
+    assert catalogues["fr"]["The administrators of this instance can raise the limit."] == (
+        "L'administration de cette instance peut relever cette limite."
+    )
 
 
 # -- self tests: every rule has to be able to fire ------------------------------
@@ -350,3 +430,35 @@ def test_translated_literals_are_found_in_php_and_js() -> None:
 
     assert source_strings(php) == ["Audio and video", "It's here"]
     assert source_strings(js) == ["Saved"]
+
+
+def test_the_key_of_a_php_plural_call_is_found() -> None:
+    php = "$l->n('%n hour', '%n hours', $hours) . ' ' . $l->t('More.')"
+
+    assert source_strings(php) == ["More.", "_%n hour_::_%n hours_"]
+
+
+def test_a_wrong_plural_is_reported() -> None:
+    two = "nplurals=2; plural=(n != 1);"
+    three = "nplurals=3; plural=(n == 0 || n == 1) ? 0 : n != 0 && n % 1000000 == 0 ? 1 : 2;"
+    key = "_%n hour_::_%n hours_"
+
+    assert plural_findings({key: ["%n Stunde", "%n Stunden"], "A": "Ä"}, two, "de") == []
+    assert plural_findings({key: ["%n heure", "%n heures", "%n heures"]}, three, "fr") == []
+    assert plural_findings({key: ["%n heure", "%n heures"]}, three, "fr") == [f"fr: {key!r} needs 3 forms"]
+    assert plural_findings({key: "%n Stunden"}, two, "de") == [f"de: {key!r} needs 2 forms"]
+    assert plural_findings({key: ["eine Stunde", "%n Stunden"]}, two, "de") == [f"de: a form of {key!r} lacks %n"]
+    assert plural_findings({"A": ["x", "y"]}, two, "de") == ["de: 'A' is no plural key but holds forms"]
+
+
+def test_the_rules_look_into_every_plural_form() -> None:
+    key = "_%n hour_::_%n hours_"
+
+    assert catalogue_findings({"de": {key: ["a", ""]}, "en": {key: ["a", "b"]}, "fr": {key: ["a", "b"]}}) == [
+        f"l10n/de.json has an empty value for {key!r}"
+    ]
+    assert character_findings({"de": {key: ["a", f"b{DASHES[0]}c"]}}) == [f"de: dash in {'b' + DASHES[0] + 'c'!r}"]
+    assert french_spacing_findings({key: [f"a{NBSP}?", "b ?"]}) == [f"fr: plain space instead of U+00A0 in {key!r}"]
+    assert placeholder_findings({"de": {key: ["%n Stunde", "%n Stunden %s"]}}) == [
+        f"de: placeholders differ in {key!r}"
+    ]

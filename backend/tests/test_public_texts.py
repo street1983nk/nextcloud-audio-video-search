@@ -106,6 +106,11 @@ def transcription_findings(name: str, source: str) -> list[str]:
     return [f"{name}: {match.group(0)!r} instead of a real umlaut" for match in TRANSCRIBED_PATTERN.finditer(source)]
 
 
+def catalogue_text(translations: dict[str, str | list[str]]) -> str:
+    """Every value of a catalogue as one text; a plural key holds a list of forms."""
+    return "\n".join(form for value in translations.values() for form in ([value] if isinstance(value, str) else value))
+
+
 def german_texts() -> list[tuple[str, str]]:
     """(name, text) of every German public text."""
     texts = [
@@ -119,9 +124,9 @@ def german_texts() -> list[tuple[str, str]]:
         if not path.name.endswith((".en.md", ".fr.md"))
     ]
     catalogue = json.loads((BACKEND_ROOT / "l10n" / "de.json").read_text(encoding="utf-8"))
-    texts.append(("backend/l10n/de.json", "\n".join(catalogue["translations"].values())))
+    texts.append(("backend/l10n/de.json", catalogue_text(catalogue["translations"])))
     catalogue = json.loads((REPO_ROOT / "php" / "l10n" / "de.json").read_text(encoding="utf-8"))
-    texts.append(("php/l10n/de.json", "\n".join(catalogue["translations"].values())))
+    texts.append(("php/l10n/de.json", catalogue_text(catalogue["translations"])))
     info = ElementTree.fromstring((BACKEND_ROOT / "appinfo" / "info.xml").read_text(encoding="utf-8"))  # noqa: S314
     texts += [(f"info.xml {element.tag} de", element.text or "") for element in info if element.get("lang") == "de"]
     return texts
@@ -168,6 +173,15 @@ def test_the_german_texts_really_contain_umlauts() -> None:
 )
 def test_the_umlaut_rule_fires_on_transcriptions_only(sample: str, count: int) -> None:
     assert len(transcription_findings("sample", sample)) == count
+
+
+def test_the_plural_forms_of_a_catalogue_are_read_too() -> None:
+    # A transcription hidden in the second form of a plural key must reach the umlaut rule.
+    translations: dict[str, str | list[str]] = {"A": "Größe", "_a_::_b_": ["eine Stunde", "f" + "uer zwei Stunden"]}
+    text = catalogue_text(translations)
+
+    assert text == "Größe\neine Stunde\nf" + "uer zwei Stunden"
+    assert len(transcription_findings("sample", text)) == 1
 
 
 def test_the_dash_rule_fires() -> None:

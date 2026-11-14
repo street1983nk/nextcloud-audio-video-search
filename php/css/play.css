@@ -227,6 +227,14 @@
 	overflow-wrap: anywhere;
 }
 
+.avs-excerpt__note {
+	margin: calc(var(--default-grid-baseline) * 2) 0 0;
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
 /* -- touch ------------------------------------------------------------------------ */
 
 @media (pointer: coarse) {

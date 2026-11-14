@@ -190,6 +190,64 @@ def test_the_playback_page_keeps_its_contract() -> None:
     assert "pointer: coarse" in style
 
 
+EXCERPT_NOTE_RULE = (
+    "margin: calc(var(--default-grid-baseline) * 2) 0 0;",
+    "color: var(--color-text-maxcontrast);",
+    "font-size: var(--font-size-small);",
+    "line-height: var(--default-line-height);",
+    "overflow-wrap: anywhere;",
+)
+
+
+def css_rule(style: str, selector: str) -> list[str] | None:
+    """The declarations of the one rule whose whole selector list is selector, or None."""
+    blocks = re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+    found = [body for head, body in blocks if [part.strip() for part in head.split(",")] == [selector]]
+    if len(found) != 1:
+        return None
+    return [line.strip() for line in found[0].split("\n") if line.strip()]
+
+
+def selectors_with(style: str, declaration: str) -> list[str]:
+    """Every selector whose rule carries declaration."""
+    blocks = re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+    return [part.strip() for head, body in blocks if declaration in body for part in head.split(",")]
+
+
+def test_the_excerpt_note_follows_the_ui_spec() -> None:
+    template = (TEMPLATES / "play.php").read_text(encoding="utf-8")
+    style = (STYLES / "play.css").read_text(encoding="utf-8")
+    # 03-UI-SPEC.md, surface 2: these five declarations and nothing else.
+    assert css_rule(style, ".avs-excerpt__note") == list(EXCERPT_NOTE_RULE)
+    # The longest sentences wrap at 375 px: both the hint and the note may break anywhere.
+    wrapping = selectors_with(style, "overflow-wrap: anywhere;")
+    assert ".avs-excerpt__hint" in wrapping
+    assert ".avs-excerpt__note" in wrapping
+    # The note is read after the excerpt: both of its paragraphs come after the blockquote.
+    quote = template.index('<blockquote class="avs-excerpt__text">')
+    notes = [match.start() for match in re.finditer(r'<p class="avs-excerpt__note">', template)]
+    assert len(notes) == 2
+    assert all(note > quote for note in notes)
+    # The hints print only fixed texts: no raw state or reason reaches the page.
+    assert "p($excerptState)" not in template
+    assert "p($excerptHints[$excerptState])" in template
+    # The branch for no transcript (A5) keeps its markup and text.
+    assert (
+        "\t\t\t<?php } elseif ($excerptState === 'none') { ?>\n"
+        "\t\t\t\t<p class=\"avs-excerpt__hint\"><?php p($l->t('There is no transcript for this file yet.')); ?></p>\n"
+    ) in template
+
+
+def test_self_css_rule_reads_one_rule_exactly() -> None:
+    style = ".a {\n\tcolor: x;\n}\n\n.b,\n.a {\n\tmargin: 0;\n}\n.c { overflow-wrap: anywhere; }\n"
+    assert css_rule(style, ".a") == ["color: x;"]
+    assert css_rule(style, ".z") is None
+    assert css_rule(style + ".a { top: 0; }", ".a") is None
+    assert css_rule(".a {\n\tcolor: x;\n\tbox-shadow: none;\n}", ".a") != ["color: x;"]
+    assert selectors_with(style, "overflow-wrap: anywhere;") == [".c"]
+    assert selectors_with(style, "margin: 0;") == [".b", ".a"]
+
+
 def test_the_format_banner_offers_a_download_only_with_the_button() -> None:
     template = (TEMPLATES / "play.php").read_text(encoding="utf-8")
     texts = format_banner_texts(template)

@@ -44,6 +44,8 @@ $startClock = is_string($_['startClock'] ?? null) ? $_['startClock'] : '0:00';
 $startIso = is_string($_['startIso'] ?? null) ? $_['startIso'] : 'PT0S';
 $excerptState = is_string($_['excerptState'] ?? null) ? $_['excerptState'] : 'skipped';
 $excerpt = is_string($_['excerpt'] ?? null) ? $_['excerpt'] : '';
+$excerptNote = is_string($_['excerptNote'] ?? null) ? $_['excerptNote'] : '';
+$excerptHours = is_int($_['excerptHours'] ?? null) ? $_['excerptHours'] : 0;
 $filesUrl = is_string($_['filesUrl'] ?? null) ? $_['filesUrl'] : '';
 $downloadAllowed = ($_['downloadAllowed'] ?? false) === true;
 
@@ -130,6 +132,30 @@ $banners = [
 		'client' => true,
 	],
 ];
+
+// The sentence for each state of the excerpt that names why there is no text
+// (UI-SPEC, surface 2, A4 and A6 to A13). Only these fixed keys can show up;
+// the controller maps every reason code onto one of its own state names, so
+// no value out of the backend reaches the page. 'none' and 'unavailable' keep
+// their own branches below, unchanged.
+$excerptHints = [
+	'pending_here' => $l->t('This point has not been transcribed yet. The file is being transcribed right now.'),
+	'no_speech' => $l->t('No speech was found in this file, for example because it only contains music, silence or noise.'),
+	'skipped_damaged' => $l->t('This file was not transcribed because it is damaged or incomplete. If it is replaced, transcription starts again automatically.'),
+	'skipped_protected' => $l->t('This file was not transcribed because it is protected, for example by copy protection. An unprotected copy is transcribed automatically.'),
+	'unsupported_language' => $l->t('The language of this recording is not supported. Transcription covers German, English and French.'),
+	'disk_full' => $l->t('This file has not been transcribed yet because there is currently not enough free storage space on the server. Transcription will be retried automatically later.'),
+	'skipped_other' => $l->t('This file was not transcribed. The administrators of this instance can see why.'),
+];
+// Too long names the limit of the instance in whole hours, singular or plural,
+// and who can raise it, in one paragraph. Without a limit there is no number
+// to name, so the page falls back to the sentence for any other reason.
+if ($excerptHours >= 1) {
+	$excerptHints['too_long'] = $l->n('This file is longer than %n hour and was therefore not transcribed.', 'This file is longer than %n hours and was therefore not transcribed.', $excerptHours)
+		. ' ' . $l->t('The administrators of this instance can raise the limit.');
+} else {
+	$excerptHints['too_long'] = $excerptHints['skipped_other'];
+}
 ?>
 <div id="app-content" class="avs-play">
 <div class="avs-play__column">
@@ -182,8 +208,15 @@ $banners = [
 			<p id="avs-excerpt-label" class="avs-excerpt__label"><?php p($l->t('Excerpt at this point')); ?></p>
 			<?php if ($excerptState === 'ok' && $excerpt !== '') { ?>
 				<blockquote class="avs-excerpt__text"><?php p($excerpt); ?></blockquote>
+				<?php if ($excerptNote === 'partial') { ?>
+					<p class="avs-excerpt__note"><?php p($l->t('Preliminary transcript. The file is still being transcribed, later passages will follow.')); ?></p>
+				<?php } elseif ($excerptNote === 'preview') { ?>
+					<p class="avs-excerpt__note"><?php p($l->t('Preliminary transcript. It may contain errors.')); ?></p>
+				<?php } ?>
 			<?php } elseif ($excerptState === 'none') { ?>
 				<p class="avs-excerpt__hint"><?php p($l->t('There is no transcript for this file yet.')); ?></p>
+			<?php } elseif (isset($excerptHints[$excerptState])) { ?>
+				<p class="avs-excerpt__hint"><?php p($excerptHints[$excerptState]); ?></p>
 			<?php } else { ?>
 				<p class="avs-excerpt__hint"><?php p($l->t('The excerpt cannot be loaded right now. Playback works regardless.')); ?></p>
 			<?php } ?>
