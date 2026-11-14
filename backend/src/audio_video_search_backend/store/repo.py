@@ -93,13 +93,12 @@ PREVIEW_REASONS: Final = frozenset(
         "engine_failed",
     }
 )
-# Which call may write which code: a skip by the worker, a verdict of the
-# file after its last piece, a wait for room on the disk.
-_SKIP_REASONS: Final = frozenset(
-    {"too_long", "no_audio", "damaged", "protected", "format_unsupported", "engine_failed"}
-)
-_TEXTLESS_VERDICTS: Final = frozenset({"no_speech", "unsupported_language"})
-_DEFER_REASONS: Final = frozenset({"disk_full"})
+# Which call may write which code, each a part of PREVIEW_REASONS: a verdict
+# of the file after its last piece, a wait for room on the disk, and every
+# other code as a skip by the worker.
+_TEXTLESS_VERDICTS: Final = frozenset({"no_speech", "unsupported_language"}) & PREVIEW_REASONS
+_DEFER_REASONS: Final = frozenset({"disk_full"}) & PREVIEW_REASONS
+_SKIP_REASONS: Final = PREVIEW_REASONS - _TEXTLESS_VERDICTS - _DEFER_REASONS
 _TRANSCRIPT_VERDICT: Final = "transcript"
 # The admin limit of the duration (D-03-08, D-03-09), kept in meta.
 MAX_DURATION_KEY: Final = "max_duration_hours"
