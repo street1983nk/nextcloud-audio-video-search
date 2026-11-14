@@ -84,7 +84,7 @@ class Scene:
 
     def found(self) -> list[int]:
         """The file ids POST /search hands to PHP for the word of the transcript."""
-        hits = search_api._search(Services(store=self.store, index=self.index), "Haushalt", 50)
+        hits, _more = search_api._search(Services(store=self.store, index=self.index), "Haushalt", 0, 50)
         return sorted(cast("int", hit["fileId"]) for hit in hits)
 
     async def single(self, prefilter: str | None = PREFILTER) -> int:
