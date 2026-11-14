@@ -1,19 +1,23 @@
 """Phase 3, D-03-23: die Fenster des zweiten VAD-Durchgangs aus verdict23.py auswerten und die Schwelle bestimmen.
 
 python -I eval23.py [--check] <result_dir> [<result_dir> ...]
-Läuft mit der Umgebung des Backends (``uv run --project backend``). Die neue Regel prüft dieses
-Skript selbst nach (eigene Formel, nicht aus engine/catch.py): ein Fenster des zweiten Durchgangs
-bleibt, wenn die alte Regel es behielt, seine Textsprache DE, EN oder FR mit p >= 0,9 ist und
-seine mittlere Wortkonfidenz mindestens T erreicht. Aus catch kommen nur file_verdict und die
-Namen der Urteile; nur mit ``--check`` zusätzlich window_verdict und SECOND_PASS_CONF für die
-Gegenprobe (0 Abweichungen erwartet).
+Läuft mit der Umgebung des Backends (``uv run --project backend``). Aus catch kommen nur
+file_verdict und die Namen der Urteile; nur mit ``--check`` zusätzlich window_verdict und
+SECOND_PASS_CONF für die Gegenprobe (0 Abweichungen erwartet).
 
-P: Dateien der Gruppe instance, deren zweiter Durchgang Wörter behielt (Pflicht: die Kurzmemos
-short1w bis short4w). N: Fenster des zweiten Durchgangs in nonspeech, foreign und unsupported,
-die die alte Regel behielt. L = max(0,5, größtes conf_mean der N-Fenster mit sicherer
-Instanzsprache), U = kleinstes conf_mean der besten Fenster der P-Dateien. Eindeutig, wenn keine
-P-Datei ohne sichere Sprache ist und U - L >= 0,02; dann T = Mitte von L und U, auf zwei Stellen
-abgerundet. Ausgabe als Markdown auf stdout. Kein Text verlässt den Rechner.
+Planregel (03-13b, Messung): P sind die Dateien der Gruppe instance, deren zweiter Durchgang
+Wörter behielt (Pflicht: die Kurzmemos short1w bis short4w), N die Fenster des zweiten
+Durchgangs in nonspeech, foreign und unsupported, die die alte Regel behielt. Mit Sprachbedingung
+(Textsprache DE, EN oder FR mit lid_p >= 0.9): L = max(0,5, größtes conf_mean der N-Fenster mit
+sicherer Instanzsprache), U = kleinstes conf_mean der besten Fenster der P-Dateien; eindeutig, wenn
+keine P-Datei ohne sichere Sprache ist und U - L >= 0,02. Am Korpus war das nicht eindeutig: zwei
+französische 2-Wort-Memos haben keine sichere Sprache.
+
+Owner-Entscheid D-03-23, Option A (14.11.2026): ein Fenster des zweiten Durchgangs bleibt, wenn
+die alte Regel es behielt und seine mittlere Wortkonfidenz mindestens OWNER_T = 0,68 erreicht,
+ohne Sprachbedingung. Diese Formel prüft das Skript selbst nach (eigener Code, nicht aus catch);
+die Auswertung mit T und ``--check`` benutzen sie. Ausgabe als Markdown auf stdout. Kein Text
+verlässt den Rechner.
 """
 
 import importlib
@@ -41,6 +45,8 @@ MEMOS = ("short1w", "short2w", "short3w", "short4w")
 SURE_LANGUAGES = {"de", "en", "fr"}
 FLOOR_CONF = Decimal("0.5")  # CONF_INSTANCE, the old lower border
 MIN_GAP = Decimal("0.02")
+# Owner-Entscheid D-03-23 Option A: the middle of JA 0,658 and fr_11 0,7034, floored to two places.
+OWNER_T = Decimal("0.68")
 JA = "fleurs_ja_jp_00"
 
 
@@ -62,7 +68,8 @@ def sure(w: dict[str, Any]) -> bool:
 
 
 def stays(w: dict[str, Any], t: Decimal) -> bool:
-    return sure(w) and Decimal(str(w["conf_mean"])) >= t
+    """Option A: the old rule kept it and its mean word confidence reaches t (no language condition)."""
+    return w["verdict"] == KEEP and Decimal(str(w["conf_mean"])) >= t
 
 
 def expected_verdict(w: dict[str, Any], t: Decimal) -> str:
@@ -154,7 +161,14 @@ def main(argv: list[str]) -> int:
     found = [Decimal(str(w["conf_mean"])) for w in best.values() if w is not None]
     high = min(found) if found else None
     clear = not unsure and high is not None and high - low >= MIN_GAP
-    t = threshold(low, high) if clear and high is not None else None
+    plan_t = threshold(low, high) if clear and high is not None else None
+    # Option A: confidence only; the evaluation with T uses the owner value.
+    neg_conf = max((Decimal(str(w["conf_mean"])) for _, w in negatives), default=None)
+    pos_conf = {
+        r["file"]: max(Decimal(str(w["conf_mean"])) for w in r["second_windows"] if w["verdict"] == KEEP)
+        for r in positives
+    }
+    t: Decimal | None = OWNER_T
 
     print("## Gruppen\n")
     print("| Gruppe | Dateien | mit zweitem Durchgang | Fenster | davon alt behalten | lid/p (alt behalten) |", end="")
@@ -208,7 +222,12 @@ def main(argv: list[str]) -> int:
     print(f"- L = {low} (max aus 0,5 und {len(sure_negatives)} N-Fenstern mit sicherer Instanzsprache)")
     print(f"- U = {high if high is not None else '-'} (kleinstes bestes conf_mean von {len(found)} P-Dateien)")
     print(f"- P-Dateien ohne sichere Sprache: {', '.join(unsure) if unsure else 'keine'}")
-    print(f"- eindeutig: {'ja' if clear else 'nein'}; T = {t if t is not None else '-'}")
+    print(f"- Planregel eindeutig: {'ja' if clear else 'nein'}; T = {plan_t if plan_t is not None else '-'}")
+    print("\n## Option A (Owner-Entscheid): nur Konfidenz\n")
+    print(f"- größtes conf_mean der N-Fenster: {neg_conf if neg_conf is not None else '-'}")
+    for name, value in sorted(pos_conf.items()):
+        print(f"- P {name}: bestes conf_mean {value} -> {'bleibt' if t is not None and value >= t else 'fällt weg'}")
+    print(f"- T = {t}")
 
     if t is not None:
         print("\n## Mit T\n")
