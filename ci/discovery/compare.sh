@@ -11,6 +11,7 @@
 #        compare.sh appear <fileId> <since> <limit>
 #                                      wait until the file is in the work stock,
 #                                      note the seconds since <since>
+#        compare.sh exclusions         run SchedulerJob and its clearing jobs now
 #        compare.sh <phase>            compare after the operation
 #
 # Every check prints "PASS <phase>:<check>" or "FAIL <phase>:<check>
@@ -297,6 +298,39 @@ cmd_wait() {
 	done
 }
 
+# An exclusion set after the first crawl becomes work only in SchedulerJob,
+# every 300 s (plan 02-18): exclude_storage rows for a user or a storage, an
+# ExclusionClearJob per mount for a folder. Until then wait sees nothing to
+# wait for (run 43561950802: the three exclude phases were judged 0 s after the
+# rule, no row was ever created). So the phase runs the job now, then every
+# clearing job until none is left; the rows they queue are what wait waits for.
+SCHEDULER_JOB='OCA\AudioVideoSearch\BackgroundJobs\SchedulerJob'
+CLEAR_JOB='OCA\AudioVideoSearch\BackgroundJobs\ExclusionClearJob'
+
+# job_ids CLASS: the ids of the background jobs of one class.
+job_ids() {
+	occ background-job:list --class="$1" --output=json | jq -r '.[].id'
+}
+
+cmd_exclusions() {
+	local id ids start
+	id=$(job_ids "${SCHEDULER_JOB}" | head -n 1) || fail "the job list cannot be read"
+	[ -n "${id}" ] || fail "SchedulerJob is not in the job list"
+	occ background-job:execute --force-execute "${id}" > /dev/null || fail "SchedulerJob could not be run"
+	echo "SchedulerJob ran"
+	start=$(date +%s)
+	while true; do
+		ids=$(job_ids "${CLEAR_JOB}") || fail "the job list cannot be read"
+		[ -n "${ids}" ] || break
+		[ "$(($(date +%s) - start))" -lt "${WAIT_LIMIT}" ] || fail "clearing jobs left after ${WAIT_LIMIT} s"
+		for id in ${ids}; do
+			# cron may have run and removed it in the meantime.
+			occ background-job:execute --force-execute "${id}" > /dev/null || true
+		done
+	done
+	echo "clearing jobs done after $(($(date +%s) - start)) s"
+}
+
 # -- one phase ----------------------------------------------------------------------
 
 search_has() {
@@ -528,8 +562,9 @@ case "${1:-}" in
 	prepare) cmd_prepare "${2:?phase}" ;;
 	mark) cmd_mark "${2:?phase}" ;;
 	appear) cmd_appear "${2:-}" "${3:-}" "${4:-}" ;;
+	exclusions) cmd_exclusions ;;
 	*)
-		is_phase "${1:-}" || fail "usage: compare.sh wait|--self-test|prepare <phase>|mark <phase>|appear <id> <since> <limit>|<phase>"
+		is_phase "${1:-}" || fail "usage: compare.sh wait|--self-test|prepare <phase>|mark <phase>|appear <id> <since> <limit>|exclusions|<phase>"
 		cmd_phase "$1"
 		;;
 esac

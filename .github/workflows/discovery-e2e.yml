@@ -354,9 +354,9 @@ jobs:
               move-cross) bash "${d}/topology.sh" move_home_to_team ;;
               trash) bash "${d}/topology.sh" trash_file ;;
               restore) bash "${d}/topology.sh" restore_file ;;
-              exclude-user-after) bash "${d}/topology.sh" exclude_user_after ;;
-              exclude-storage-after) bash "${d}/topology.sh" exclude_storage_after ;;
-              exclude-after) bash "${d}/topology.sh" exclude_after ;;
+              exclude-user-after) bash "${d}/topology.sh" exclude_user_after && bash "${d}/compare.sh" exclusions ;;
+              exclude-storage-after) bash "${d}/topology.sh" exclude_storage_after && bash "${d}/compare.sh" exclusions ;;
+              exclude-after) bash "${d}/topology.sh" exclude_after && bash "${d}/compare.sh" exclusions ;;
               reprove) bash "${d}/topology.sh" revoke_cem && ./occ audio_video_search:reconcile --reprove ;;
               vanish) bash "${d}/topology.sh" vanish_cem && ./occ audio_video_search:reconcile ;;
               delete-user) bash "${d}/topology.sh" delete_dan && ./occ audio_video_search:reconcile ;;
