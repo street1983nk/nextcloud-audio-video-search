@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Discovery acceptance run 43561950802 (head 77359a8): 12/20; exclude-user-after, exclude-storage-after, exclude-after, reprove, vanish, delete-user, reattach, foreign-change red"
 created: 2026-11-14
 updated: 2026-11-14
@@ -10,7 +10,7 @@ updated: 2026-11-14
 hypothesis: confirmed, exclusions set after the initial crawl were never applied before compare (harness)
 test: push 10 discovery run
 expecting: "SchedulerJob ran" and "clearing jobs done" in each exclude phase, intake with removed > 0, 20/20
-next_action: wait for the owner to push 10 and read the discovery run; resolve this session only after it is green
+next_action: none, resolved by push 10 (run 43565101302, 20/20 green)
 
 owner_follow_up_14_11: search filter at query time (4b52a88 RED, ac6b053 GREEN, b858026 style): Provider::search and PageController::excerpt reload the rules first, Provider::entries asks isExcludedFile per hit; workflow logs on info. PHPUnit container avs-phpcheck-20: RED 688 tests 6 failures (exactly the new ones), HEAD 688 OK, php -l 68 files 0 fails, positive control exit 255.
 
@@ -58,3 +58,4 @@ fix: compare.sh exclusions (force-run SchedulerJob, then every ExclusionClearJob
 verification: gate RED 7b0d4f8 (22 failed), GREEN 3ee83c3 (52 passed); fake occ: normal run executes 7, 11, 12, successor 13; no SchedulerJob -> exit 1; stuck clearing job -> exit 1 after WAIT_LIMIT. ruff, format (76), pyright 0, vulture 0, pytest 1012 passed. CI proof waits for push 10.
 files_changed: [backend/tests/test_discovery_workflow.py, ci/discovery/compare.sh, .github/workflows/discovery-e2e.yml]
 open_for_owner: Search/Provider.php filters only an excluded searching user; hits of a storage or folder excluded after the fact stay findable until SchedulerJob applies it (<= 300 s plus cron delay in a real install).
+ci_proof: push 10, head 6ddfd34, discovery acceptance run 43565101302 green with 20/20 phases; session resolved 2026-11-14.
