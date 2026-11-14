@@ -19,7 +19,7 @@ Nicht in dieser Phase: besseres Transkript (turbo/large-v3, ROVER, Profile), Spr
 - **D-03-01:** Eine Ergebniszeile je Stelle (wie der bestehende Provider): jede Zeile mit eigener Zeitmarke, eigenem Ausschnitt und eigenem Sprung-Link. Keine Zusammenfassung je Datei.
 - **D-03-02:** Höchstens 3 Stellen je Datei pro Ergebnisseite, danach kommt die nächste Datei; weitere Stellen über die Paginierung der Unified Search ("Mehr laden"), ohne Dubletten und ohne Lücken über Seiten hinweg.
 - **D-03-03:** Kennzeichen "vorläufig" als Wort im Untertitel, gleiche Form wie das bestehende "Test result": `1:23 · Vorläufig · Ausschnitt` (DE/EN/FR, l10n). Das Dateityp-Icon bleibt.
-- **D-03-04:** Die Abspielseite zeigt bei einem Vorschau-Transkript einen kurzen Hinweis (sinngemäß "Vorläufiges Transkript, wird automatisch verbessert"), dreisprachig. Text vor dem Bau dem Owner zeigen.
+- **D-03-04:** Die Abspielseite zeigt bei einem Vorschau-Transkript einen kurzen Hinweis (sinngemäß "Vorläufiges Transkript, wird automatisch verbessert"), dreisprachig. Nachtrag Owner 14.11.2026 (UI-Vertrag): T2 lautet "Vorläufiges Transkript. Es kann Fehler enthalten." ohne Verbesserungsversprechen; maßgeblich sind die freigegebenen Texte T1 bis T11 in 03-UI-SPEC.md.
 
 ### Reihenfolge der Arbeit
 - **D-03-05:** Neue und geänderte Dateien (Ereignisweg) zuerst, danach der Altbestand nach Änderungsdatum, neueste zuerst.
