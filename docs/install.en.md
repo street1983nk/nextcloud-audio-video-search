@@ -62,7 +62,7 @@ The command removes the test result and its index entries; the file itself stays
 ## Discovery
 
 - External storages are captured by default. To switch one off: `occ audio_video_search:exclude --storage=<mount id>` (id from `occ files_external:list`).
-- Storages with session-only credentials are skipped. "Log-in credentials, save in database" makes them capturable.
+- Storages with session-only credentials are skipped. They only become capturable once the admin selects "Log-in credentials, save in database" for that storage. Nextcloud then stores each user's password encrypted on the server and can access the storage without that user logging in. Whoever controls the server and the database can in principle recover it. This is a deliberate decision; without it these storages stay excluded from search.
 - Exclude users, groups and folders: `occ audio_video_search:exclude --user=<uid>`, `--group=<gid>` or `--folder=<path>`. This also works before the backend is installed.
 - An SMB storage mounted by the admin with credentials per user belongs to that user when it comes to exclusions.
 - `occ audio_video_search:status` shows how many contents are transcribed (X of Y).

@@ -62,7 +62,7 @@ La commande supprime le résultat de test et ses entrées d'index ; le fichier 
 ## Détection
 
 - Les stockages externes sont pris en compte par défaut. Pour en désactiver un : `occ audio_video_search:exclude --storage=<id du montage>` (id via `occ files_external:list`).
-- Les stockages dont les identifiants ne valent que pour la session sont ignorés. « Identifiants de connexion, sauvegarder dans la base de données » les rend exploitables.
+- Les stockages dont les identifiants ne valent que pour la session sont ignorés. Ils ne deviennent exploitables que lorsque l'administrateur choisit « Identifiants de connexion, sauvegarder dans la base de données » pour ce stockage. Nextcloud enregistre alors le mot de passe de chaque utilisateur, chiffré, sur le serveur et peut accéder au stockage sans que l'utilisateur se connecte. Quiconque contrôle le serveur et la base de données peut en principe le récupérer. C'est une décision délibérée ; sans elle, ces stockages restent exclus de la recherche.
 - Exclure des utilisateurs, des groupes et des dossiers : `occ audio_video_search:exclude --user=<uid>`, `--group=<gid>` ou `--folder=<chemin>`. Cela fonctionne aussi avant l'installation du backend.
 - Un stockage SMB monté par l'administrateur avec des identifiants propres à chaque utilisateur appartient à cet utilisateur pour les exclusions.
 - `occ audio_video_search:status` indique combien de contenus sont transcrits (X sur Y).

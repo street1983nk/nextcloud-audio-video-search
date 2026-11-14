@@ -62,7 +62,7 @@ Der Befehl entfernt den Testtreffer und seine Indexeinträge; die Datei selbst b
 ## Erfassung
 
 - Externe Speicher werden ab Werk erfasst. Abschalten: `occ audio_video_search:exclude --storage=<Mount-ID>` (ID aus `occ files_external:list`).
-- Speicher mit Anmeldedaten nur für die Sitzung werden übersprungen. Mit "Anmeldedaten, in Datenbank speichern" werden sie erfassbar.
+- Speicher mit Anmeldedaten nur für die Sitzung werden übersprungen. Erfassbar werden sie erst, wenn der Admin für diesen Speicher "Anmeldedaten des Benutzers (in Datenbank gespeichert)" wählt (bei "Deutsch (du)": "Anmeldedaten in Datenbank speichern"). Dann speichert Nextcloud das Passwort jedes Nutzers verschlüsselt auf dem Server und kann ohne dessen Anmeldung zugreifen. Wer Server und Datenbank kontrolliert, kann es grundsätzlich wiederherstellen. Das ist eine bewusste Entscheidung; ohne sie bleiben diese Speicher von der Suche ausgenommen.
 - Nutzer, Gruppen und Ordner ausschließen: `occ audio_video_search:exclude --user=<uid>`, `--group=<gid>` oder `--folder=<Pfad>`. Das geht auch, bevor das Backend installiert ist.
 - Ein vom Admin eingebundener SMB-Speicher mit Anmeldedaten je Nutzer gehört beim Ausschluss dem jeweiligen Nutzer.
 - `occ audio_video_search:status` zeigt, wie viele Inhalte transkribiert sind (X von Y).

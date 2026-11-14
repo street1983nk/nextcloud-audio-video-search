@@ -7,7 +7,7 @@ written before its tag; the GitHub release carries the same facts in English.
 
 - Discovery of every audio and video file of the instance: home folders, team folders, shares and external storages
 - External storages are captured by default; `occ audio_video_search:exclude --storage=<mount id>` switches one off
-- Storages with session-only credentials are skipped; "Log-in credentials, save in database" makes them capturable
+- Storages with session-only credentials are skipped; they become capturable only when the admin selects "Log-in credentials, save in database", which stores each user's password encrypted on the server
 - Exclusions for users, groups and folders with `occ audio_video_search:exclude`, also before the backend is installed
 - `occ audio_video_search:status` shows transcribed contents, open work and skipped storages
 - Changes made directly on a storage show up within 24 h, at once with `occ audio_video_search:rescan`
