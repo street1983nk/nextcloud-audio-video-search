@@ -14,9 +14,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from audio_video_search_backend.media.decode import decode_chunk
 from audio_video_search_backend.media.probe import probe
-
 from tests import media_fixtures as media
 
 TOLERANCE_S = 0.005
