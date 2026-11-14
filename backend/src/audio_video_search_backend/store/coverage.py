@@ -23,6 +23,12 @@ may fetch (active or unreadable). A failed reference waiting for its planned
 retry is not due, so the acceptance test does not wait for a retry hours
 away.
 
+``byPreview`` counts the preview jobs (plan 03-09, D-03-13): a job with a
+reason under its reason code (skipped, or waiting for disk space), every other
+one under its state, so a retry that waits without a reason counts as waiting.
+The names are the closed lists of repo.py; a value outside them is never
+reported, and no file id or name is part of it (T-03-31).
+
 Only ids, codes and numbers leave this module. Every statement is a constant
 with placeholders and runs on any connection, also a read only one.
 """
@@ -32,7 +38,7 @@ import time
 from dataclasses import dataclass
 from typing import Final
 
-from audio_video_search_backend.store.repo import STAGES, STATES
+from audio_video_search_backend.store.repo import PREVIEW_REASONS, PREVIEW_STATES, STAGES, STATES
 
 WORKSTOCK_MAX_LIMIT: Final = 1000
 
@@ -55,6 +61,8 @@ WHERE m.orphaned_at IS NULL
 _FILES: Final = "SELECT COUNT(*) FROM file_ref WHERE state = 'active'"
 _BY_STATE: Final = "SELECT state, COUNT(*) FROM file_ref GROUP BY state"
 _BY_STAGE: Final = "SELECT stage, COUNT(*) FROM file_ref GROUP BY stage"
+_BY_PREVIEW: Final = "SELECT COALESCE(reason, state), COUNT(*) FROM preview_job GROUP BY 1"
+_PREVIEW_NAMES: Final = PREVIEW_STATES | PREVIEW_REASONS
 _DUE_WORK: Final = """
 SELECT COUNT(*) FROM file_ref
 WHERE stage IN ('pending', 'probing', 'fetching') AND state IN ('active', 'unreadable')
@@ -75,6 +83,7 @@ class Coverage:
     by_state: dict[str, int]
     by_stage: dict[str, int]
     due_work: int
+    by_preview: dict[str, int]
 
     def as_wire(self) -> dict[str, object]:
         """The answer of GET /coverage, a fixed set of keys."""
@@ -85,6 +94,7 @@ class Coverage:
             "byState": self.by_state,
             "byStage": self.by_stage,
             "dueWork": self.due_work,
+            "byPreview": self.by_preview,
         }
 
 
@@ -115,6 +125,7 @@ def coverage(conn: sqlite3.Connection, now: int | None = None) -> Coverage:
             by_state=_grouped(conn, _BY_STATE, STATES),
             by_stage=_grouped(conn, _BY_STAGE, STAGES),
             due_work=_one(conn, _DUE_WORK, {"now": moment}),
+            by_preview=_grouped(conn, _BY_PREVIEW, _PREVIEW_NAMES),
         )
     finally:
         if own_transaction:

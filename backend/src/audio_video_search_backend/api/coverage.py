@@ -2,7 +2,7 @@
 
 ADMIN in appinfo/info.xml and signed like every route (AppAPIAuthMiddleware in
 main.py). The answer is a fixed set of keys with numbers only:
-contents, transcribed, files, byState, byStage, dueWork (store/coverage.py).
+contents, transcribed, files, byState, byStage, dueWork, byPreview (store/coverage.py).
 """
 
 from typing import Annotated

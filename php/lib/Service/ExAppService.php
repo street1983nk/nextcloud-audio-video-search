@@ -83,10 +83,20 @@ class ExAppService {
 	/** The closed lists of the container (backend store/repo.py STATES, STAGES). */
 	public const WORK_STATES = ['active', 'unreadable', 'vanished', 'trashed'];
 	public const WORK_STAGES = ['pending', 'probing', 'fetching', 'keyed', 'failed'];
+	/**
+	 * The names of byPreview (backend store/repo.py PREVIEW_STATES and
+	 * PREVIEW_REASONS, plan 03-09): a job counts under its reason code, or
+	 * under its state when it has none.
+	 */
+	public const PREVIEW_NAMES = [
+		'queued', 'running', 'waiting', 'complete', 'skipped',
+		'too_long', 'no_audio', 'damaged', 'protected', 'format_unsupported',
+		'no_speech', 'unsupported_language', 'disk_full', 'engine_failed',
+	];
 	/** The keys of one work stock entry, exactly. */
 	public const WORKSTOCK_KEYS = ['fileId', 'mediaId', 'storageId', 'state', 'stage', 'reason'];
 	/** The keys of the coverage answer, exactly. */
-	public const COVERAGE_KEYS = ['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork'];
+	public const COVERAGE_KEYS = ['contents', 'transcribed', 'files', 'byState', 'byStage', 'dueWork', 'byPreview'];
 	public const WORKSTOCK_MAX_LIMIT = 1000;
 	/** A reason is a code of the closed list of the container, never free text. */
 	private const REASON_PATTERN = '/^[a-z_]{1,32}$/D';
@@ -386,11 +396,11 @@ class ExAppService {
 	/**
 	 * The numbers of D-02-06 from the container (occ audio_video_search:status).
 	 *
-	 * Every key of COVERAGE_KEYS, a whole number of zero or more each, byState
-	 * and byStage with exactly the codes of the closed lists, and transcribed
-	 * never above contents. Anything else is no answer.
+	 * Every key of COVERAGE_KEYS, a whole number of zero or more each, byState,
+	 * byStage and byPreview with exactly the codes of the closed lists, and
+	 * transcribed never above contents. Anything else is no answer.
 	 *
-	 * @return array{contents: int, transcribed: int, files: int, byState: array<string, int>, byStage: array<string, int>, dueWork: int}|null
+	 * @return array{contents: int, transcribed: int, files: int, byState: array<string, int>, byStage: array<string, int>, dueWork: int, byPreview: array<string, int>}|null
 	 */
 	public function coverage(): ?array {
 		$uid = $this->firstAdmin();
@@ -409,7 +419,9 @@ class ExAppService {
 		}
 		$byState = self::countsOf($answer['byState'], self::WORK_STATES);
 		$byStage = self::countsOf($answer['byStage'], self::WORK_STAGES);
-		if ($byState === null || $byStage === null || $answer['transcribed'] > $answer['contents']) {
+		$byPreview = self::countsOf($answer['byPreview'], self::PREVIEW_NAMES);
+		if ($byState === null || $byStage === null || $byPreview === null
+			|| $answer['transcribed'] > $answer['contents']) {
 			$this->logger->warning('Audio & Video Search: malformed coverage answer');
 			return null;
 		}
@@ -421,6 +433,7 @@ class ExAppService {
 			'byState' => $byState,
 			'byStage' => $byStage,
 			'dueWork' => $answer['dueWork'],
+			'byPreview' => $byPreview,
 		];
 	}
 
