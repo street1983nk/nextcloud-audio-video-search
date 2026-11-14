@@ -52,6 +52,8 @@ Nicht in dieser Phase: besseres Transkript (turbo/large-v3, ROVER, Profile), Spr
 
 - **D-03-20 (Owner 14.11.2026, nach Plan 03-05):** Führt Nextcloud eine Datei als Audio/Video, ffmpeg findet darin aber nichts Lesbares (auch wenn der Demuxer der Temp-Datei, z. B. "bin", von der Positivliste abgelehnt wird), lautet der Grund "damaged" (T6, beschädigt), nicht "format_unsupported". Umsetzung in Plan 03-13; der Worker muss außerdem mit duration_ms None umgehen.
 
+- **D-03-21 (Owner 14.11.2026, nach Plan 03-07):** Modellquelle ist ein EIGENES GitHub-Release (Repo street1983nk/nextcloud-audio-video-search) mit Parakeet-Dateien (encoder, decoder, joiner, tokens; CC-BY-4.0, Namensnennung NVIDIA im Release und in der Doku) und silero_vad.onnx (MIT) als Assets, statt Hugging Face. Grund: Hugging Face leitet je nach Region auf wechselnde CDN-Hosts weiter (gemessen us.aws.cdn.hf.co), eine feste Host-Allowlist würde in anderen Regionen scheitern. Allowlist danach nur github.com und release-assets.githubusercontent.com (vor dem Bau am echten Redirect prüfen), sha256 unverändert fest. Das Anlegen des Releases und das Hochladen sind nach außen gerichtet: vorher Owner fragen. Umsetzung als Folgeplan 03-07b. Dazu: HF_HUB_OFFLINE=1 und HF_HUB_DISABLE_TELEMETRY=1 im Dockerfile setzen (offener Punkt aus 03-07).
+
 ### Claude's Discretion
 - Fortsetzen nach Neustart: Granularität und Ablage der Stück-Zustände (SQLite-Stufen-Tabelle nach Findling-Muster).
 - Wortgenauer Sprung: Parakeet-Wortzeiten bevorzugt (TRANS-08), Rundung wie bestehende `clock()`-Regel (nie vor dem Wort).
