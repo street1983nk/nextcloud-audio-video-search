@@ -292,44 +292,94 @@ DRIFT_STEPS = (
 ENV_TAGS = ("@disabled", "@unreachable", "@nodebug", "@drift", "@patch", "@missing")
 
 
-# The release 0.1.0 is the tip of origin/phase-01 (plan 02-21): the upgrade job
-# builds prev/ out of exactly this commit, not out of its own one.
-PREV_COMMIT_0_1_0 = "82f1655481775a87f4fececa2e2b27d7c1f2f496"
+# The release 0.2.0 is the tip of origin/phase-02 (plan 03-19, before it 0.1.0
+# at the tip of origin/phase-01, plan 02-21): the upgrade job builds prev/ out
+# of exactly this commit, not out of its own one.
+PREV_COMMIT_0_2_0 = "a99565a2243f5c1e11adfb71fc2909a1b6c88fe8"
 _PREV_COMMIT = re.compile(r"^\s+PREV_COMMIT: '([0-9a-f]+)'$", re.MULTILINE)
-# What the positive control before the update and the check after it name.
-BEFORE_CONTROL = ("schema_version", "oc_avs_", "upgrade positive control failed", ".schemaVersion == 1")
-AFTER_CHECK = (
+UPGRADE_BEFORE_STEP = "Before the update, the old schema is really there"
+UPGRADE_AFTER_STEP = "After the update, the migration of both halves ran"
+UPGRADE_MODEL_STEP = "Put the speech models into the volume before the update"
+UPGRADE_MODEL_KEY_STEP = "Cache key of the speech models"
+UPGRADE_MODEL_PROOF_STEP = "After the update, the models came from the volume"
+UPGRADE_UPDATE_STEP = "Update the ExApp with app_api:app:update"
+# What the positive control before the update names: the schema step 2 of
+# state.db without the table preview_job, the sample of 0.2.0 with its
+# transcript, and oc_avs_queue without the column origin of the PHP migration.
+BEFORE_CONTROL = (
+    "schema_version",
+    'version == ("2",)',
+    "preview_job",
     "sample_ref",
-    "oc_avs_queue",
+    "PRAGMA table_info(oc_avs_queue)",
+    '"origin" not in',
+    "upgrade positive control failed",
+)
+# What the check after the update names, in its own step.
+AFTER_CHECK = (
+    'version == ("3",)',
+    "preview_job",
+    "sample_ref",
+    "PRAGMA table_info(oc_avs_queue)",
+    '"origin" in',
     "oc_avs_crawl",
     "oc_avs_storage",
     "audio_video_search:status --json",
+    'has("byPreview")',
 )
 
 
 def real_prev_findings(upgrade: str) -> list[str]:
-    """Every place where the upgrade job does not start from the real release 0.1.0."""
+    """Every place where the upgrade job does not start from the real release 0.2.0."""
     findings: list[str] = []
-    if "PREV_VERSION: '0.1.0'" not in upgrade:
-        findings.append("the upgrade job does not start from 0.1.0")
+    if "PREV_VERSION: '0.2.0'" not in upgrade:
+        findings.append("the upgrade job does not start from 0.2.0")
     commit = _PREV_COMMIT.search(upgrade)
     if commit is None or len(commit.group(1)) != 40:
-        findings.append("the upgrade job does not name the full commit of 0.1.0")
-    elif commit.group(1) != PREV_COMMIT_0_1_0:
-        findings.append("the upgrade job names another commit than the release 0.1.0")
-    checkout = [text for name, text in steps_of(upgrade) if name == "Check out this app"]
-    if not checkout or "fetch-depth: 0" not in checkout[0]:
+        findings.append("the upgrade job does not name the full commit of 0.2.0")
+    elif commit.group(1) != PREV_COMMIT_0_2_0:
+        findings.append("the upgrade job names another commit than the release 0.2.0")
+    steps = dict(steps_of(upgrade))
+    if "fetch-depth: 0" not in steps.get("Check out this app", ""):
         findings.append("the upgrade job checks out this app without its history (fetch-depth: 0)")
     if 'git -C app-src worktree add --detach "${GITHUB_WORKSPACE}/prev" "${PREV_COMMIT}"' not in upgrade:
         findings.append("the upgrade job does not build prev/ with git worktree add from PREV_COMMIT")
     if "cp -R app-src prev" in upgrade:
         findings.append("the upgrade job still copies prev/ out of its own commit")
+    if ".schemaVersion == 2" not in upgrade:
+        findings.append("the upgrade job does not see schemaVersion 2 before the update")
+    before = steps.get(UPGRADE_BEFORE_STEP, "")
     findings += [
-        f"the positive control before the update does not check {item}"
-        for item in BEFORE_CONTROL
-        if item not in upgrade
+        f"the positive control before the update does not check {item}" for item in BEFORE_CONTROL if item not in before
     ]
-    findings += [f"the check after the update does not look at {item}" for item in AFTER_CHECK if item not in upgrade]
+    after = steps.get(UPGRADE_AFTER_STEP, "")
+    findings += [f"the check after the update does not look at {item}" for item in AFTER_CHECK if item not in after]
+    return findings
+
+
+def upgrade_model_findings(upgrade: str) -> list[str]:
+    """Every place where the update to 0.3.0 would wait for models that are not there.
+
+    0.2.0 needs no model; 0.3.0 does, and takes them from the volume (the
+    air gap way of plan 03-07, as the job deploy-harp does since plan 03-18).
+    """
+    findings: list[str] = []
+    steps = dict(steps_of(upgrade))
+    names = step_names(upgrade)
+    if not _HARP_MODEL_KEY.search(steps.get(UPGRADE_MODEL_KEY_STEP, "")):
+        findings.append("the upgrade job has no model key avs-models-<MODEL_SHA256 of catalog.py>")
+    restore = steps.get(HARP_MODEL_RESTORE_STEP, "")
+    if "key: ${{ steps.model-key.outputs.models }}" not in restore:
+        findings.append("the upgrade job does not restore the models under the model key")
+    if "!${{ runner.temp }}/avs-models/**/*.verified.json" not in restore:
+        findings.append("the upgrade job restores the models with their verdict files")
+    volume = steps.get(UPGRADE_MODEL_STEP, "")
+    if '-name "*.verified.json" -delete' not in volume:
+        findings.append("the upgrade job does not put the models into the volume without verdict files")
+    elif UPGRADE_UPDATE_STEP not in names or names.index(UPGRADE_MODEL_STEP) > names.index(UPGRADE_UPDATE_STEP):
+        findings.append("the upgrade job puts the models into the volume after the update")
+    if '.outcome != "present"' not in steps.get(UPGRADE_MODEL_PROOF_STEP, ""):
+        findings.append("the upgrade job does not prove that /init of 0.3.0 fetched no model")
     return findings
 
 
@@ -346,11 +396,12 @@ def lifecycle_findings(source: str, redeploy: str) -> list[str]:
     if not upgrade:
         return ["deploy-harp.yml has no job upgrade"]
     findings += real_prev_findings(upgrade)
+    findings += upgrade_model_findings(upgrade)
     if not re.search(r"app_api:app:update audio_video_search_backend \\\n\s+--info-xml ", upgrade):
         findings.append("the upgrade job does not update the ExApp with app_api:app:update --info-xml")
     if "./occ upgrade" not in upgrade:
         findings.append("the upgrade job does not run occ upgrade")
-    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 2"):
+    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 3"):
         if proof not in upgrade:
             findings.append(f"the upgrade job does not compare {proof} before and after")
     if "rm-data" in source or "rm-data" in redeploy:
@@ -430,16 +481,16 @@ def test_the_upgrade_rule_fires_on_the_synthetic_previous_version() -> None:
     source = harp_source()
     upgrade = job_text(source, "upgrade")
     broken = (
-        upgrade.replace("PREV_VERSION: '0.1.0'", "PREV_VERSION: '0.0.1'")
-        .replace(PREV_COMMIT_0_1_0, PREV_COMMIT_0_1_0[:7])
+        upgrade.replace("PREV_VERSION: '0.2.0'", "PREV_VERSION: '0.0.1'")
+        .replace(PREV_COMMIT_0_2_0, PREV_COMMIT_0_2_0[:7])
         .replace("fetch-depth: 0", "fetch-depth: 1")
         .replace("git -C app-src worktree add", "cp -R app-src prev # git -C app-src worktree drop")
     )
     assert broken != upgrade
 
     assert real_prev_findings(broken) == [
-        "the upgrade job does not start from 0.1.0",
-        "the upgrade job does not name the full commit of 0.1.0",
+        "the upgrade job does not start from 0.2.0",
+        "the upgrade job does not name the full commit of 0.2.0",
         "the upgrade job checks out this app without its history (fetch-depth: 0)",
         "the upgrade job does not build prev/ with git worktree add from PREV_COMMIT",
         "the upgrade job still copies prev/ out of its own commit",
@@ -448,21 +499,87 @@ def test_the_upgrade_rule_fires_on_the_synthetic_previous_version() -> None:
 
 def test_the_upgrade_rule_fires_on_another_commit() -> None:
     upgrade = job_text(harp_source(), "upgrade")
-    broken = upgrade.replace(PREV_COMMIT_0_1_0, "0" * 40)
+    broken = upgrade.replace(PREV_COMMIT_0_2_0, "0" * 40)
     assert broken != upgrade
 
-    assert real_prev_findings(broken) == ["the upgrade job names another commit than the release 0.1.0"]
+    assert real_prev_findings(broken) == ["the upgrade job names another commit than the release 0.2.0"]
+
+
+def test_the_upgrade_rule_fires_on_the_commit_of_0_1_0() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    broken = upgrade.replace(PREV_COMMIT_0_2_0, "82f1655481775a87f4fececa2e2b27d7c1f2f496").replace(
+        "PREV_VERSION: '0.2.0'", "PREV_VERSION: '0.1.0'"
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the upgrade job does not start from 0.2.0",
+        "the upgrade job names another commit than the release 0.2.0",
+    ]
 
 
 def test_the_upgrade_rule_fires_without_the_positive_control() -> None:
     upgrade = job_text(harp_source(), "upgrade")
-    broken = upgrade.replace("upgrade positive control failed", "x").replace("oc_avs_storage", "oc_avs_store")
+    broken = (
+        upgrade.replace("upgrade positive control failed", "x")
+        .replace("oc_avs_storage", "oc_avs_store")
+        .replace(".schemaVersion == 2", ".schemaVersion == 1")
+    )
     assert broken != upgrade
 
     assert real_prev_findings(broken) == [
+        "the upgrade job does not see schemaVersion 2 before the update",
         "the positive control before the update does not check upgrade positive control failed",
         "the check after the update does not look at oc_avs_storage",
     ]
+
+
+def test_the_upgrade_rule_fires_when_the_control_misses_the_new_table_and_column() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    steps = dict(steps_of(upgrade))
+    before = steps[UPGRADE_BEFORE_STEP]
+    after = steps[UPGRADE_AFTER_STEP]
+    broken = upgrade.replace(
+        before, before.replace("preview_job", "preview_tab").replace('"origin" not in', '"origins" not in')
+    ).replace(after, after.replace('version == ("3",)', 'version == ("2",)').replace('has("byPreview")', 'has("x")'))
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the positive control before the update does not check preview_job",
+        'the positive control before the update does not check "origin" not in',
+        'the check after the update does not look at version == ("3",)',
+        'the check after the update does not look at has("byPreview")',
+    ]
+
+
+def test_the_upgrade_model_rule_holds_and_fires_without_the_models() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    assert upgrade_model_findings(upgrade) == []
+    steps = dict(steps_of(upgrade))
+    broken = upgrade.replace(
+        steps[UPGRADE_MODEL_STEP], steps[UPGRADE_MODEL_STEP].replace(" -delete", " -print")
+    ).replace('.outcome != "present"', '.outcome == "present"')
+    assert broken != upgrade
+
+    assert upgrade_model_findings(broken) == [
+        "the upgrade job does not put the models into the volume without verdict files",
+        "the upgrade job does not prove that /init of 0.3.0 fetched no model",
+    ]
+
+
+def test_the_upgrade_model_rule_fires_when_the_models_come_after_the_update() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    steps = steps_of(upgrade)
+    names = [name for name, _text in steps]
+    model = names.index(UPGRADE_MODEL_STEP)
+    update = names.index(UPGRADE_UPDATE_STEP)
+    assert model < update
+    moved = [steps[i] for i in range(len(steps)) if i != model]
+    moved.insert(update, steps[model])
+    head = upgrade.split("      - name: ", 1)[0]
+    broken = head + "".join(f"      - name: {text}" for _name, text in moved)
+
+    assert upgrade_model_findings(broken) == ["the upgrade job puts the models into the volume after the update"]
 
 
 REDEPLOY = REPO_ROOT / "ci" / "redeploy.sh"

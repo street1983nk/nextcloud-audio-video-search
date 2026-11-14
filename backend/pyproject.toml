@@ -3,7 +3,7 @@ name = "audio_video_search_backend"
 # Lockstep: this version, <version> and <image-tag> in backend/appinfo/info.xml,
 # <version> in php/appinfo/info.xml and the git tag v<version> are one number
 # (tests/test_store_metadata.py and tests/test_lockstep_versions.py hold them).
-version = "0.2.0"
+version = "0.3.0"
 description = "Audio & Video Search: Nextcloud External App (ExApp) backend"
 # uv_build takes no path outside backend/, so the package carries its own short README.
 readme = "README.md"

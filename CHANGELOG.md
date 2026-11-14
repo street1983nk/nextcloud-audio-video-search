@@ -3,6 +3,8 @@
 All notable changes are listed here, newest first. The entry of a release is
 written before its tag; the GitHub release carries the same facts in English.
 
+## 0.3.0
+
 ## 0.2.0
 
 - Discovery of every audio and video file of the instance: home folders, team folders, shares and external storages

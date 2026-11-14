@@ -51,7 +51,7 @@ Ce qu'est Audio & Video Search :
 Prérequis :
 - Nextcloud 33 à 35, AppAPI avec un démon de déploiement (HaRP recommandé)
 - CPU : amd64 et arm64]]></description>
-	<version>0.2.0</version>
+	<version>0.3.0</version>
 	<licence>AGPL-3.0-or-later</licence>
 	<author>street1983nk</author>
 	<category>tools</category>
@@ -66,7 +66,7 @@ Prérequis :
 		<docker-install>
 			<registry>ghcr.io</registry>
 			<image>street1983nk/audio_video_search_backend</image>
-			<image-tag>0.2.0</image-tag>
+			<image-tag>0.3.0</image-tag>
 		</docker-install>
 		<routes>
 			<route>

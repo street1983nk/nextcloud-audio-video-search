@@ -48,7 +48,7 @@ Prérequis :
 - L'application « Audio & Video Search Backend » (External App), qui effectue la transcription. Installez les deux applications ; elles ont toujours la même version.
 - Nextcloud 33 à 35, AppAPI avec un démon de déploiement (HaRP recommandé)
 - CPU : amd64 et arm64]]></description>
-	<version>0.2.0</version>
+	<version>0.3.0</version>
 	<licence>AGPL-3.0-or-later</licence>
 	<author>street1983nk</author>
 	<namespace>AudioVideoSearch</namespace>
