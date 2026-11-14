@@ -358,8 +358,8 @@ jobs:
               exclude-storage-after) bash "${d}/topology.sh" exclude_storage_after ;;
               exclude-after) bash "${d}/topology.sh" exclude_after ;;
               reprove) bash "${d}/topology.sh" revoke_cem && ./occ audio_video_search:reconcile --reprove ;;
-              vanish) bash "${d}/topology.sh" vanish_cem ;;
-              delete-user) bash "${d}/topology.sh" delete_dan ;;
+              vanish) bash "${d}/topology.sh" vanish_cem && ./occ audio_video_search:reconcile ;;
+              delete-user) bash "${d}/topology.sh" delete_dan && ./occ audio_video_search:reconcile ;;
               reattach) bash "${d}/topology.sh" reattach ;;
               foreign-change)
                 bash "${d}/topology.sh" foreign_change \
