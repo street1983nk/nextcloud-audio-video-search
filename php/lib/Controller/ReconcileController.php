@@ -233,7 +233,7 @@ final class ReconcileController extends OCSController {
 					$rejected++;
 					continue;
 				}
-				$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $fileId, $storageId);
+				$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $fileId, $storageId, QueueMapper::ORIGIN_CRAWL);
 				$enqueued++;
 			}
 		} catch (\Throwable $e) {

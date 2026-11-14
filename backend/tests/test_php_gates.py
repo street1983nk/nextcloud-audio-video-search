@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The seventeen rules:
+The eighteen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -70,6 +70,10 @@ The seventeen rules:
     refuses every other origin, ``QueueService::ITEM_KEYS`` carries
     ``origin`` and ``describeRow`` drops a row whose origin is not on the
     list. The container holds the same list (plan 03-11).
+18. Every enqueue of the content kind under ``php/lib`` names its origin:
+    ``QueueMapper::ORIGIN_EVENT`` in the file and cache listeners,
+    ``QueueMapper::ORIGIN_CRAWL`` in the first crawl and the reconcile, never
+    the default (D-03-05).
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -1147,3 +1151,78 @@ def test_self_rule17_fires_on_a_changed_copy(tmp_path: Path) -> None:
     )
     assert queue_origin_findings(passed) == ["QueueService::describeRow hands an origin out unchecked"]
     assert queue_origin_findings(tmp_path / "empty") == [f"{QUEUE_MAPPER} is missing", f"{QUEUE_SERVICE} is missing"]
+
+
+# -- rule 18 ------------------------------------------------------------------------
+
+ORIGIN_EVENT = "QueueMapper::ORIGIN_EVENT"
+ORIGIN_CRAWL = "QueueMapper::ORIGIN_CRAWL"
+EVENT_DIRECTORY = "php/lib/Listener/"
+# The callers of the content kind on the real tree and the origin each names
+# (plan 03-04): two in FileEventListener, one in CacheEventListener, one each
+# in StorageCrawlJob and ReconcileController.
+CONTENT_CALLERS = {
+    "php/lib/Listener/FileEventListener.php": [ORIGIN_EVENT, ORIGIN_EVENT],
+    "php/lib/Listener/CacheEventListener.php": [ORIGIN_EVENT],
+    "php/lib/BackgroundJobs/StorageCrawlJob.php": [ORIGIN_CRAWL],
+    "php/lib/Controller/ReconcileController.php": [ORIGIN_CRAWL],
+}
+
+
+def content_enqueue_origins(source: str) -> list[str]:
+    """The last argument of every content enqueue of a source, comments left out."""
+    code = php_code(source)
+    origins = []
+    for match in re.finditer(re.escape(ENQUEUE_CALL), code):
+        arguments = [part.strip() for part in _call_arguments(code, match.end() - 1).split(",")]
+        if arguments and arguments[0] == CONTENT_KIND:
+            origins.append(arguments[3] if len(arguments) > 3 else "")
+    return origins
+
+
+def content_origin_findings(sources: dict[str, str]) -> list[str]:
+    """Content enqueues without an origin, or with the origin of the other way.
+
+    The events under php/lib/Listener write event, every other caller (first
+    crawl, reconcile) writes crawl, and none leaves the origin to the default
+    (D-03-05).
+    """
+    findings = []
+    for name, text in sorted(sources.items()):
+        expected = ORIGIN_EVENT if name.startswith(EVENT_DIRECTORY) else ORIGIN_CRAWL
+        for origin in content_enqueue_origins(text):
+            if origin != expected:
+                findings.append(f"{name} queues content with {origin or 'no origin'}, expected {expected}")
+    return findings
+
+
+def test_rule18_every_content_row_names_its_origin() -> None:
+    sources = _lib_sources()
+    assert content_origin_findings(sources) == []
+    found = {name: content_enqueue_origins(text) for name, text in sources.items()}
+    assert {name: origins for name, origins in found.items() if origins} == CONTENT_CALLERS
+
+
+def test_self_rule18_fires_on_a_missing_and_on_a_wrong_origin() -> None:
+    listener = "php/lib/Listener/X.php"
+    crawl = "php/lib/BackgroundJobs/Y.php"
+    call = "$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $id, $storage{origin});\n"
+    good = {
+        listener: call.format(origin=", " + ORIGIN_EVENT),
+        crawl: call.format(origin=", " + ORIGIN_CRAWL),
+    }
+    assert content_origin_findings(good) == []
+    assert content_enqueue_origins(good[listener]) == [ORIGIN_EVENT]
+    assert content_origin_findings({**good, listener: call.format(origin="")}) == [
+        f"{listener} queues content with no origin, expected {ORIGIN_EVENT}"
+    ]
+    assert content_origin_findings({**good, crawl: call.format(origin=", " + ORIGIN_EVENT)}) == [
+        f"{crawl} queues content with {ORIGIN_EVENT}, expected {ORIGIN_CRAWL}"
+    ]
+    assert content_origin_findings({**good, listener: call.format(origin=", " + ORIGIN_CRAWL)}) == [
+        f"{listener} queues content with {ORIGIN_CRAWL}, expected {ORIGIN_EVENT}"
+    ]
+    # Another kind may keep the default, and a call in a comment is no call.
+    other = "$this->queueService->enqueue(QueueMapper::KIND_DELETE, $id, $storage);\n"
+    commented = "// " + call.format(origin="")
+    assert content_origin_findings({listener: other + commented}) == []

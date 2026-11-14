@@ -77,7 +77,7 @@ class CacheEventListener implements IEventListener {
 				$mimeId = $this->mimeTypeLoader->exists($mime) ? $this->mimeTypeLoader->getId($mime) : 0;
 				$relative = $this->storageService->mountRelativePath($storageId, $event->getPath());
 				if ($relative !== null && $this->queueService->admissible($storageId, $mimeId, $relative)) {
-					$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $fileId, $storageId);
+					$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $fileId, $storageId, QueueMapper::ORIGIN_EVENT);
 				}
 			}
 		} catch (\Throwable $e) {

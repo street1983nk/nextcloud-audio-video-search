@@ -93,7 +93,7 @@ class FileEventListener implements IEventListener {
 	private function queueContent(Node $node): void {
 		$target = $this->admissibleFile($node);
 		if ($target !== null) {
-			$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $target[0], $target[1]);
+			$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $target[0], $target[1], QueueMapper::ORIGIN_EVENT);
 		}
 	}
 
@@ -120,7 +120,7 @@ class FileEventListener implements IEventListener {
 
 		// Across storages: the content key decides, the bytes are the same, so
 		// at most one download (RESEARCH, Befund 8).
-		$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $identity[0], $identity[1]);
+		$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $identity[0], $identity[1], QueueMapper::ORIGIN_EVENT);
 		if ($sourceIdentity[0] !== $identity[0]) {
 			$this->queueService->enqueue(QueueMapper::KIND_DELETE, $sourceIdentity[0], $sourceIdentity[1]);
 		}

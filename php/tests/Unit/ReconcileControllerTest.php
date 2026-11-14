@@ -48,7 +48,7 @@ final class ReconcileControllerTest extends TestCase {
 	private StorageStateMapper&MockObject $states;
 	private IFileAccess&MockObject $fileAccess;
 	private IMimeTypeLoader&MockObject $mimeTypes;
-	/** @var list<array{string, int, int}> */
+	/** @var list<array{string, int, int, string}> */
 	private array $enqueued = [];
 
 	protected function setUp(): void {
@@ -76,8 +76,8 @@ final class ReconcileControllerTest extends TestCase {
 		$this->queue->method('admissible')->willReturnCallback(
 			static fn (int $storageId, int $mimeId, string $relative): bool => $mimeId === self::WEBM && !str_starts_with($relative, 'Privat/'),
 		);
-		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId): void {
-			$this->enqueued[] = [$kind, (int)$fileId, $storageId];
+		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId, string $origin = 'none'): void {
+			$this->enqueued[] = [$kind, (int)$fileId, $storageId, $origin];
 		});
 
 		$this->crawls = $this->createMock(CrawlMapper::class);
@@ -328,7 +328,7 @@ final class ReconcileControllerTest extends TestCase {
 		$response = $this->controller()->requeue([41]);
 
 		self::assertSame(['enqueued' => 1, 'rejected' => 0], $response->getData());
-		self::assertSame([[QueueMapper::KIND_CONTENT, 41, 3]], $this->enqueued);
+		self::assertSame([[QueueMapper::KIND_CONTENT, 41, 3, QueueMapper::ORIGIN_CRAWL]], $this->enqueued);
 	}
 
 	public function testAnExcludedFileIsRejectedAndNothingIsQueued(): void {
@@ -349,7 +349,7 @@ final class ReconcileControllerTest extends TestCase {
 		$response = $this->controller()->requeue([41, 42, 41, 99]);
 
 		self::assertSame(['enqueued' => 1, 'rejected' => 2], $response->getData());
-		self::assertSame([[QueueMapper::KIND_CONTENT, 41, 3]], $this->enqueued);
+		self::assertSame([[QueueMapper::KIND_CONTENT, 41, 3, QueueMapper::ORIGIN_CRAWL]], $this->enqueued);
 	}
 
 	public function testTheStorageOfTheCacheEntryWinsOverAnyClaimOfTheCaller(): void {

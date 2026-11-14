@@ -145,7 +145,7 @@ class StorageCrawlJob extends QueuedJob {
 		if ($relative === null || !$this->queueService->admissible($storageId, $mimeId, $relative)) {
 			return false;
 		}
-		$this->queueService->enqueue(QueueMapper::KIND_CONTENT, (int)$entry->getId(), $storageId);
+		$this->queueService->enqueue(QueueMapper::KIND_CONTENT, (int)$entry->getId(), $storageId, QueueMapper::ORIGIN_CRAWL);
 
 		return true;
 	}

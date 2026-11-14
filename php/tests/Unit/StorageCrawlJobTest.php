@@ -41,6 +41,8 @@ final class StorageCrawlJobTest extends TestCase {
 	private IMimeTypeLoader&MockObject $mimeTypes;
 	/** @var list<int> */
 	private array $queued = [];
+	/** @var list<string> origin of every enqueue, in order */
+	private array $origins = [];
 	/** @var list<int> */
 	private array $advanced = [];
 	private int $finished = 0;
@@ -53,6 +55,7 @@ final class StorageCrawlJobTest extends TestCase {
 		parent::setUp();
 
 		$this->queued = [];
+		$this->origins = [];
 		$this->advanced = [];
 		$this->finished = 0;
 		$this->scheduled = [];
@@ -79,10 +82,13 @@ final class StorageCrawlJobTest extends TestCase {
 		$this->queue->method('admissible')->willReturnCallback(
 			static fn (int $storageId, int $mimeId, string $relative): bool => $mimeId === self::WEBM && $relative !== '',
 		);
-		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId): void {
+		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId, string $origin = 'none'): void {
 			self::assertSame(QueueMapper::KIND_CONTENT, $kind);
 			self::assertSame(self::STORAGE, $storageId);
+			// The first crawl is the stock, never an event (D-03-05).
+			self::assertSame(QueueMapper::ORIGIN_CRAWL, $origin);
 			$this->queued[] = (int)$fileId;
+			$this->origins[] = $origin;
 		});
 		$this->crawls = $this->createMock(CrawlMapper::class);
 		$this->crawls->method('find')->willReturnCallback(fn (): ?array => $this->crawl);
@@ -151,6 +157,18 @@ final class StorageCrawlJobTest extends TestCase {
 		self::assertSame([9], $this->advanced);
 		self::assertSame(1, $this->finished);
 		self::assertSame([], $this->scheduled);
+	}
+
+	public function testTheCrawlQueuesWithTheOriginCrawl(): void {
+		$slices = [[$this->entry(7), $this->entry(8)], []];
+		$this->storage->method('getFileSlice')->willReturnCallback(static function () use (&$slices): array {
+			return array_shift($slices) ?? [];
+		});
+
+		$this->runJob();
+
+		self::assertSame([7, 8], $this->queued);
+		self::assertSame([QueueMapper::ORIGIN_CRAWL, QueueMapper::ORIGIN_CRAWL], $this->origins);
 	}
 
 	public function testARunEndsAfterMaxFilesWithTheCursorSetAndNotFinished(): void {

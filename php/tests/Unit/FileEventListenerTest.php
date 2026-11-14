@@ -68,17 +68,21 @@ final class FileEventListenerTest extends TestCase {
 	private LoggerInterface&MockObject $logger;
 	/** @var list<array{0: string, 1: int, 2: int}> */
 	private array $queued = [];
+	/** @var list<array{0: string, 1: string}> kind and origin of every enqueue, in order */
+	private array $origins = [];
 
 	protected function setUp(): void {
 		parent::setUp();
 
 		$this->queued = [];
+		$this->origins = [];
 		$this->queue = $this->createMock(QueueService::class);
 		$this->queue->method('admissible')->willReturnCallback(
 			static fn (int $storageId, int $mimeId, string $relative): bool => $mimeId === self::WEBM && in_array($storageId, [3, 4], true),
 		);
-		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId): void {
+		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId, string $origin = QueueMapper::ORIGIN_CRAWL): void {
 			$this->queued[] = [$kind, (int)$fileId, $storageId];
+			$this->origins[] = [$kind, $origin];
 		});
 		$this->storage = $this->createMock(StorageService::class);
 		$this->storage->method('mountRelativePath')->willReturnCallback(
@@ -239,6 +243,29 @@ final class FileEventListenerTest extends TestCase {
 		$listener->handle(new NodeCreatedEvent($this->createMock(Folder::class)));
 
 		self::assertSame([], $this->queued);
+	}
+
+	/**
+	 * Every content row a file or cache event queues carries the origin
+	 * event (D-03-05, plan 03-04), in every case of this suite.
+	 */
+	protected function assertPostConditions(): void {
+		foreach ($this->origins as [$kind, $origin]) {
+			if ($kind === QueueMapper::KIND_CONTENT) {
+				self::assertSame(QueueMapper::ORIGIN_EVENT, $origin);
+			}
+		}
+	}
+
+	public function testContentFromAFileEventIsQueuedWithTheOriginEvent(): void {
+		$listener = $this->listener();
+		$listener->handle(new NodeCreatedEvent($this->file(10)));
+		$listener->handle(new NodeRenamedEvent($this->file(11, 3), $this->file(31, 4)));
+
+		self::assertSame([
+			[QueueMapper::KIND_CONTENT, QueueMapper::ORIGIN_EVENT],
+			[QueueMapper::KIND_CONTENT, QueueMapper::ORIGIN_EVENT],
+		], array_values(array_filter($this->origins, static fn (array $o): bool => $o[0] === QueueMapper::KIND_CONTENT)));
 	}
 
 	public function testACopyQueuesItsTarget(): void {

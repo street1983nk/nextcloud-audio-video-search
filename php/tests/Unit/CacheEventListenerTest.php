@@ -32,17 +32,21 @@ final class CacheEventListenerTest extends TestCase {
 	private IMimeTypeLoader&MockObject $mimeTypes;
 	/** @var list<array{0: string, 1: int, 2: int}> */
 	private array $queued = [];
+	/** @var list<array{0: string, 1: string}> kind and origin of every enqueue, in order */
+	private array $origins = [];
 
 	protected function setUp(): void {
 		parent::setUp();
 
 		$this->queued = [];
+		$this->origins = [];
 		$this->queue = $this->createMock(QueueService::class);
 		$this->queue->method('admissible')->willReturnCallback(
 			static fn (int $storageId, int $mimeId, string $relative): bool => in_array($mimeId, [self::WEBM, self::MP2T], true) && $storageId === 3,
 		);
-		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId): void {
+		$this->queue->method('enqueue')->willReturnCallback(function (string $kind, ?int $fileId, int $storageId, string $origin = QueueMapper::ORIGIN_CRAWL): void {
 			$this->queued[] = [$kind, (int)$fileId, $storageId];
+			$this->origins[] = [$kind, $origin];
 		});
 		$this->storage = $this->createMock(StorageService::class);
 		$this->storage->method('mountRelativePath')->willReturnCallback(
@@ -85,6 +89,31 @@ final class CacheEventListenerTest extends TestCase {
 			[QueueMapper::KIND_CONTENT, 10, 3],
 			[QueueMapper::KIND_CONTENT, 11, 3],
 		], $this->queued);
+	}
+
+	/**
+	 * Every content row a file or cache event queues carries the origin
+	 * event (D-03-05, plan 03-04), in every case of this suite.
+	 */
+	protected function assertPostConditions(): void {
+		foreach ($this->origins as [$kind, $origin]) {
+			if ($kind === QueueMapper::KIND_CONTENT) {
+				self::assertSame(QueueMapper::ORIGIN_EVENT, $origin);
+			}
+		}
+	}
+
+	public function testContentFromACacheEventIsQueuedWithTheOriginEvent(): void {
+		// A change Nextcloud notices on its own, an external storage included,
+		// is a new or changed file: it goes first like a file event.
+		$listener = $this->listener();
+		$listener->handle(new CacheEntryInsertedEvent($this->storageDouble(), 'files/a.webm', 10, 3));
+		$listener->handle(new CacheEntryUpdatedEvent($this->storageDouble(), 'files/b.mts', 11, 3));
+
+		self::assertSame([
+			[QueueMapper::KIND_CONTENT, QueueMapper::ORIGIN_EVENT],
+			[QueueMapper::KIND_CONTENT, QueueMapper::ORIGIN_EVENT],
+		], $this->origins);
 	}
 
 	public function testAFolderOrAnotherTypeIsDroppedBeforeAnyLookup(): void {
