@@ -15,7 +15,7 @@ import pytest
 
 from audio_video_search_backend import nc
 from audio_video_search_backend.store import coverage as cov
-from audio_video_search_backend.store.repo import STAGES, STATES, IntakeItem, Store
+from audio_video_search_backend.store.repo import PREVIEW_REASONS, PREVIEW_STATES, STAGES, STATES, IntakeItem, Store
 
 NOW = 1_800_000_000
 PREFILTERS = [None, "a" * 64, "b" * 64, "c" * 64]
@@ -216,6 +216,103 @@ def test_by_state_and_by_stage_name_every_code_of_the_closed_lists(store: Store)
     assert set(found.by_state) == STATES
     assert set(found.by_stage) == STAGES
     assert set(found.by_state.values()) == {0}
+
+
+# The preview jobs for occ (plan 03-09, D-03-13, T-03-31): a fixed list of
+# names, the states and the reason codes, and nothing else.
+PREVIEW_NAMES = {
+    "queued",
+    "running",
+    "waiting",
+    "complete",
+    "skipped",
+    "too_long",
+    "no_audio",
+    "damaged",
+    "protected",
+    "format_unsupported",
+    "no_speech",
+    "unsupported_language",
+    "disk_full",
+    "engine_failed",
+}
+
+
+def _job(conn: sqlite3.Connection, media_id: int, state: str, reason: str | None = None) -> None:
+    conn.execute("INSERT INTO media (media_id, created_at) VALUES (?, 0)", (media_id,))
+    conn.execute(
+        "INSERT INTO preview_job (media_id, epoch, state, reason, origin, sort_mtime, updated_at) "
+        "VALUES (?, 0, ?, ?, 'crawl', 0, 0)",
+        (media_id, state, reason),
+    )
+
+
+def test_by_preview_names_every_state_and_reason_of_the_closed_lists(store: Store) -> None:
+    found = cov.coverage(_conn(store), NOW)
+
+    assert set(found.by_preview) == PREVIEW_NAMES
+    assert PREVIEW_NAMES == PREVIEW_STATES | PREVIEW_REASONS
+    assert set(found.by_preview.values()) == {0}
+
+
+def test_by_preview_counts_each_job_once_under_its_reason_or_its_state(store: Store) -> None:
+    conn = _conn(store)
+    _job(conn, 1, "queued")
+    _job(conn, 2, "running")
+    _job(conn, 3, "complete")
+    _job(conn, 4, "skipped", "no_speech")
+    _job(conn, 5, "skipped", "too_long")
+    _job(conn, 6, "waiting", "disk_full")
+
+    found = cov.coverage(conn, NOW).by_preview
+
+    expected = dict.fromkeys(PREVIEW_NAMES, 0) | {
+        "queued": 1,
+        "running": 1,
+        "complete": 1,
+        "no_speech": 1,
+        "too_long": 1,
+        "disk_full": 1,
+    }
+    assert found == expected
+    assert sum(found.values()) == 6
+
+
+def test_a_retry_without_a_reason_counts_as_waiting(store: Store) -> None:
+    conn = _conn(store)
+    _job(conn, 1, "waiting")
+    _job(conn, 2, "waiting")
+
+    assert cov.coverage(conn, NOW).by_preview["waiting"] == 2
+
+
+def test_a_reason_outside_the_list_is_never_reported(store: Store) -> None:
+    conn = _conn(store)
+    _job(conn, 1, "skipped", "Sitzung 2026-11-14.mp4")
+
+    found = cov.coverage(conn, NOW).by_preview
+
+    assert set(found) == PREVIEW_NAMES
+    assert sum(found.values()) == 0
+
+
+def test_the_wire_carries_by_preview_with_codes_and_numbers_only(store: Store) -> None:
+    conn = _conn(store)
+    for media_id in (1, 2, 3):
+        _job(conn, 4000 + media_id, "skipped", "damaged")
+        _ref(conn, 7000 + media_id, media_id=4000 + media_id, stage="keyed")
+
+    wire = cov.coverage(conn, NOW).as_wire()
+
+    assert set(wire) == {"contents", "transcribed", "files", "byState", "byStage", "dueWork", "byPreview"}
+    by_preview = wire["byPreview"]
+    assert isinstance(by_preview, dict)
+    assert set(by_preview) == PREVIEW_NAMES
+    assert all(isinstance(count, int) and not isinstance(count, bool) for count in by_preview.values())
+    assert by_preview["damaged"] == 3
+    text = repr(by_preview)
+    for number in ("4001", "4002", "4003", "7001", "7002", "7003", "/"):
+        assert number not in text
 
 
 def test_due_work_counts_only_what_the_capture_has_to_do_now(store: Store) -> None:

@@ -20,6 +20,7 @@ import pytest
 
 from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import Level, Provenance
+from audio_video_search_backend.store import repo as repo_module
 from audio_video_search_backend.store.repo import (
     PREVIEW_REASONS,
     PREVIEW_STATES,
@@ -1058,3 +1059,29 @@ def test_a_way_back_does_not_reopen_a_settled_job(store: Store, path: Path) -> N
     row = _job_row(path, media_id)
     assert row is not None
     assert (row["state"], row["reason"]) == ("skipped", "no_speech")
+
+
+# -- forgetting a content takes its job (plan 03-09 task 2) --------------------------
+
+
+def test_forgetting_a_content_takes_its_job_with_its_pieces(store: Store, path: Path) -> None:
+    media_id = _keyed(store, 11, SHA[1])
+    job = _claim(store)
+    assert store.commit_chunk(job, prov=_prov(SHA[1]), words=[_w("eins", 0)], next_start_ms=600_000, counters=NO_COUNT)
+    store.apply_intake([_item(11, "delete")])
+
+    assert store.forget_media(media_id) is True
+
+    assert _job_row(path, media_id) is None
+    assert _sql(path, "SELECT COUNT(*) FROM transcript") == [(0,)]
+    assert _sql(path, "SELECT COUNT(*) FROM media WHERE media_id = ?", (media_id,)) == [(0,)]
+
+
+def test_every_deletion_of_a_media_item_deletes_its_job_first() -> None:
+    source = Path(repo_module.__file__).read_text(encoding="utf-8")
+    body = source.split("class Store:", 1)[1]
+    calls = body.count("_DELETE_MEDIA, (media_id,)")
+    assert calls >= 1
+    for chunk in body.split("_DELETE_MEDIA, (media_id,)")[:-1]:
+        before = chunk.rsplit("def ", 1)[1]
+        assert "_FORGET_PREVIEW_JOB" in before

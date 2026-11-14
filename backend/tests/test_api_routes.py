@@ -545,10 +545,11 @@ def test_coverage_answers_the_fixed_keys_with_numbers(client: TestClient) -> Non
 
     assert answer.status_code == 200
     body = answer.json()
-    assert set(body) == {"contents", "transcribed", "files", "byState", "byStage", "dueWork"}
+    assert set(body) == {"contents", "transcribed", "files", "byState", "byStage", "dueWork", "byPreview"}
     assert (body["contents"], body["transcribed"], body["files"], body["dueWork"]) == (2, 0, 2, 3)
     assert body["byState"]["unreadable"] == 1
     assert set(body["byStage"]) == {"pending", "probing", "fetching", "keyed", "failed"}
+    assert set(body["byPreview"].values()) == {0}
 
 
 def test_workstock_answers_pages_with_the_fixed_fields(client: TestClient) -> None:
