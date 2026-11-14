@@ -51,6 +51,7 @@ LOCAL = 3
 SMB = 4
 GONE = 8
 LEFT = 9
+OTHER = 7
 SECRET_FILE_ID = 424_242
 
 
@@ -350,7 +351,7 @@ async def test_a_storage_back_in_the_list_comes_back_without_a_download(store: S
     smb_media = ref(store, 30, SMB, sha=SHA_C)
     ref(store, 31, SMB)
     files = FakeFiles(
-        MountList(ok=True, mounts=[mount(LOCAL, finished=False)]),
+        MountList(ok=True, mounts=[mount(OTHER, finished=False)]),
         classification=Classification(gone=[], deselected=[LOCAL, SMB], present=[]),
     )
     clock = Clock()

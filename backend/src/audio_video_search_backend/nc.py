@@ -17,14 +17,17 @@ the content gateway of the PHP app as a stream (Findling ``nc/client.py``
 ``fetch_file_stream``), since nc_py_api's OCS entry point parses every answer as
 JSON and a media file cannot go through it; and the three routes of the PHP
 work stock (claim, ack, unlock), which run every 30 seconds on one long lived
-client instead of a new nc_py_api client per call (plan 02-05). nc_queue.py
-holds the contract of those routes and never imports a client itself.
+client instead of a new nc_py_api client per call (plan 02-05), and the same
+way the four routes of the periodic reconcile (plan 02-20). nc_queue.py and
+nc_files.py hold the contracts of those routes and never import a client
+themselves.
 """
 
 import asyncio
 import hashlib
 import logging
 import os
+import re
 import secrets
 import shutil
 from base64 import b64encode
@@ -58,7 +61,9 @@ __all__ = [
     "fetch_to_tempfile",
     "nc_app",
     "new_queue_client",
+    "new_reconcile_client",
     "queue_post",
+    "reconcile_request",
     "run_app",
     "set_handlers",
 ]
@@ -273,6 +278,73 @@ async def queue_post(client: httpx.AsyncClient, action: str, body: dict[str, obj
         return None, None
     if response.status_code >= _FIRST_ERROR_STATUS:
         LOGGER.warning("queue refused", extra={"action": action, "status": response.status_code})
+        return response.status_code, None
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.status_code, None
+    ocs = payload.get("ocs") if isinstance(payload, dict) else None
+    data = ocs.get("data") if isinstance(ocs, dict) else None
+    return response.status_code, data
+
+
+# The routes of the periodic reconcile of the PHP app (plan 02-19). Four routes
+# and no other: the mount list, the slice of one storage (the storage id is the
+# one variable part, digits only), the classification of absent storages and
+# the hand back of files to the one pre-check. nc_files.py holds the contract.
+RECONCILE_PATH: Final = "/ocs/v2.php/apps/audio_video_search/reconcile/{route}"
+RECONCILE_ROUTES: Final = frozenset({"mounts", "storages/classify", "requeue"})
+_SLICE_ROUTE: Final = re.compile(r"mounts/[1-9][0-9]{0,18}/slice")
+# A slice of 1000 rows over a slow external storage may take a while.
+RECONCILE_TIMEOUT: Final = httpx.Timeout(60.0, connect=10.0)
+
+
+def reconcile_url(route: str) -> str:
+    """Absolute URL of one reconcile route, NEXTCLOUD_URL normalised like gateway_url."""
+    if route not in RECONCILE_ROUTES and _SLICE_ROUTE.fullmatch(route) is None:
+        raise ValueError("invalid reconcile route")
+    base = os.environ.get("NEXTCLOUD_URL", "").removesuffix("/").removesuffix("/index.php").removesuffix("/")
+    return base + RECONCILE_PATH.format(route=route)
+
+
+def new_reconcile_client() -> httpx.AsyncClient:
+    """One client for the reconcile routes, held for the life of the reconcile. No redirects (credential)."""
+    return httpx.AsyncClient(verify=_certificate_setting(), timeout=RECONCILE_TIMEOUT, follow_redirects=False)
+
+
+async def reconcile_request(
+    client: httpx.AsyncClient,
+    method: str,
+    route: str,
+    *,
+    params: dict[str, int] | None = None,
+    body: dict[str, object] | None = None,
+) -> tuple[int | None, object]:
+    """GET or POST one reconcile route and return (status, the data of the OCS answer).
+
+    The same rules as :func:`queue_post`: ``(None, None)`` when the instance
+    could not be reached, ``(status, None)`` for an error status or an answer
+    that is not an OCS JSON document; never raises for a network error; logs
+    carry the route kind, a status and the error type, never the URL, a query
+    or a body.
+    """
+    if method not in ("GET", "POST"):
+        raise ValueError("invalid reconcile method")
+    url = reconcile_url(route)
+    kind = "slice" if route not in RECONCILE_ROUTES else route
+    try:
+        response = await client.request(
+            method,
+            url,
+            params=params,
+            json=body,
+            headers=app_api_headers() | {"Accept": "application/json"},
+        )
+    except httpx.HTTPError as error:
+        LOGGER.info("reconcile route not reached", extra={"route": kind, "error_type": type(error).__name__})
+        return None, None
+    if response.status_code >= _FIRST_ERROR_STATUS:
+        LOGGER.warning("reconcile route refused", extra={"route": kind, "status": response.status_code})
         return response.status_code, None
     try:
         payload = response.json()

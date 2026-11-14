@@ -61,6 +61,21 @@ class IntakeResult:
 _NOTHING: Final = IntakeResult(claimed=0, applied=0, acked=0, unlocked=0, malformed=0, queue_ok=False)
 
 
+@dataclass(slots=True)
+class _QueueHealth:
+    """Whether PHP could read its own work stock at the last answered claim; None before the first one."""
+
+    ok: bool | None = None
+
+
+_HEALTH: Final = _QueueHealth()
+
+
+def last_queue_ok() -> bool | None:
+    """stats.ok of the last answered claim; the walk of the reconcile stops on False (plan 02-20)."""
+    return _HEALTH.ok
+
+
 class Intake:
     """One claim, one transaction, one ack per round."""
 
@@ -78,6 +93,7 @@ class Intake:
                 claimed=outcome.malformed, applied=0, acked=0, unlocked=0, malformed=outcome.malformed, queue_ok=False
             )
         answer = outcome.answer
+        _HEALTH.ok = answer.stats.ok
         token = answer.claimToken
         ids = [entry.queueId for entry in answer.items]
         if not answer.stats.ok:

@@ -364,6 +364,80 @@ _CLEAR_RETIRED: Final = """
 DELETE FROM index_outbox WHERE index_rev = 0 AND media_id IN (SELECT value FROM json_each(?))
 """
 
+# The reconcile (plan 02-20). Storage and file ids travel as one JSON text.
+#
+# A storage the mount list no longer carries and PHP calls deselected is
+# vanished (D-02-12): its references neither count nor give hits and are never
+# fetched; a download that ran for one loses its claim. A reference in the
+# trash stays trashed and only carries the time, so the grace of the storage
+# runs for it as well. vanished_since is written once, on the first absence.
+_STORAGES_WITH_REFS: Final = "SELECT DISTINCT storage_id FROM file_ref"
+_UNMARKED_STORAGES: Final = "SELECT DISTINCT storage_id FROM file_ref WHERE vanished_since IS NULL"
+_MARKED_STORAGES: Final = """
+SELECT storage_id FROM file_ref WHERE vanished_since IS NOT NULL
+GROUP BY storage_id HAVING MIN(vanished_since) <= :before
+"""
+_MARK_VANISHED: Final = """
+UPDATE file_ref SET state = CASE WHEN state = 'trashed' THEN 'trashed' ELSE 'vanished' END,
+    stage = CASE WHEN stage = 'fetching' THEN 'pending' ELSE stage END,
+    vanished_since = :now, updated_at = :now
+WHERE storage_id IN (SELECT value FROM json_each(:ids)) AND vanished_since IS NULL
+RETURNING media_id, state
+"""
+# Back in the list. Never a download: a reference without a content goes on
+# where it stood; a keyed one on a storage without a duty to prove is active
+# again. Every other one with a content (SMB and SFTP, or a proof that had
+# not passed) is unreadable and probing: no hit until its own read proof
+# passed, and the capture takes that proof first, exactly like a restore from
+# the trash (D-02-12, plan 02-15b). Every CASE reads the values before the
+# update.
+_MARK_PRESENT: Final = """
+UPDATE file_ref SET
+    state = CASE WHEN state <> 'vanished' THEN state
+                 WHEN media_id IS NULL THEN 'active'
+                 WHEN stage = 'keyed' AND storage_id NOT IN (SELECT value FROM json_each(:groupable)) THEN 'active'
+                 ELSE 'unreadable' END,
+    stage = CASE WHEN state <> 'vanished' OR media_id IS NULL THEN stage
+                 WHEN stage = 'keyed' AND storage_id NOT IN (SELECT value FROM json_each(:groupable)) THEN 'keyed'
+                 ELSE 'probing' END,
+    next_try_at = CASE WHEN state <> 'vanished' OR media_id IS NULL THEN next_try_at
+                       WHEN stage = 'keyed' AND storage_id NOT IN (SELECT value FROM json_each(:groupable))
+                       THEN next_try_at
+                       ELSE NULL END,
+    vanished_since = NULL, updated_at = :now
+WHERE storage_id IN (SELECT value FROM json_each(:ids)) AND vanished_since IS NOT NULL
+RETURNING media_id, state
+"""
+# The renewed read proof (D-02-12): an active keyed reference on SMB or SFTP
+# whose last proof is older than the limit is due again. The capture proves it
+# like a further copy, confirm_proof or fail_proof decide.
+_MARK_REPROOF_DUE: Final = """
+UPDATE file_ref SET stage = 'probing', next_try_at = NULL, updated_at = :now
+WHERE storage_id IN (SELECT value FROM json_each(:ids)) AND state = 'active' AND stage = 'keyed'
+  AND media_id IS NOT NULL AND (proved_at IS NULL OR proved_at < :older_than)
+"""
+# What the walk compares a slice with.
+_RECONCILE_ROWS: Final = """
+SELECT file_id, storage_id, etag, size, mtime, state FROM file_ref
+WHERE file_id IN (SELECT value FROM json_each(?))
+"""
+# A reference of a fully walked storage that no slice carried any more and
+# that nothing touched since the walk began lies outside every walk root: a
+# folder in the trash (no event for the files in it, deferred items 02-18) or
+# a file removed behind Nextcloud's back. It is set aside like a file in the
+# trash (D-02-09): no hit, not counted, its content marked; a restore brings
+# it back without a download, through the walk and the pre-check of PHP.
+_MARK_MISSING: Final = """
+UPDATE file_ref SET state = 'trashed',
+    stage = CASE WHEN stage = 'fetching' THEN 'pending'
+                 WHEN stage = 'probing' AND state <> 'active' THEN 'failed'
+                 ELSE stage END,
+    updated_at = :now
+WHERE storage_id IN (SELECT value FROM json_each(:storages)) AND state IN ('active', 'unreadable')
+  AND updated_at < :before AND file_id NOT IN (SELECT value FROM json_each(:seen))
+RETURNING media_id
+"""
+
 _INSERT_TRANSCRIPT: Final = """
 INSERT INTO transcript (media_id, engine, model_sha256, config_version, profile, level, epoch, language,
                         input_file_sha256, created_at)
@@ -1254,6 +1328,11 @@ class Store:
         One transaction, the ids as one JSON text. Only contents of the
         removed references are looked at (T-02-56).
         """
+        return self._remove_refs(file_ids, storage_ids, cause, now).forgotten
+
+    def _remove_refs(
+        self, file_ids: Sequence[int] | None, storage_ids: Sequence[int] | None, cause: str, now: int | None
+    ) -> _Removal:
         if cause not in REMOVE_CAUSES:
             raise ValueError("invalid removal field: cause")
         if (file_ids is None) == (storage_ids is None):
@@ -1267,7 +1346,98 @@ class Store:
         with self._transaction():
             self._remove(statement, ids, cause, moment, tally)
         _log_removal(tally, cause)
-        return tally.forgotten
+        return tally
+
+    # The reconcile (plan 02-20), called only from worker/reconcile.py.
+
+    def remove_storages(
+        self, storage_ids: Sequence[int], cause: RemoveCause, now: int | None = None
+    ) -> tuple[int, int]:
+        """remove_refs by storage for the sweep; returns (references removed, contents marked orphaned)."""
+        if not storage_ids:
+            return 0, 0
+        tally = self._remove_refs(None, storage_ids, cause, now)
+        return tally.references, tally.orphaned
+
+    def reconcile_storages(self, *, unmarked: bool = False) -> set[int]:
+        """The storages that hold references; with ``unmarked`` only those with a reference not vanished yet."""
+        statement = _UNMARKED_STORAGES if unmarked else _STORAGES_WITH_REFS
+        return {int(row[0]) for row in self._conn.execute(statement)}
+
+    def vanished_storages(self, before: int) -> set[int]:
+        """The storages whose first absence lies at or before ``before``."""
+        return {int(row[0]) for row in self._conn.execute(_MARKED_STORAGES, {"before": before})}
+
+    def mark_vanished(self, storage_ids: Sequence[int], now: int | None = None) -> tuple[int, int]:
+        """Set the references of deselected storages aside as vanished; returns (vanished, contents marked)."""
+        ids = _id_list(storage_ids, 0, "storage_ids")
+        if not ids:
+            return 0, 0
+        moment = _now() if now is None else now
+        with self._transaction():
+            rows = self._conn.execute(_MARK_VANISHED, {"ids": json.dumps(ids), "now": moment}).fetchall()
+            orphaned = sum(
+                self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": moment}).rowcount
+                for media_id in sorted({int(row[0]) for row in rows if row[0] is not None})
+            )
+        vanished = sum(1 for row in rows if row[1] == "vanished")
+        if rows:
+            _LOG.info("references vanished", extra={"references": vanished, "orphaned": orphaned})
+        return vanished, orphaned
+
+    def mark_present(self, storage_ids: Sequence[int], groupable: Sequence[int], now: int | None = None) -> int:
+        """Bring the references of storages back in the list back, never with a download; returns how many."""
+        ids = _id_list(storage_ids, 0, "storage_ids")
+        group = _id_list(groupable, 0, "groupable")
+        if not ids:
+            return 0
+        moment = _now() if now is None else now
+        values = {"ids": json.dumps(ids), "groupable": json.dumps(group), "now": moment}
+        with self._transaction():
+            rows = self._conn.execute(_MARK_PRESENT, values).fetchall()
+            for media_id in sorted({int(row[0]) for row in rows if row[0] is not None and row[1] == "active"}):
+                self._conn.execute(_CLEAR_ORPHAN, (media_id,))
+        if rows:
+            _LOG.info("references back", extra={"references": len(rows)})
+        return len(rows)
+
+    def mark_reproof_due(self, storage_ids: Sequence[int], older_than: int, now: int | None = None) -> int:
+        """Make the read proof of active keyed references on these storages due when older than ``older_than``."""
+        ids = _id_list(storage_ids, 0, "storage_ids")
+        if not ids:
+            return 0
+        moment = _now() if now is None else now
+        with self._transaction():
+            due = self._conn.execute(
+                _MARK_REPROOF_DUE, {"ids": json.dumps(ids), "older_than": older_than, "now": moment}
+            ).rowcount
+        if due:
+            _LOG.info("read proofs due", extra={"references": due})
+        return due
+
+    def reconcile_rows(self, file_ids: Sequence[int]) -> dict[int, tuple[int, str, int, int, str]]:
+        """storage_id, etag, size, mtime and state of the known files among ``file_ids``."""
+        rows = self._conn.execute(_RECONCILE_ROWS, (json.dumps(list(file_ids)),))
+        return {int(r[0]): (int(r[1]), str(r[2]), int(r[3]), int(r[4]), str(r[5])) for r in rows}
+
+    def mark_missing(
+        self, storage_ids: Sequence[int], seen: Sequence[int], before: int, now: int | None = None
+    ) -> tuple[int, int]:
+        """Set aside the references of fully walked storages no slice carried; returns (set aside, marked)."""
+        ids = _id_list(storage_ids, 0, "storage_ids")
+        if not ids:
+            return 0, 0
+        moment = _now() if now is None else now
+        values = {"storages": json.dumps(ids), "seen": json.dumps(list(seen)), "before": before, "now": moment}
+        with self._transaction():
+            rows = self._conn.execute(_MARK_MISSING, values).fetchall()
+            orphaned = sum(
+                self._conn.execute(_MARK_ORPHANED, {"m": media_id, "now": moment}).rowcount
+                for media_id in sorted({int(row[0]) for row in rows if row[0] is not None})
+            )
+        if rows:
+            _LOG.info("references set aside", extra={"references": len(rows), "orphaned": orphaned, "cause": "missing"})
+        return len(rows), orphaned
 
     def forget_media(self, media_id: int) -> bool:
         """Forget one content no reference points at any more; False when one does or nothing is known of it."""
