@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
+use OCA\AudioVideoSearch\Command\ReconcileCommand;
 use OCA\AudioVideoSearch\Controller\ReconcileController;
 use OCA\AudioVideoSearch\Db\CrawlMapper;
 use OCA\AudioVideoSearch\Db\QueueMapper;
 use OCA\AudioVideoSearch\Db\StorageStateMapper;
+use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\QueueService;
 use OCA\AudioVideoSearch\Service\StorageService;
 use OCP\AppFramework\Http;
@@ -21,6 +23,9 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
  * The reconcile routes as the container sees them (plan 02-19, DISC-04).
@@ -28,9 +33,11 @@ use Psr\Log\LoggerInterface;
  * Storage 3 is a home (walk root 11), storage 7 an external SMB storage
  * (walk root 30, share key stored, capturable), storage 9 an external storage
  * that is not capturable. backend/tests/test_php_gates.py rule 16 holds that
- * requeue enqueues only after admissible; this suite holds the answers.
+ * requeue enqueues only after admissible; this suite holds the answers,
+ * and those of occ audio_video_search:reconcile.
  */
 #[CoversClass(ReconcileController::class)]
+#[CoversClass(ReconcileCommand::class)]
 final class ReconcileControllerTest extends TestCase {
 	private const WEBM = 5;
 	private const TEXT = 6;
@@ -367,5 +374,79 @@ final class ReconcileControllerTest extends TestCase {
 		$this->queue = $queue;
 
 		self::assertSame(Http::STATUS_INTERNAL_SERVER_ERROR, $this->controller()->requeue([41])->getStatus());
+	}
+
+	// -- occ audio_video_search:reconcile -------------------------------------------
+
+	/** @return array<string, int|string|null> */
+	private static function counters(?string $skipped = null): array {
+		return ['swept' => 2, 'vanished' => 1, 'orphaned' => 0, 'walkedMounts' => 3, 'requeued' => 4, 'rejected' => 1, 'reproofDue' => 0, 'skippedReason' => $skipped];
+	}
+
+	/**
+	 * @param array<string, int|string|null>|null $answer
+	 * @param list<bool> $calls
+	 */
+	private function runReconcile(?array $answer, array $input, array &$calls, BufferedOutput $output): int {
+		$exApp = $this->createMock(ExAppService::class);
+		$exApp->method('reconcileNow')->willReturnCallback(static function (bool $reprove) use ($answer, &$calls): ?array {
+			$calls[] = $reprove;
+
+			return $answer;
+		});
+
+		return (new ReconcileCommand($exApp))->run(new ArrayInput($input), $output);
+	}
+
+	public function testReconcileRunsOneRoundAndPrintsTheCounters(): void {
+		$calls = [];
+		$output = new BufferedOutput();
+
+		$code = $this->runReconcile(self::counters(), [], $calls, $output);
+
+		self::assertSame(Command::SUCCESS, $code);
+		self::assertSame([false], $calls);
+		$text = $output->fetch();
+		foreach (['swept: 2', 'vanished: 1', 'orphaned: 0', 'walkedMounts: 3', 'requeued: 4', 'rejected: 1', 'reproofDue: 0'] as $line) {
+			self::assertStringContainsString($line, $text);
+		}
+		self::assertStringNotContainsString('skipped', $text);
+	}
+
+	public function testReproveAsksForTheReadProofOfEveryGroupableReference(): void {
+		$calls = [];
+
+		$code = $this->runReconcile(self::counters(), ['--reprove' => true], $calls, new BufferedOutput());
+
+		self::assertSame(Command::SUCCESS, $code);
+		self::assertSame([true], $calls);
+	}
+
+	public function testASkippedRoundNamesItsReason(): void {
+		$calls = [];
+		$output = new BufferedOutput();
+
+		$this->runReconcile(self::counters('mounts_unavailable'), [], $calls, $output);
+
+		self::assertStringContainsString('Reconcile skipped: mounts_unavailable', $output->fetch());
+	}
+
+	public function testABackendThatDoesNotAnswerIsAFailureWithOneSentence(): void {
+		$calls = [];
+		$output = new BufferedOutput();
+
+		$code = $this->runReconcile(null, [], $calls, $output);
+
+		self::assertSame(Command::FAILURE, $code);
+		self::assertSame("Backend not reachable.\n", $output->fetch());
+	}
+
+	public function testTheCommandIsNamedAndListedInInfoXml(): void {
+		$command = new ReconcileCommand($this->createMock(ExAppService::class));
+		$info = (string)file_get_contents(__DIR__ . '/../../appinfo/info.xml');
+
+		self::assertSame('audio_video_search:reconcile', $command->getName());
+		self::assertTrue($command->getDefinition()->hasOption('reprove'));
+		self::assertStringContainsString('<command>OCA\AudioVideoSearch\Command\ReconcileCommand</command>', $info);
 	}
 }

@@ -454,4 +454,57 @@ final class ExAppServiceTest extends TestCase {
 		self::assertSame(['active', 'unreadable', 'vanished', 'trashed'], ExAppService::WORK_STATES);
 		self::assertSame(['pending', 'probing', 'fetching', 'keyed', 'failed'], ExAppService::WORK_STAGES);
 	}
+
+	// -- the reconcile of the container (plan 02-19) -----------------------------------
+
+	/** @return array<string, mixed> */
+	private static function reconcileAnswer(array $override = []): array {
+		return $override + ['swept' => 2, 'vanished' => 1, 'orphaned' => 0, 'walkedMounts' => 3, 'requeued' => 4, 'rejected' => 1, 'reproofDue' => 0, 'skippedReason' => null];
+	}
+
+	public function testReconcileNowPostsTheReproveFlagAsAnAdminWithTheLongTimeout(): void {
+		$service = $this->adminService($this->json(self::reconcileAnswer()));
+
+		self::assertSame(self::reconcileAnswer(), $service->reconcileNow(false));
+		self::assertSame(self::reconcileAnswer(), $service->reconcileNow(true));
+
+		self::assertSame('/reconcile/run', $this->calls[0]['path']);
+		self::assertSame('POST', $this->calls[0]['method']);
+		self::assertSame('root', $this->calls[0]['userId']);
+		self::assertSame(['reprove' => false], $this->calls[0]['params']);
+		self::assertSame(['reprove' => true], $this->calls[1]['params']);
+		self::assertSame(120.0, $this->calls[0]['timeout']);
+		self::assertSame(120.0, ExAppService::RECONCILE_TIMEOUT_SECONDS);
+		self::assertSame(array_keys(self::reconcileAnswer()), ExAppService::RECONCILE_KEYS);
+	}
+
+	public function testASkippedRoundKeepsItsReasonCode(): void {
+		$answer = self::reconcileAnswer(['skippedReason' => 'mounts_unavailable']);
+
+		self::assertSame($answer, $this->adminService($this->json($answer))->reconcileNow(false));
+	}
+
+	/** @return array<string, array{array<string, mixed>}> */
+	public static function malformedReconcile(): array {
+		return [
+			'extra key' => [self::reconcileAnswer() + ['path' => '/x']],
+			'missing key' => [array_diff_key(self::reconcileAnswer(), ['swept' => 0])],
+			'negative' => [self::reconcileAnswer(['requeued' => -1])],
+			'text number' => [self::reconcileAnswer(['swept' => '2'])],
+			'reason with a path' => [self::reconcileAnswer(['skippedReason' => '/files/a'])],
+			'reason not text' => [self::reconcileAnswer(['skippedReason' => 3])],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider('malformedReconcile')]
+	public function testAReconcileAnswerOutOfShapeIsNoAnswer(array $answer): void {
+		self::assertNull($this->adminService($this->json($answer))->reconcileNow(false));
+	}
+
+	public function testAReconcileWithoutABackendOrAnAdminIsNoAnswer(): void {
+		self::assertNull($this->adminService(['error' => 'refused'])->reconcileNow(false));
+		self::assertNull($this->adminService($this->answer('{}', 500))->reconcileNow(false));
+		self::assertNull($this->adminService($this->json(self::reconcileAnswer()), null)->reconcileNow(false));
+		self::assertCount(2, $this->calls);
+	}
 }
