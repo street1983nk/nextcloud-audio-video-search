@@ -611,10 +611,11 @@ def _php_list(name: str) -> list[str]:
 def test_the_php_app_checks_the_same_closed_lists_and_keys() -> None:
     """ExAppService (plan 02-10) validates /workstock and /coverage against these lists."""
     from audio_video_search_backend.store import coverage as counting
-    from audio_video_search_backend.store.repo import STAGES, STATES
+    from audio_video_search_backend.store.repo import PREVIEW_REASONS, PREVIEW_STATES, STAGES, STATES
 
     assert set(_php_list("WORK_STATES")) == STATES
     assert set(_php_list("WORK_STAGES")) == STAGES
+    assert set(_php_list("PREVIEW_NAMES")) == PREVIEW_STATES | PREVIEW_REASONS
     assert _php_list("WORKSTOCK_KEYS") == ["fileId", "mediaId", "storageId", "state", "stage", "reason"]
-    wire = counting.Coverage(0, 0, 0, {}, {}, 0).as_wire()
+    wire = counting.Coverage(0, 0, 0, {}, {}, 0, {}).as_wire()
     assert set(_php_list("COVERAGE_KEYS")) == set(wire)

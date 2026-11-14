@@ -355,6 +355,7 @@ final class ExAppServiceTest extends TestCase {
 			'byState' => ['active' => 6, 'trashed' => 0, 'unreadable' => 1, 'vanished' => 0],
 			'byStage' => ['failed' => 1, 'fetching' => 0, 'keyed' => 3, 'pending' => 3, 'probing' => 0],
 			'dueWork' => 3,
+			'byPreview' => ['no_speech' => 1, 'queued' => 2] + array_fill_keys(ExAppService::PREVIEW_NAMES, 0),
 		];
 	}
 
@@ -421,6 +422,9 @@ final class ExAppServiceTest extends TestCase {
 		self::assertSame(ExAppService::COVERAGE_KEYS, array_keys($coverage));
 		self::assertSame(ExAppService::WORK_STATES, array_keys($coverage['byState']));
 		self::assertSame(ExAppService::WORK_STAGES, array_keys($coverage['byStage']));
+		self::assertSame(ExAppService::PREVIEW_NAMES, array_keys($coverage['byPreview']));
+		self::assertSame(2, $coverage['byPreview']['queued']);
+		self::assertSame(1, $coverage['byPreview']['no_speech']);
 		self::assertSame(1, $coverage['transcribed']);
 		self::assertSame('/coverage', $this->calls[0]['path']);
 		self::assertSame('GET', $this->calls[0]['method']);
@@ -435,6 +439,10 @@ final class ExAppServiceTest extends TestCase {
 			'over 100 percent' => [self::coverageAnswer(['transcribed' => 5])],
 			'unknown state' => [self::coverageAnswer(['byState' => ['active' => 1, 'gone' => 0, 'trashed' => 0, 'unreadable' => 0]])],
 			'missing stage' => [self::coverageAnswer(['byStage' => ['keyed' => 1]])],
+			'without byPreview' => [array_diff_key(self::coverageAnswer(), ['byPreview' => true])],
+			'missing preview name' => [self::coverageAnswer(['byPreview' => ['queued' => 1]])],
+			'preview reason with text' => [self::coverageAnswer(['byPreview' => ['Sitzung.mp4' => 1] + array_diff_key(array_fill_keys(ExAppService::PREVIEW_NAMES, 0), ['queued' => true])])],
+			'negative preview count' => [self::coverageAnswer(['byPreview' => ['queued' => -1] + array_fill_keys(ExAppService::PREVIEW_NAMES, 0)])],
 		];
 	}
 
