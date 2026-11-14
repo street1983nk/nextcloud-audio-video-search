@@ -66,12 +66,16 @@ def test_revision_is_a_commit(fs: ModuleType) -> None:
     assert fs.DATASET == "google/fleurs"
 
 
-def test_two_clips_de_and_tr(fs: ModuleType) -> None:
-    assert [clip.name for clip in fs.CLIPS] == ["speech_de.wav", "speech_tr.wav"]
-    assert [clip.tar_path for clip in fs.CLIPS] == ["data/de_de/audio/test.tar.gz", "data/tr_tr/audio/test.tar.gz"]
+def test_three_clips_de_tr_and_es(fs: ModuleType) -> None:
+    assert [clip.name for clip in fs.CLIPS] == ["speech_de.wav", "speech_tr.wav", "speech_es.wav"]
+    assert [clip.tar_path for clip in fs.CLIPS] == [
+        "data/de_de/audio/test.tar.gz",
+        "data/tr_tr/audio/test.tar.gz",
+        "data/es_419/audio/test.tar.gz",
+    ]
 
 
-@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("index", [0, 1, 2])
 def test_clip_pins_are_well_formed(fs: ModuleType, index: int) -> None:
     clip = fs.CLIPS[index]
     assert HEX64.fullmatch(clip.member_sha256)
@@ -89,6 +93,7 @@ def test_expected_word_is_in_the_expected_text(fs: ModuleType) -> None:
     assert re.fullmatch(r"[a-z]{7,}", word)
     assert word in fs.EXPECTED_TEXT.lower().split()
     assert fs.SPEECH_TR.expected_word is None
+    assert fs.SPEECH_ES.expected_word is None
 
 
 def test_pick_member_takes_the_named_member(fs: ModuleType) -> None:

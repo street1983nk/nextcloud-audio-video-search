@@ -4,10 +4,14 @@ TRANS-01 and TRANS-08 on real output: the German clip gives its expected word
 with a media time inside the clip, the same clip at a chunk offset of 10 min
 gives the same word 600 000 ms later, five seconds of silence give no word, and
 the Turkish clip keeps no window (TRANS-03, the catch rule on real output).
+D-03-22: the file verdict, counted the way the preview worker counts (worker/preview.take,
+the second pass for files up to 60 s), is "transcript" for the German clip and
+"unsupported_language" for the Spanish clip (Parakeet transcribes it, the text
+language drops it) and for the Turkish clip (Parakeet gives almost no word).
 
 Needs the pinned models (AVS_TEST_MODELS, the root ``procure --root`` filled)
 and the clips of ci/media/fetch_speech.py (AVS_TEST_SPEECH, AVS_TEST_SPEECH_TR,
-AVS_TEST_WORD). Without them every test skips with its reason; under CI=true it
+AVS_TEST_SPEECH_ES, AVS_TEST_WORD). Without them every test skips with its reason; under CI=true it
 fails instead, because CI fetches both through its cache and the coverage floor
 counts on these tests. Serial by nature: one child, one model in memory.
 """
@@ -24,11 +28,19 @@ import numpy as np
 import pytest
 
 from audio_video_search_backend import memory_guard
-from audio_video_search_backend.engine.catch import KEEP
+from audio_video_search_backend.engine.catch import (
+    DROP_LANGUAGE,
+    KEEP,
+    TRANSCRIPT,
+    UNSUPPORTED_LANGUAGE,
+    file_verdict,
+    needs_second_pass,
+)
 from audio_video_search_backend.engine.child import OK, EngineWorker
 from audio_video_search_backend.engine.constants import SAMPLE_RATE
 from audio_video_search_backend.engine.parakeet import Window
 from audio_video_search_backend.models import procure
+from audio_video_search_backend.worker.preview import take
 from tests.media_fixtures import missing
 
 pytestmark = pytest.mark.model
@@ -170,3 +182,46 @@ def test_the_turkish_clip_keeps_no_window(worker: EngineWorker) -> None:
     assert sum(window.speech_ms for window in windows) > 0
     assert all(window.verdict != KEEP for window in windows)
     assert all(window.words == () for window in windows)
+
+
+def _file_verdict(worker: EngineWorker, pcm: bytes, clip_ms: int) -> str:
+    """The verdict of the clip as one file, counted like worker/preview.py."""
+    code, first = worker.ask(pcm, 0, False)
+    assert code == OK
+    counters = take(first, 0, None).counters
+    kept, script, language, conf = counters.kept_words, counters.drop_script, counters.drop_language, counters.drop_conf
+    if needs_second_pass(kept, clip_ms, False):
+        code, second = worker.ask(pcm, 0, True)
+        assert code == OK
+        again = take(second, 0, None, count_speech=False).counters
+        kept += again.kept_words
+        script += again.drop_script
+        language += again.drop_language
+        conf += again.drop_conf
+    return file_verdict(kept, script, language, conf, counters.speech_ms, clip_ms)
+
+
+def test_the_german_clip_is_a_transcript(worker: EngineWorker) -> None:
+    pcm, clip_ms = _pcm(_path("AVS_TEST_SPEECH"))
+
+    assert _file_verdict(worker, pcm, clip_ms) == TRANSCRIPT
+
+
+def test_the_spanish_clip_is_transcribed_and_dropped_by_its_text_language(worker: EngineWorker) -> None:
+    pcm, clip_ms = _pcm(_path("AVS_TEST_SPEECH_ES"))
+
+    code, windows = worker.ask(pcm, 0, False)
+
+    assert code == OK
+    # Parakeet knows Spanish: the windows carry words, and the catch rule drops them by language.
+    assert sum(window.n_words for window in windows) >= 10
+    assert all(window.verdict == DROP_LANGUAGE for window in windows if window.n_words)
+    assert all(window.lid == "es" for window in windows if window.n_words)
+    assert _file_verdict(worker, pcm, clip_ms) == UNSUPPORTED_LANGUAGE
+
+
+def test_the_turkish_clip_is_unsupported_language(worker: EngineWorker) -> None:
+    """D-03-22: much speech by the VAD, no or almost no word from Parakeet."""
+    pcm, clip_ms = _pcm(_path("AVS_TEST_SPEECH_TR"))
+
+    assert _file_verdict(worker, pcm, clip_ms) == UNSUPPORTED_LANGUAGE

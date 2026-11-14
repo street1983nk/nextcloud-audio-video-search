@@ -152,6 +152,7 @@ jobs:
           echo "AVS_TEST_MODELS=$RUNNER_TEMP/avs-models" >> "$GITHUB_ENV"
           echo "AVS_TEST_SPEECH=$RUNNER_TEMP/avs-speech/speech_de.wav" >> "$GITHUB_ENV"
           echo "AVS_TEST_SPEECH_TR=$RUNNER_TEMP/avs-speech/speech_tr.wav" >> "$GITHUB_ENV"
+          echo "AVS_TEST_SPEECH_ES=$RUNNER_TEMP/avs-speech/speech_es.wav" >> "$GITHUB_ENV"
           echo "AVS_TEST_WORD=$WORD" >> "$GITHUB_ENV"
 
       # -rs names every skip with its reason; the coverage floor (fail_under in

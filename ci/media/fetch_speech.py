@@ -74,7 +74,21 @@ SPEECH_TR = Clip(
     wav_sha256="bee83b904f9c506159b0d026b66e7372839b63bc76591341c62ea73601d3dd31",
     duration_s=14.16,
 )
-CLIPS = (SPEECH_DE, SPEECH_TR)
+# Spanisch (D-03-22): Parakeet v3 transkribiert es sauber, die Abfangregel verwirft es über die
+# Text-Sprachkennung; Gegenstück zu TR, wo Parakeet fast nichts ausgibt.
+SPEECH_ES = Clip(
+    name="speech_es.wav",
+    tar_path="data/es_419/audio/test.tar.gz",
+    member="1001146817223348054.wav",
+    member_sha256="861ceedc4d50fbe52fc89b6d0c0fa740b9cd6fa668388e754064847386af0faf",
+    wav_sha256="95df54f13e862069293afca618669316d194c1b4c6601eb808b501c86292b527",
+    duration_s=12.84,
+    expected_text=(
+        "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima extremo en el "
+        "área que visitan, dado que ello puede afectar sus planes de viaje."
+    ),
+)
+CLIPS = (SPEECH_DE, SPEECH_TR, SPEECH_ES)
 EXPECTED_WORD = SPEECH_DE.expected_word
 EXPECTED_TEXT = SPEECH_DE.expected_text
 
