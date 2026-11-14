@@ -83,6 +83,20 @@ def no_capture(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(capture, "run_forever", idle)
 
 
+@pytest.fixture(autouse=True)
+def no_reconcile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lifespan starts the periodic reconcile; in tests it never asks the PHP routes.
+
+    tests/test_reconcile_sweep.py and tests/test_reconcile_walk.py run it against fakes.
+    """
+    from audio_video_search_backend.worker import reconcile
+
+    async def idle(_reconciler: object) -> None:
+        return None
+
+    monkeypatch.setattr(reconcile, "run_forever", idle)
+
+
 def signed_headers(user: str = "admin", secret: str = SECRET, app_id: str = APP_ID) -> dict[str, str]:
     """The three headers AppAPIAuthMiddleware checks."""
     token = base64.b64encode(f"{user}:{secret}".encode()).decode()

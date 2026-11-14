@@ -41,6 +41,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Final, Protocol
 
 from audio_video_search_backend import companion
@@ -62,6 +63,8 @@ VANISHED_GRACE_SECONDS: Final = 30 * 86_400
 # D-02-12: the read proof of a copy on SMB or SFTP is renewed at least this often.
 REPROOF_AGE_SECONDS: Final = 7 * 86_400
 SLICE_LIMIT: Final = 1000
+# The list limit of POST reconcile/requeue (ReconcileController::MAX_IDS).
+REQUEUE_BAND: Final = 256
 # At most this many storage ids per list in a log line; the counters stay exact.
 LOG_STORAGES: Final = 20
 # The extra fields a log line of this module may carry.
@@ -167,6 +170,21 @@ def _local_hour() -> int:
 
 def _first(storage_ids: Sequence[int]) -> list[int]:
     return list(storage_ids[:LOG_STORAGES])
+
+
+def _differs(known: tuple[int, str, int, int, str] | None, storage_id: int, etag: str, size: int, mtime: int) -> bool:
+    """Whether a file of a slice is work for the pre-check.
+
+    Unknown, other bytes, another storage (moved with its file id), or set
+    aside (trashed: back from a folder restore or a walk that missed it). A
+    vanished reference is the sweep's business, an unchanged one is done.
+    """
+    if known is None:
+        return True
+    known_storage, known_etag, known_size, known_mtime, state = known
+    if (known_storage, known_etag, known_size, known_mtime) != (storage_id, etag, size, mtime):
+        return True
+    return state == "trashed"
 
 
 class Reconciler:
@@ -300,11 +318,76 @@ class Reconciler:
     # -- the walk ----------------------------------------------------------------
 
     async def _walk(self, mounts: Sequence[MountEntry], now: int, tally: _Tally) -> str | None:
-        """Walk the mounts whose first crawl is finished; None when the walk got through."""
-        del now
-        if not any(entry.crawlFinished and entry.capturable for entry in mounts):
+        """Walk the mounts whose first crawl is finished; None when the walk got through.
+
+        Before a mount's first crawl is finished a missing or unknown file is
+        no news: the crawl hands it in anyway. A mount PHP does not let capture
+        (switched off, excluded as a whole) is not walked either; requeue would
+        refuse every file of it.
+
+        Every slice is compared with state.db and its findings are handed back
+        before the next slice is read. Nothing found new or changed is written
+        here; the walk ends without its stamp on the first slice or band that
+        does not arrive, and on stats.ok false of the work stock.
+
+        Only after every mount was walked to its end: the references of a
+        storage whose every mount was walked, which no slice carried and which
+        nothing touched since ``now``, are set aside (Store.mark_missing).
+        """
+        walkable = [entry for entry in mounts if entry.crawlFinished and entry.capturable]
+        if not walkable:
             return CRAWL_UNFINISHED
+        seen: set[int] = set()
+        for entry in walkable:
+            reason = await self._walk_mount(entry, seen, tally)
+            if reason is not None:
+                return reason
+            tally.walked_mounts += 1
+
+        walked = {entry.storageId for entry in walkable}
+        complete = sorted(
+            storage_id
+            for storage_id in walked
+            if all(entry in walkable for entry in mounts if entry.storageId == storage_id)
+        )
+        store = self._services.store
+        set_aside, orphaned = await run_locked(
+            self._services, lambda: store.mark_missing(complete, sorted(seen), now, int(self._clock()))
+        )
+        tally.set_aside += set_aside
+        tally.orphaned += orphaned
         return None
+
+    async def _walk_mount(self, entry: MountEntry, seen: set[int], tally: _Tally) -> str | None:
+        """Every slice below one walk root; a reason when the walk has to stop."""
+        store = self._services.store
+        after = 0
+        while True:
+            if self._queue_ok() is False:
+                return QUEUE_UNAVAILABLE
+            page = await self._files.slice(entry.storageId, entry.rootId, after, self._slice_limit)
+            if page is None:
+                return SLICE_UNAVAILABLE
+            ids = [row.fileId for row in page.files]
+            seen.update(ids)
+            known = await run_locked(self._services, partial(store.reconcile_rows, ids))
+            differing = [
+                row.fileId
+                for row in page.files
+                if _differs(known.get(row.fileId), entry.storageId, row.etag, row.size, row.mtime)
+            ]
+            for start in range(0, len(differing), REQUEUE_BAND):
+                answer = await self._files.requeue(differing[start : start + REQUEUE_BAND])
+                if answer is None:
+                    return REQUEUE_UNAVAILABLE
+                tally.requeued += answer.enqueued
+                tally.rejected += answer.rejected
+            if page.next is None:
+                return None
+            if page.next <= after:
+                # A cursor that does not move would walk this mount forever.
+                return SLICE_UNAVAILABLE
+            after = page.next
 
     # -- cadence -----------------------------------------------------------------
 

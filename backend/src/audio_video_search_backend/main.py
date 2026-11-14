@@ -35,6 +35,7 @@ from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, run_app, set_handlers
 from audio_video_search_backend.store.repo import Store
 from audio_video_search_backend.worker import capture, intake
+from audio_video_search_backend.worker import reconcile as file_reconcile
 
 LOGGER = logging.getLogger(APP_ID)
 
@@ -136,6 +137,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The capture: one full download per open reference, one at a time, also
     # only while the companion state is ok (worker/capture.py).
     capture_task = start_background(capture.run_forever(services), "capture")
+    # The periodic reconcile: sweep, proof planning and walk every five
+    # minutes while the PHP app is there, and POST /reconcile/run at once
+    # (worker/reconcile.py, plan 02-20).
+    reconciler, reconcile_files = file_reconcile.new_reconciler(services)
+    app.state.reconciler = reconciler
+    reconcile_task = start_background(file_reconcile.run_forever(reconciler), "file-reconcile")
     try:
         yield
     finally:
@@ -143,7 +150,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         checker.cancel()
         intake_task.cancel()
         capture_task.cancel()
+        reconcile_task.cancel()
         cancelled = await stop_background()
+        app.state.reconciler = None
+        await reconcile_files.aclose()
         app.state.services = None
         await asyncio.to_thread(services.close)
         LOGGER.info("stopped", extra={"cancelled_tasks": cancelled})
@@ -151,7 +161,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 APP = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 APP.add_middleware(AppAPIAuthMiddleware)
-# /search, /excerpt, /sample, /sample/remove, /status; contract in api/__init__.py.
+# /search, /excerpt, /sample, /sample/remove, /status, /workstock, /coverage,
+# /reconcile/run; contract in api/__init__.py.
 APP.include_router(build_router())
 
 

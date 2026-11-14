@@ -211,11 +211,11 @@ async def test_a_sweep_is_not_due_again_within_a_day(store: Store) -> None:
 async def test_a_storage_that_leaves_the_list_is_swept_at_the_next_tick(store: Store) -> None:
     ref(store, 10, LOCAL, sha=SHA_A)
     ref(store, 20, LEFT, sha=SHA_B)
-    files = FakeFiles(MountList(ok=True, mounts=[mount(LOCAL), mount(LEFT)]))
+    files = FakeFiles(MountList(ok=True, mounts=[mount(LOCAL, finished=False), mount(LEFT, finished=False)]))
     clock = Clock()
     rounds = reconciler(store, files, clock)
     await rounds.run_once()
-    files.listing = MountList(ok=True, mounts=[mount(LOCAL)])
+    files.listing = MountList(ok=True, mounts=[mount(LOCAL, finished=False)])
     files.classification = Classification(gone=[], deselected=[LEFT], present=[])
     clock.at += 300
 

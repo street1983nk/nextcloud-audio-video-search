@@ -388,7 +388,7 @@ def test_the_route_runs_sweep_proof_planning_and_walk_at_once(client: TestClient
     assert found.stage == "probing"
 
 
-@pytest.mark.parametrize("body", [{}, {"reprove": "yes"}, {"reprove": True, "path": "/x"}])
+@pytest.mark.parametrize("body", [{}, {"reprove": "yes"}, {"reprove": 1}])
 def test_the_route_takes_exactly_its_body(client: TestClient, body: dict[str, object]) -> None:
     assert client.post("/reconcile/run", json=body, headers=signed_headers()).status_code == 422
 
