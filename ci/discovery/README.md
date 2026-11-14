@@ -127,3 +127,55 @@ search term is `AVS_SPEECH_WORD`.
 - `parity.sh settle` runs once before the phases: with the models present the
   preview fetches every test medium through the gateway, and those lines must
   not fall into the window of a later phase. Bounded, never a verdict.
+
+## Phase play-leak (plan 03-18b, D-03-24)
+
+The leak probe P12 of the UI-SPEC on the real play page: a reference that is
+not `active` for the person who opens `/index.php/apps/audio_video_search/play/<fileId>?t=<s>`
+shows the excerpt block of a file without a transcript (A5), byte for byte,
+and nothing of the transcript, the reason or the stage. deploy-harp cannot
+reach the case (one reference per file id, read as the owner), so it lives
+here, as the 22nd phase. `playpage.sh` holds it:
+
+- `p12a`, never active: ana opens `SMB/rede-gesperrt.wav` (Samba denies her
+  the bytes before Nextcloud saw the file; the page is ready because Nextcloud
+  lists the file as readable, the read proof fails). The positive control is
+  `rede-geteilt.wav` in her home, the same clip, an active reference, opened
+  at the time mark of its first search hit; its block has to carry the clip
+  word. The probe uses the same time mark and must not be a hit of ana's search.
+- `p12b`, revoked: cem opens `SMB/widerruf.webm`. In the phase reprove,
+  `playpage.sh before-revoke` saves the reference and cem's page while his
+  reference is active (positive control), `playpage.sh after-revoke` saves his
+  page after `revoke_cem`, `reconcile --reprove` and `compare.sh reprove`,
+  before `vanish` takes his mount away. Neither gives a verdict of the phase.
+- The reference for A5 is ana's `privat/p.webm` (folder excluded before the
+  first run). `check` fetches it again and has to see the same bytes as in the
+  phase reprove.
+- Two independent patterns per probe: the bytes of the block against the
+  reference (`same_bytes`), and the structure against the literal texts of the
+  UI-SPEC table in English (`is_a5`: one label "Excerpt at this point", one hint
+  "There is no transcript for this file yet.", no excerpt, no note, neither the
+  clip word nor the sentence T5).
+- The state of the reference comes from two sources: `occ
+  audio_video_search:files --json --all` and a copy of `state.db` read with
+  sqlite3 of the runner. Both need a row, both have to agree, neither may say
+  `active`.
+- INVALID, never PASS: the page is not ready (no medium, no block), the
+  reference is active, unknown or the two sources disagree, or the control
+  shows no difference. Only `PLAY CONTROL SHOWED THE DIFF p12a` and `... p12b`,
+  both probes PASS and the self test give `PHASE PASS play-leak`.
+- `playpage.sh --self-test` runs offline on synthetic pages in a temporary
+  folder: the probe equal to the reference passes; a blockquote, the sentence
+  T5, one more space (bytes only, the structure alone passes) and another A5
+  text (both patterns) fail; a page without the block, a control equal to the
+  reference, an active reference, an unknown reference and two disagreeing
+  sources are INVALID. `check` runs it first; without `PLAY SELF-TEST PASSED`
+  there is no verdict.
+- The pages are fetched with basic auth; when that gives no page the script
+  says `NOTE basic auth refused (http=N), signing in with a session` and signs
+  in through `/index.php/login`. The saved pages (`play-*.html`) are the
+  evidence in the logs artifact; the look of the block is the screenshot of P4
+  in deploy-harp (owner 14.11.2026).
+- files_accesscontrol (`rede-sperre.wav`) does not fit P12: the rule takes the
+  read permission out of the cache entry, so the play page is not ready and
+  shows no block to compare.
