@@ -31,14 +31,6 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from audio_video_search_backend.worker.preview import (
-    IDLE_SECONDS,
-    MAX_ENGINE_ATTEMPTS,
-    NO_ROOM_RETRY_SECONDS,
-    PROFILE,
-    Preview,
-    PreviewOutcome,
-)
 
 from audio_video_search_backend import companion, nc
 from audio_video_search_backend.api import Services
@@ -56,6 +48,14 @@ from audio_video_search_backend.models import catalog, procure
 from audio_video_search_backend.store.repo import ChunkCounters, IntakeItem, Store
 from audio_video_search_backend.worker import preview as preview_module
 from audio_video_search_backend.worker.capture import DISK_FULL_RETRY_SECONDS
+from audio_video_search_backend.worker.preview import (
+    IDLE_SECONDS,
+    MAX_ENGINE_ATTEMPTS,
+    NO_ROOM_RETRY_SECONDS,
+    PROFILE,
+    Preview,
+    PreviewOutcome,
+)
 
 NOW = 1_800_000_000
 HEAD = "9" * 64
@@ -1123,8 +1123,8 @@ async def test_prepare_removes_left_over_files_of_a_stopped_process(
     assert _job(db, media_id)["state"] == "queued"
 
 
+@pytest.mark.usefixtures("companion_ok")
 async def test_logs_carry_no_path_and_no_word(
-    companion_ok: None,
     worker: Preview,
     store: Store,
     gateway: Gateway,
@@ -1163,10 +1163,12 @@ async def _no_sleep(_seconds: float) -> None:
 # -- run_forever ---------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("companion_ok")
 async def test_without_ready_models_no_job_is_taken(
-    companion_ok: None, worker: Preview, store: Store, gateway: Gateway, media: Media, engine: FakeEngine, db: Path
+    worker: Preview, store: Store, gateway: Gateway, media: Media, engine: FakeEngine, db: Path
 ) -> None:
     media_id = _add(store, gateway, media, 11, duration_ms=MIN)
+    engine.first = [spread(1000, 9000, "w")]
     procure.mark_ready(False)
     slept: list[float] = []
 
@@ -1197,8 +1199,8 @@ async def test_without_the_php_app_no_job_is_taken(
     assert gateway.requests == 0
 
 
+@pytest.mark.usefixtures("companion_ok")
 async def test_the_loop_outlives_a_failing_step(
-    companion_ok: None,
     services: Services,
     tmp_dir: Path,
     gateway: Gateway,
