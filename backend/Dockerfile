@@ -135,9 +135,14 @@ COPY appinfo /app/appinfo
 COPY l10n /app/l10n
 # The build context is backend/, so the licence text at the repository root
 # stays out (as in Findling); the image names it in the licenses label above.
+# huggingface-hub arrives later through faster-whisper and must never touch the
+# network: models only come through the own downloader with a fixed sha256
+# (STACK.md "What NOT to Use", plan 03-07b).
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HF_HUB_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1
 WORKDIR /app
 USER 10001:10001
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 CMD ["/healthcheck.sh"]

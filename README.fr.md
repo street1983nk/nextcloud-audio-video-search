@@ -52,9 +52,9 @@ L'application conserve transcriptions et index dans le volume de données de son
 
 AGPL-3.0-or-later. Voir [LICENSE](LICENSE).
 
-Composants tiers dans l'image du backend :
+Composants tiers du backend :
 
 - Liste de mots allemande `wngerman` (Debian), GPL-2.0-or-later, pour décomposer les mots composés ; texte de licence dans l'image sous `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
-- Pour la transcription, les versions ultérieures prévoient Parakeet TDT 0.6B v3 de NVIDIA (CC-BY-4.0) et Whisper (MIT). La phase 1 ne contient encore aucun modèle.
+- Pour la transcription, l'ExApp télécharge à l'activation Parakeet TDT 0.6B v3 de NVIDIA (CC-BY-4.0) et Silero VAD (MIT) depuis la release GitHub propre au projet `models-2026-11` et vérifie chaque fichier avec un sha256 fixe ; sans accès à Internet, les administrateurs peuvent déposer eux-mêmes les mêmes fichiers ; Whisper (MIT) est prévu pour des versions ultérieures.
 
 Icônes de l'application PHP : Material Design Icons de Pictogrammers, Apache-2.0, texte de licence dans [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).

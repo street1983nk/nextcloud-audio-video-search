@@ -52,9 +52,9 @@ Die App speichert Transkripte und Index im Datenvolumen ihres Containers.
 
 AGPL-3.0-or-later. Siehe [LICENSE](LICENSE).
 
-Bestandteile Dritter im Image des Backends:
+Bestandteile Dritter im Backend:
 
 - Deutsche Wortliste `wngerman` (Debian), GPL-2.0-or-later, für die Zerlegung zusammengesetzter Wörter; Lizenztext im Image unter `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
-- Für die Transkription sind in späteren Versionen Parakeet TDT 0.6B v3 von NVIDIA (CC-BY-4.0) und Whisper (MIT) vorgesehen. Phase 1 enthält noch kein Modell.
+- Für die Transkription lädt die ExApp beim Aktivieren Parakeet TDT 0.6B v3 von NVIDIA (CC-BY-4.0) und Silero VAD (MIT) aus dem eigenen GitHub-Release `models-2026-11` und prüft jede Datei gegen einen festen sha256; ohne Internetzugang können Admins dieselben Dateien selbst ablegen; Whisper (MIT) ist für spätere Versionen vorgesehen.
 
 Symbole der PHP-App: Material Design Icons von Pictogrammers, Apache-2.0, Lizenztext unter [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).

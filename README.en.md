@@ -52,9 +52,9 @@ The app keeps transcripts and index in the data volume of its container.
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
 
-Third-party parts in the backend image:
+Third-party components of the backend:
 
 - German word list `wngerman` (Debian), GPL-2.0-or-later, for splitting compound words; licence text in the image at `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
-- For transcription, later versions are planned to use Parakeet TDT 0.6B v3 by NVIDIA (CC-BY-4.0) and Whisper (MIT). Phase 1 contains no model yet.
+- For transcription, the ExApp downloads Parakeet TDT 0.6B v3 by NVIDIA (CC-BY-4.0) and Silero VAD (MIT) from this project's own GitHub release `models-2026-11` when it is enabled and checks every file against a fixed sha256; without internet access, admins can place the same files themselves; Whisper (MIT) is planned for later versions.
 
 Icons of the PHP app: Material Design Icons by Pictogrammers, Apache-2.0, licence text in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
