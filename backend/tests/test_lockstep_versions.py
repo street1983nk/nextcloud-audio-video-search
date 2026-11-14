@@ -107,7 +107,7 @@ def _of_the_tree() -> tuple[str | None, str | None, str | None, str | None]:
 
 def test_every_file_is_where_this_gate_looks_for_it() -> None:
     # The anti vacuity clause: renamed files would read as empty strings.
-    missing = [str(path) for path in (PHP_INFO, BACKEND_INFO, PYPROJECT, WORKFLOW) if not path.is_file()]
+    missing = [str(path) for path in (PHP_INFO, BACKEND_INFO, PYPROJECT, WORKFLOW, ADMIN_SPEC) if not path.is_file()]
 
     assert missing == []
 
@@ -197,6 +197,11 @@ _SPEC_VERSION = re.compile(r"^const VERSION = '([^']*)';$", re.MULTILINE)
 
 def _playwright_findings(spec: str, php: str | None) -> list[str]:
     """The constant of the admin spec against the version of the PHP app."""
+    expected = _first(_SPEC_VERSION, spec)
+    if expected is None:
+        return [f"{PLAYWRIGHT_VERSION} could not be read at all"]
+    if expected != php:
+        return [f"{PLAYWRIGHT_VERSION} is {expected!r} and {PHP_VERSION} is {php!r}"]
     return []
 
 
