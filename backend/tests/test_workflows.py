@@ -491,3 +491,147 @@ def test_the_redeploy_rule_fires_on_a_variable_nobody_exports() -> None:
     script = ': "${INFO_XML:?INFO_XML is required}"\n: "${ADMIN_PASS:?ADMIN_PASS is required}"\n'
     assert missing_redeploy_variables(script, "env:\n  ADMIN_PASS: x\n") == ["INFO_XML"]
     assert missing_redeploy_variables(script, 'env:\n  ADMIN_PASS: x\necho "INFO_XML=/tmp/i.xml"\n') == []
+
+
+# -- phase 3 in deploy-harp (plan 03-18) ------------------------------------------
+#
+# The models lie in the volume of the ExApp before it is registered (the way of
+# plan 03-17), keyed by MODEL_SHA256; the step @preview runs the core path and
+# the states of UI-SPEC 03 with AVS_PREVIEW_E2E=1 after the main run, which
+# leaves @preview out; the leak probe P11 needs its positive control.
+
+CATALOG = REPO_ROOT / "backend" / "src" / "audio_video_search_backend" / "models" / "catalog.py"
+PREVIEW_RUN = "AVS_PREVIEW_E2E=1 npx playwright test --grep @preview"
+MAIN_RUN_STEP = "Playwright on the running instance"
+PREVIEW_STEP = "Playwright, core path and states of phase 3"
+LEAK_STEP = "The excerpt leak probe"
+HARP_MODEL_KEY_STEP = "Cache keys of the speech models and clips"
+HARP_MODEL_RESTORE_STEP = "Restore the speech models"
+HARP_MODEL_VOLUME_STEP = "Put the speech models into the volume of the ExApp"
+HARP_MODEL_PROOF_STEP = "The models came from the volume, not from the network"
+HARP_CLIP_STEP = "Check the speech clips and hand them to the tests"
+REGISTER_STEP = "Register the HaRP daemon and install the ExApp through it"
+_HARP_MODEL_KEY = re.compile(r"avs-models-\$\(python3 -I -c '([^']*\bMODEL_SHA256\b[^']*)' \S*/models/catalog\.py\)")
+
+
+def step_names(job: str) -> list[str]:
+    return [name for name, _text in steps_of(job)]
+
+
+def preview_findings(source: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the acceptance of phase 3."""
+    findings: list[str] = []
+    job = job_text(source, "deploy-harp")
+    steps = dict(steps_of(job))
+    names = step_names(job)
+    main_run = re.search(r'npx playwright test --grep-invert "([^"]*)"', steps.get(MAIN_RUN_STEP, ""))
+    if main_run is None or "@preview" not in main_run.group(1).split("|"):
+        findings.append("the main Playwright run does not leave out @preview")
+    preview = steps.get(PREVIEW_STEP, "")
+    if PREVIEW_RUN not in preview:
+        findings.append("no step runs @preview with AVS_PREVIEW_E2E=1")
+    elif names.index(PREVIEW_STEP) < names.index(MAIN_RUN_STEP):
+        findings.append("the step @preview runs before the main Playwright run")
+    for variable in ("AVS_OCC:", "AVS_MEDIA_DIR:", "AVS_LEAK_PROBE:"):
+        if variable not in preview:
+            findings.append(f"the step @preview lacks {variable[:-1]}")
+    if not _HARP_MODEL_KEY.search(steps.get(HARP_MODEL_KEY_STEP, "")):
+        findings.append("the model cache key is not avs-models-<MODEL_SHA256 of catalog.py>")
+    restore = steps.get(HARP_MODEL_RESTORE_STEP, "")
+    if "key: ${{ steps.speech-keys.outputs.models }}" not in restore:
+        findings.append("the models are not restored under the model key")
+    if "!${{ runner.temp }}/avs-models/**/*.verified.json" not in restore:
+        findings.append("the verdict files of procure go into the cache")
+    hand = steps.get(HARP_CLIP_STEP, "")
+    findings += [
+        f"{name} is not handed to the tests"
+        for name in ("AVS_SPEECH_DE", "AVS_SPEECH_TR", "AVS_SPEECH_WORD")
+        if f'echo "{name}=' not in hand
+    ]
+    volume = steps.get(HARP_MODEL_VOLUME_STEP, "")
+    if '-name "*.verified.json" -delete' not in volume:
+        findings.append("the models do not go into the volume without verdict files")
+    if HARP_MODEL_VOLUME_STEP in names and names.index(HARP_MODEL_VOLUME_STEP) > names.index(REGISTER_STEP):
+        findings.append("the models go into the volume after the ExApp is registered")
+    if '.outcome != "present"' not in steps.get(HARP_MODEL_PROOF_STEP, ""):
+        findings.append("no step proves that /init fetched no model")
+    if "AVS_PHASE3_MEDIA: '1'" not in steps.get("Seed users, team folder, shares, media and test results", ""):
+        findings.append("the seed does not bring the media of phase 3")
+    leak = steps.get(LEAK_STEP, "")
+    for part in ("EXCERPT LEAK PROBE PASS", '"${control_count}" -lt 1', '"${probe_count}" -ne 0', "POST /excerpt "):
+        if part not in leak:
+            findings.append(f"the leak probe lacks {part}")
+    return findings
+
+
+def test_deploy_harp_holds_the_acceptance_of_phase_3() -> None:
+    assert preview_findings(harp_source()) == []
+
+
+def test_the_model_key_of_deploy_harp_prints_the_model_sha256_of_the_catalogue() -> None:
+    import subprocess
+    import sys
+
+    from audio_video_search_backend.models.catalog import MODEL_SHA256
+
+    found = _HARP_MODEL_KEY.search(dict(steps_of(job_text(harp_source(), "deploy-harp")))[HARP_MODEL_KEY_STEP])
+    assert found is not None
+    printed = subprocess.run(  # noqa: S603 - the interpreter of this test and a fixed file
+        [sys.executable, "-I", "-c", found.group(1), str(CATALOG)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    assert printed == MODEL_SHA256
+
+
+def test_the_phase_3_rule_fires_when_the_main_run_takes_preview_or_the_switch_is_gone() -> None:
+    source = harp_source()
+    broken = source.replace("|@missing|@preview", "|@missing").replace(PREVIEW_RUN, "npx playwright test --grep @preview")
+    assert broken != source
+
+    assert preview_findings(broken) == [
+        "the main Playwright run does not leave out @preview",
+        "no step runs @preview with AVS_PREVIEW_E2E=1",
+    ]
+
+
+def test_the_phase_3_rule_fires_on_a_key_without_the_model_sha256_and_verdict_files() -> None:
+    source = harp_source()
+    job = job_text(source, "deploy-harp")
+    broken = job.replace('["MODEL_SHA256"]', '["MODELS"]').replace(
+        '-name "*.verified.json" -delete', '-name "*.tmp" -delete'
+    )
+    assert broken != job
+
+    assert preview_findings(f"jobs:\n  deploy-harp:\n{broken}") == [
+        "the model cache key is not avs-models-<MODEL_SHA256 of catalog.py>",
+        "the models do not go into the volume without verdict files",
+    ]
+
+
+def test_the_phase_3_rule_fires_when_the_models_come_after_the_registration() -> None:
+    job = job_text(harp_source(), "deploy-harp")
+    steps = re.split(r"(?=^      - name: )", job, flags=re.MULTILINE)
+    volume = next(chunk for chunk in steps if chunk.startswith(f"      - name: {HARP_MODEL_VOLUME_STEP}\n"))
+    register = next(chunk for chunk in steps if chunk.startswith(f"      - name: {REGISTER_STEP}\n"))
+    moved = job.replace(volume, "").replace(register, register + volume)
+    assert moved != job
+
+    assert preview_findings(f"jobs:\n  deploy-harp:\n{moved}") == [
+        "the models go into the volume after the ExApp is registered"
+    ]
+
+
+def test_the_phase_3_rule_fires_on_a_leak_probe_without_control_and_a_seed_without_media() -> None:
+    source = harp_source()
+    broken = source.replace('"${control_count}" -lt 1', '"${control_count}" -lt 0').replace(
+        "AVS_PHASE3_MEDIA: '1'", "AVS_PHASE3_MEDIA: '0'"
+    )
+    assert broken != source
+
+    assert preview_findings(broken) == [
+        "the seed does not bring the media of phase 3",
+        "the leak probe lacks \"${control_count}\" -lt 1",
+    ]

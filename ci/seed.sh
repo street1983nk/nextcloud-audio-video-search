@@ -16,13 +16,28 @@
 #   elke     like dora, language de_DE, for the German screenshots
 #   fleur    like dora, language fr_FR, for the French screenshots
 #
+# With AVS_PHASE3_MEDIA=1 (deploy-harp, plan 03-18) the media of phase 3 from
+# ci/make-testmedia.sh come in as well:
+#
+#   alice    owns stille-60s.ogg, kaputt.mp3, geschuetzt.m4a, lang-12h01.flac,
+#            tuerkisch.wav and ohne-ton.mp4 (one reason each) and shares them
+#            with dora, elke and fleur for the review projects; lang-40min.ogg
+#            is not seeded, preview.spec.ts uploads it when it needs the
+#            partial state
+#   bob      owns viele-stellen.ogg (four places) and zwei-stellen.ogg (two):
+#            the only files with speech he reads, so the first page of his
+#            search is fixed (S1, S2); viele-stellen.ogg is shared with dora
+#            for the high contrast picture and the contrast measurement (P1)
+#   oskar    excluded from the app by occ, receives stille-60s.ogg: the leak
+#            probe P11 opens a file with a reason as an excluded user
+#
 # The passwords come out of the job variables of the throwaway instance, never
 # out of repository secrets. The file ids land in fileids.env for the later
 # steps; this file is the only place that pairs an id with a test file.
 #
 # usage: NC_URL=... OCC=./occ MEDIA_DIR=... ALICE_PASS=... BOB_PASS=...
 #        CAROL_PASS=... MALLORY_PASS=... DORA_PASS=... ELKE_PASS=...
-#        FLEUR_PASS=... ci/seed.sh
+#        FLEUR_PASS=... [AVS_PHASE3_MEDIA=1 OSKAR_PASS=...] ci/seed.sh
 set -euo pipefail
 
 : "${NC_URL:?NC_URL is required}"
@@ -30,6 +45,10 @@ set -euo pipefail
 : "${MEDIA_DIR:?MEDIA_DIR is required (output of ci/make-testmedia.sh)}"
 : "${ALICE_PASS:?}" "${BOB_PASS:?}" "${CAROL_PASS:?}" "${MALLORY_PASS:?}" "${DORA_PASS:?}"
 : "${ELKE_PASS:?}" "${FLEUR_PASS:?}"
+PHASE3="${AVS_PHASE3_MEDIA:-0}"
+if [ "${PHASE3}" = "1" ]; then
+	: "${OSKAR_PASS:?OSKAR_PASS is required with AVS_PHASE3_MEDIA=1}"
+fi
 FILEIDS_ENV="${FILEIDS_ENV:-$(dirname "$0")/fileids.env}"
 SERVER_VERSION="${SERVER_VERSION:-}"
 AT_SECONDS=42
@@ -145,10 +164,15 @@ occ files:scan --all > /dev/null
 
 # -- the file ids ---------------------------------------------------------------
 
-file_id() {
-	curl -sfS -u "alice:${ALICE_PASS}" -X PROPFIND -H 'Depth: 0' \
+file_id_of() {
+	local user="$1" pass="$2" path="$3"
+	curl -sfS -u "${user}:${pass}" -X PROPFIND -H 'Depth: 0' \
 		--data '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:fileid/></d:prop></d:propfind>' \
-		"$(dav alice "$1")" | sed -n 's|.*<oc:fileid>\([0-9]*\)</oc:fileid>.*|\1|p'
+		"$(dav "${user}" "${path}")" | sed -n 's|.*<oc:fileid>\([0-9]*\)</oc:fileid>.*|\1|p'
+}
+
+file_id() {
+	file_id_of alice "${ALICE_PASS}" "$1"
 }
 
 FILEID_WEBM=$(file_id tone-90s.webm)
@@ -178,3 +202,63 @@ for id in "${FILEID_WEBM}" "${FILEID_OGG}" "${FILEID_TEAM}" "${FILEID_BROKEN}" "
 done
 # The search shows a test result only while the admin switch is on as well.
 occ config:app:set audio_video_search sample_visible --value=true --type=boolean
+
+# -- phase 3 (plan 03-18) -------------------------------------------------------
+
+if [ "${PHASE3}" != "1" ]; then
+	exit 0
+fi
+
+PHASE3_ALICE=(stille-60s.ogg kaputt.mp3 geschuetzt.m4a lang-12h01.flac tuerkisch.wav ohne-ton.mp4)
+PHASE3_BOB=(viele-stellen.ogg zwei-stellen.ogg)
+# Every file has to be there: a missing one would turn its state into a silent gap.
+for name in "${PHASE3_ALICE[@]}" "${PHASE3_BOB[@]}" lang-40min.ogg; do
+	test -s "${MEDIA_DIR}/${name}" || { echo "${name} is missing in MEDIA_DIR (ci/make-testmedia.sh with the clips)"; exit 1; }
+done
+
+add_user oskar "${OSKAR_PASS}"
+
+for name in "${PHASE3_ALICE[@]}"; do
+	upload alice "${ALICE_PASS}" "${MEDIA_DIR}/${name}" "${name}"
+done
+for name in "${PHASE3_BOB[@]}"; do
+	upload bob "${BOB_PASS}" "${MEDIA_DIR}/${name}" "${name}"
+done
+
+share_as() {
+	local user="$1" pass="$2" path="$3" with="$4"
+	curl -sfS -u "${user}:${pass}" \
+		-H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+		-X POST "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares" \
+		--data-urlencode "path=/${path}" --data-urlencode "shareWith=${with}" \
+		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' > /dev/null
+}
+
+for reviewer in dora elke fleur; do
+	for name in "${PHASE3_ALICE[@]}"; do
+		share_as alice "${ALICE_PASS}" "${name}" "${reviewer}"
+	done
+done
+share_as bob "${BOB_PASS}" viele-stellen.ogg dora
+share_as alice "${ALICE_PASS}" stille-60s.ogg oskar
+
+# The excluded user of the leak probe: a user rule, read by the playback page
+# before it asks the container anything (D-02-16, D-03-13).
+occ audio_video_search:exclude --user=oskar
+
+occ files:scan --all > /dev/null
+
+declare -A PHASE3_IDS=(
+	[FILEID_STILLE]="$(file_id stille-60s.ogg)"
+	[FILEID_KAPUTT]="$(file_id kaputt.mp3)"
+	[FILEID_GESCHUETZT]="$(file_id geschuetzt.m4a)"
+	[FILEID_LANG]="$(file_id lang-12h01.flac)"
+	[FILEID_TUERKISCH]="$(file_id tuerkisch.wav)"
+	[FILEID_OHNE_TON]="$(file_id ohne-ton.mp4)"
+	[FILEID_VIELE]="$(file_id_of bob "${BOB_PASS}" viele-stellen.ogg)"
+	[FILEID_ZWEI]="$(file_id_of bob "${BOB_PASS}" zwei-stellen.ogg)"
+)
+for key in "${!PHASE3_IDS[@]}"; do
+	[[ "${PHASE3_IDS[${key}]}" =~ ^[0-9]+$ ]] || { echo "the file id ${key} could not be read"; exit 1; }
+	echo "${key}=${PHASE3_IDS[${key}]}" >> "${FILEIDS_ENV}"
+done

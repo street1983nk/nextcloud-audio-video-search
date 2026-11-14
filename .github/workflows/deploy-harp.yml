@@ -19,6 +19,11 @@ name: Deploy through HaRP
 #     section) and leaves screenshots at 375, 768 and 1280 px, light and dark,
 #     plus high contrast at 1280 and German and French at 375 px light and
 #     1280 px dark, as an artifact for the owner's review,
+#   - phase 3 (plan 03-18): with the speech models in the volume a spoken
+#     clip is found as preliminary within minutes and the hit lands on the
+#     word, the states S1 to S5 and P1 to P13 of UI-SPEC 03 are walked with
+#     screenshots, the contrast of the preview note is measured, and the
+#     playback page of an excluded user asks the container nothing,
 #   - no test file name ends up in the Nextcloud log or the container log,
 #   - lockstep at runtime (plan 10): a backend a minor apart gives
 #     version_drift and an empty search, a patch apart gives
@@ -63,6 +68,7 @@ env:
   DORA_PASS: 'avs-ci-dora-2026-11'
   ELKE_PASS: 'avs-ci-elke-2026-11'
   FLEUR_PASS: 'avs-ci-fleur-2026-11'
+  OSKAR_PASS: 'avs-ci-oskar-2026-11'
 
 jobs:
   deploy-harp:
@@ -70,8 +76,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # An estimate until the first green run measures it: image build, HaRP,
     # seed, the browser download, eleven Playwright projects and the three
-    # registrations of the drift steps (plan 10).
-    timeout-minutes: 75
+    # registrations of the drift steps (plan 10), 75 min so far. Plan 03-18
+    # adds the speech models (0.67 GB on a cache miss), the preview of about
+    # 20 test files (03-15 measured 3.5 to 7.4 s per file with the start of the
+    # engine child, the 40 min speech file needs a few minutes) and the step
+    # @preview with its own limit of 45 min below: 120 min in all.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -158,6 +168,100 @@ jobs:
           docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src/backend
           docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}"
 
+      # Before the clips: fetch_speech.py turns them into WAV with it, and its
+      # sha256 is part of the clip key. make-testmedia.sh uses the same one.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      # The speech models and the speech clips of phase 3 (plan 03-18, the way
+      # of plan 03-17 in discovery-e2e.yml), with the cache keys of python.yml:
+      # MODEL_SHA256 of models/catalog.py; the member sha256 of
+      # ci/media/fetch_speech.py plus the sha256 of the ffmpeg that turned them
+      # into WAV (here the one of the runner). Both files only hold constants
+      # and stdlib imports, so the python3 of the runner reads them.
+      - name: Cache keys of the speech models and clips
+        id: speech-keys
+        run: |
+          set -euo pipefail
+          MODELS_KEY="avs-models-$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["MODEL_SHA256"])' app-src/backend/src/audio_video_search_backend/models/catalog.py)"
+          FFMPEG_SHA256="$(sha256sum "$(command -v ffmpeg)" | cut -c1-64)"
+          SPEECH_KEY="avs-speech-$(python3 -I -c 'import hashlib, runpy, sys; m = runpy.run_path(sys.argv[1]); print(hashlib.sha256(",".join([*sorted(c.member_sha256 for c in m["CLIPS"]), sys.argv[2]]).encode()).hexdigest())' app-src/ci/media/fetch_speech.py "$FFMPEG_SHA256")"
+          echo "models=$MODELS_KEY" >> "$GITHUB_OUTPUT"
+          echo "speech=$SPEECH_KEY" >> "$GITHUB_OUTPUT"
+
+      # A cache entry is only a place to keep the files (T-03-59): the verdict
+      # files of procure are not cached, so the container hashes every model
+      # file again when /init checks them.
+      - name: Restore the speech models
+        id: models-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/avs-models
+            !${{ runner.temp }}/avs-models/**/*.verified.json
+          key: ${{ steps.speech-keys.outputs.models }}
+
+      # The downloader of the image of this commit, the one /init would run
+      # (fixed URL, host allowlist, fixed sha256), as the user of the runner so
+      # the cache can keep what it wrote.
+      - name: Fetch the speech models on a cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/avs-models"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${RUNNER_TEMP}/avs-models:/avs-models" \
+            --entrypoint /app/.venv/bin/python \
+            "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -m audio_video_search_backend.models.procure --root /avs-models
+
+      - name: Restore the speech clips
+        id: speech-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/avs-speech
+          key: ${{ steps.speech-keys.outputs.speech }}
+
+      - name: Fetch the speech clips on a cache miss
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: python3 -I app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+
+      # The member sha256 binds (fetch_speech.py checks it at the fetch); the WAV
+      # sha256 depends on the ffmpeg build and only warns, as in python.yml. The
+      # runner context is not allowed in a job env, so the paths go through
+      # GITHUB_ENV and hold for every later step: make-testmedia.sh and the
+      # step @preview read them.
+      - name: Check the speech clips and hand them to the tests
+        run: |
+          set -euo pipefail
+          python3 -I -c 'import hashlib, pathlib, runpy, sys; m = runpy.run_path(sys.argv[1]); d = pathlib.Path(sys.argv[2]); [print(f"::warning::{c.name} wav sha256 {h} differs from {c.wav_sha256} (other ffmpeg build)") for c in m["CLIPS"] if (h := hashlib.sha256((d / c.name).read_bytes()).hexdigest()) != c.wav_sha256]' app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+          WORD="$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["EXPECTED_WORD"])' app-src/ci/media/fetch_speech.py)"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_de.wav"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+          {
+            echo "AVS_SPEECH_DE=${RUNNER_TEMP}/avs-speech/speech_de.wav"
+            echo "AVS_SPEECH_TR=${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+            echo "AVS_SPEECH_WORD=${WORD}"
+          } >> "$GITHUB_ENV"
+
+      # The air gap way of plan 03-07: the files lie in the persistent storage
+      # before the app is installed. HaRP reuses an existing volume of this name
+      # at create (see the upgrade job below), and a fresh named volume takes
+      # over owner and mode of the directory of the image, so the copy runs as
+      # uid 10001 like the container. No verdict file goes in.
+      - name: Put the speech models into the volume of the ExApp
+        run: |
+          set -euo pipefail
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          docker volume create "${volume}"
+          docker run --rm --user 10001:10001 \
+            -v "${volume}:/nc_app_${BACKEND_APP_ID}_data" \
+            -v "${RUNNER_TEMP}/avs-models/models:/avs-models:ro" \
+            --entrypoint sh "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -c 'cp -R /avs-models "$1/models" && find "$1/models" -name "*.verified.json" -delete && echo "model files: $(find "$1/models" -type f | wc -l)"' \
+            sh "/nc_app_${BACKEND_APP_ID}_data"
+
       - name: Start HaRP
         run: |
           harp_key=$(openssl rand -hex 16)
@@ -241,6 +345,29 @@ jobs:
           timeout 30 ./occ app_api:app:list | tee app-list.txt
           grep -q "${BACKEND_APP_ID}" app-list.txt
 
+      # /init found both models in the volume and fetched nothing: AppAPI holds
+      # init 100, and the log of the container has a "model procure" line with
+      # outcome present for each model, none with another outcome, and
+      # "models ready". Without the models the step @preview would wait for
+      # hits that never come.
+      - name: The models came from the volume, not from the network
+        run: |
+          set -euo pipefail
+          status=$(sqlite3 data/owncloud.db "SELECT status FROM oc_ex_apps WHERE appid='${BACKEND_APP_ID}'")
+          echo "AppAPI status ${status}"
+          jq -e '.init == 100' <<< "${status}"
+          docker logs "${EXAPP_CONTAINER}" 2>&1 \
+            | jq -cR 'fromjson? | select(.msg == "model procure" or .msg == "models ready")' > procure-lines.json
+          cat procure-lines.json
+          for model in silero parakeet; do
+            jq -e -s --arg m "${model}" 'any(.[]; .msg == "model procure" and .model == $m and .outcome == "present")' procure-lines.json
+          done
+          if jq -e -s 'any(.[]; .msg == "model procure" and .outcome != "present")' procure-lines.json; then
+            echo "a model was fetched or failed at /init although it lay in the volume"
+            exit 1
+          fi
+          jq -e -s 'any(.[]; .msg == "models ready")' procure-lines.json
+
       # Owner 06.11.: the German word list is part of the image, and with it the
       # compound splitter finds "frist" inside "Kündigungsfrist".
       - name: The image carries the German word list and splits compounds
@@ -270,11 +397,10 @@ jobs:
           # The container found the PHP app at its start.
           jq -e '.companion == "ok"' status.json
 
+      # ffmpeg is there since "Install ffmpeg"; AVS_SPEECH_DE and AVS_SPEECH_TR
+      # from GITHUB_ENV make the script add the media of phase 3.
       - name: Make the test media
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+        run: bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
 
       - name: Seed users, team folder, shares, media and test results
         env:
@@ -282,6 +408,7 @@ jobs:
           MEDIA_DIR: ${{ runner.temp }}/testdata
           FILEIDS_ENV: ${{ github.workspace }}/app-src/ci/fileids.env
           SERVER_VERSION: ${{ matrix.server-version }}
+          AVS_PHASE3_MEDIA: '1'
         run: |
           bash app-src/ci/seed.sh
           cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
@@ -343,7 +470,62 @@ jobs:
 
       - name: Playwright on the running instance
         working-directory: app-src/ci/playwright
-        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug|@drift|@patch|@missing"
+        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug|@drift|@patch|@missing|@preview"
+
+      # Phase 3 (plan 03-18): the core path (upload, preliminary hit within
+      # minutes, the click lands on the word) and the states of the search and
+      # the playback page (UI-SPEC 03, S1 to S5 and P1 to P13), right after the
+      # main run, while debug mode is on and the backend runs. The main run
+      # leaves @preview out, so nothing runs twice. preview.spec.ts lowers the
+      # longest recording to 1 hour for the singular of A10 through AVS_OCC and
+      # sets it back to 12; it uploads lang-40min.ogg out of AVS_MEDIA_DIR when
+      # it needs the partial state. The window of the leak probe P11 lands in
+      # leak-probe.json for the next step.
+      - name: Playwright, core path and states of phase 3
+        id: preview
+        working-directory: app-src/ci/playwright
+        timeout-minutes: 45
+        env:
+          AVS_OCC: ${{ github.workspace }}/occ
+          AVS_MEDIA_DIR: ${{ runner.temp }}/testdata
+          AVS_LEAK_PROBE: ${{ github.workspace }}/leak-probe.json
+        run: AVS_PREVIEW_E2E=1 npx playwright test --grep @preview
+
+      # P11 of the UI-SPEC: the playback page of an excluded user asks the
+      # container nothing (D-02-16). The access log of the container names the
+      # route, not the file id (the id is in the body), so the proof is a time
+      # window: no POST /excerpt while the excluded user loaded the page, and
+      # at least one in the window of the positive control, where alice opened
+      # the same file. A window without a line in both would prove nothing.
+      # Also after a red step @preview, so its log is kept; not when the step
+      # never ran.
+      - name: The excerpt leak probe
+        if: ${{ !cancelled() && steps.preview.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          docker logs "${EXAPP_CONTAINER}" > logs/exapp-preview.log 2>&1
+          probe="${GITHUB_WORKSPACE}/leak-probe.json"
+          test -s "${probe}" || { echo "EXCERPT LEAK PROBE MISSING: preview.spec.ts wrote no window"; exit 1; }
+          cp "${probe}" logs/
+          cat "${probe}"; echo
+          excerpts_in() {
+            jq -R --arg from "$1" --arg to "$2" \
+              'fromjson? | select(.logger == "uvicorn.access" and ((.msg // "") | contains("POST /excerpt ")))
+                | select(.ts[0:23] >= $from[0:23] and .ts[0:23] <= $to[0:23])' logs/exapp-preview.log | jq -s length
+          }
+          probe_count=$(excerpts_in "$(jq -r '.probe.from' "${probe}")" "$(jq -r '.probe.to' "${probe}")")
+          control_count=$(excerpts_in "$(jq -r '.control.from' "${probe}")" "$(jq -r '.control.to' "${probe}")")
+          echo "excerpt requests: excluded user ${probe_count}, positive control ${control_count}"
+          if [ "${control_count}" -lt 1 ]; then
+            echo "EXCERPT LEAK PROBE INVALID: the positive control saw no /excerpt line"
+            exit 1
+          fi
+          if [ "${probe_count}" -ne 0 ]; then
+            echo "EXCERPT LEAK PROBE FAILED: the page of the excluded user asked the container"
+            exit 1
+          fi
+          echo "EXCERPT LEAK PROBE PASS"
 
       - name: Playwright with the backend disabled
         working-directory: app-src/ci/playwright
@@ -517,7 +699,7 @@ jobs:
         run: |
           docker logs "${EXAPP_CONTAINER}" > exapp-check.log 2>&1
           touch data/nextcloud.log
-          if grep -nE 'tone-90s|broken\.webm|locked\.webm' data/nextcloud.log exapp-check.log; then
+          if grep -nE 'tone-90s|broken\.webm|locked\.webm|speech_de\.wav|stille-60s|kaputt\.mp3|geschuetzt\.m4a|lang-12h01|lang-40min|viele-stellen|zwei-stellen|tuerkisch\.wav|ohne-ton\.mp4' data/nextcloud.log exapp-check.log; then
             echo "a test file name reached a log"
             exit 1
           fi
