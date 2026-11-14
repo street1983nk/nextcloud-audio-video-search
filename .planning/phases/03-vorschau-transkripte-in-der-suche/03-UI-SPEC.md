@@ -13,6 +13,7 @@ base_contract: .planning/phases/01-zwei-app-ger-st-und-integrationsbeweis/01-UI-
 
 > Visueller und Interaktionsvertrag für Phase 3 (Vorschau-Transkripte in der Suche). Erstellt vom gsd-ui-researcher, geprüft vom gsd-ui-checker.
 > Quellen: 03-CONTEXT.md (D-03-01 bis D-03-14), 01-UI-SPEC.md (Basisvertrag, status approved), 02-CONTEXT.md (D-02-15c, D-02-16), Bestand `php/lib/Search/Provider.php`, `php/lib/Controller/PageController.php`, `php/templates/play.php`, `php/css/play.css`, `php/js/play.js`, `php/l10n/*.json`, DESIGN.md.
+> Nachtrag 14.11.2026 (Plan 03-01): A13 und P13 zum freigegebenen T12, Einstellungsfeld, Modell-Fehlertext, Owner-freigegeben.
 
 **Grundsatz: Dieser Vertrag ist ein Nachtrag.** Alles, was 01-UI-SPEC.md festlegt (Design System, Abstände, Typografie, Farben, Banner-Aufbau, Aufbau und Zustände der Abspielansicht, Barrierefreiheit, Copy-Regeln), gilt unverändert und wird hier nicht neu verhandelt. Phase 3 ändert genau zwei Stellen:
 
@@ -150,6 +151,7 @@ Der Block erscheint wie bisher nur im Seitenzustand "Bereit" (Medium sichtbar). 
 | A10 | `too_long` | Grund `too_long` | `hint` "Überlang" mit der aktuell eingestellten Höchstdauer in ganzen Stunden (`$l->n`, Plural) |
 | A11 | `skipped_other` | Grund vorhanden, aber nicht in der Positivliste | `hint` "Anderer Grund" (nie der rohe Code) |
 | A12 | `unavailable` (Bestand) | Container still, Drift, ungültige Antwort | `hint` "Ausschnitt nicht abrufbar" (Bestandstext) |
+| A13 | `disk_full` | Grund disk_full (Datei wartet auf Speicherplatz) | `hint` T12 "Zu wenig Speicherplatz" (Nachtrag Plan 03-01) |
 
 Die Gründe A6 bis A11 gelten für die ganze Datei und stehen deshalb unabhängig von `?t=` gleich da.
 
@@ -157,7 +159,7 @@ Die Gründe A6 bis A11 gelten für die ganze Datei und stehen deshalb unabhängi
 
 - Reihenfolge im Controller bleibt: Ausschlussprüfung zuerst. Ausgeschlossener Nutzer, ausgeschlossene Datei oder eine Ausschlussfrage, die scheitert: **A5**, ohne den Container zu fragen. Kein Grund, kein Hinweis, kein Unterschied im DOM.
 - Der Container liefert Grund, Stufe und `partial` nur unter genau den Bedingungen, unter denen er auch Ausschnitt-Text liefern dürfte (Verweis mit state active für diesen Nutzer). Für jeden anderen Verweis antwortet er wie für eine unbekannte Datei: `known: false`, ohne Grund. Die PHP-Seite zeigt dann A5.
-- PHP prüft den Grund gegen eine feste Positivliste (`no_speech`, `damaged`, `protected`, `unsupported_language`, `too_long`); ein unbekannter String wird A11, ein Grund mit falschem Typ macht die ganze Antwort ungültig (A12). Kein Wert aus der Antwort erscheint ungefiltert im HTML.
+- PHP prüft den Grund gegen eine feste Positivliste (`no_speech`, `damaged`, `protected`, `unsupported_language`, `too_long`, `disk_full`; `disk_full` ergänzt durch Plan 03-01); ein unbekannter String wird A11, ein Grund mit falschem Typ macht die ganze Antwort ungültig (A12). Kein Wert aus der Antwort erscheint ungefiltert im HTML.
 - A5 muss für "ausgeschlossen" und "unbekannt" **byte-gleich** sein (gleiches Markup, gleiche Klassen, gleicher Text). Beleg im Plan: ein PHPUnit- bzw. Playwright-Vergleich des Ausschnitt-Blocks zwischen ausgeschlossenem Nutzer mit Grund-Datei und Nutzer mit unbekannter Datei.
 - Die Höchstdauer in A10 ist eine Instanz-Einstellung, kein Dateiinhalt; sie darf genannt werden. Dateigröße, tatsächliche Dauer, Codec, Tonspur oder technische Fehlermeldung werden nie genannt.
 
@@ -212,6 +214,23 @@ Der englische Text ist der l10n-Schlüssel.
 
 Darstellung: T9 und T10 in **einem** `p.avs-excerpt__hint`, durch ein Leerzeichen getrennt (zwei l10n-Schlüssel, damit der Plural sauber bleibt). Alle anderen Hinweise sind je ein Schlüssel.
 
+### Einstellungsfeld Höchstdauer (Admin, deklarative Einstellung)
+
+Nachtrag Plan 03-01, Owner-Freigabe 14.11.2026 ("Freigegeben"). Ersetzt das Feld "Largest file in MB" (D-03-09, D-03-17). Standard 12 h, Deckel 24 h (Owner: "24 h reicht"; Grund: Zeitmarken heute auf 24 h begrenzt, `api.MAX_AT_MS`).
+
+| Element | DE | EN | FR |
+|---------|----|----|----|
+| Titel | Längste Aufnahme in Stunden | Longest recording in hours | Durée maximale d'un enregistrement en heures |
+| Beschreibung | Längere Aufnahmen werden als überlang übersprungen. Wird die Grenze angehoben, werden sie später transkribiert. | Longer recordings are skipped as too long. If the limit is raised, they are transcribed later. | Les enregistrements plus longs sont ignorés car trop longs. Si la limite est relevée, ils seront transcrits plus tard. |
+
+### Fehlertext beim Aktivieren (AppAPI-Status)
+
+Nachtrag Plan 03-01, Owner-Freigabe 14.11.2026 ("Freigegeben"). Muster `ENABLE_FAILED`; Verwendung in Plan 03-07 (`MODELS_FAILED`).
+
+| Element | DE | EN | FR |
+|---------|----|----|----|
+| Modell-Download gescheitert | Audio & Video Search konnte die Sprachmodelle nicht laden. Details stehen im Protokoll der ExApp. | Audio & Video Search could not download its speech models. Details are in the log of the ExApp. | Audio & Video Search n'a pas pu télécharger ses modèles vocaux. Les détails figurent dans le journal de l'ExApp. |
+
 ### Unverändert weiterverwendete Texte (nur zur Vollständigkeit)
 
 | Schlüssel | DE | EN | FR |
@@ -227,6 +246,8 @@ Darstellung: T9 und T10 in **einem** `p.avs-excerpt__hint`, durch ein Leerzeiche
 - T2 enthält bewusst kein Versprechen der Verbesserung (Owner 14.11.2026). Der Zusatz "und wird automatisch verbessert" kommt erst mit Phase 6 (Veredelung) und nur für Profile, die wirklich veredeln.
 - T8 nennt DE/EN/FR fest (D-03-14); ab Phase 7 (Instanz-Sprachen einstellbar) muss der Satz die eingestellten Sprachen nennen.
 - T10: Die Höchstdauer ist in Phase 3 über occ/deklarative Einstellung änderbar (D-03-09), die Aussage stimmt also.
+- T12 Satz 2: disk_full wird nach DISK_FULL_RETRY_SECONDS erneut versucht (Plan 03-13).
+- Beschreibung Höchstdauer Satz 2: Anheben stellt too_long-Jobs zurück (Plan 03-15).
 
 Dreisprachigkeits-Test und Umlaut-/Gedankenstrich-Audit (Muster aus Phase 1) decken alle neuen Schlüssel in `de`, `de_DE`, `en`, `fr` (`.json` und `.js`) ab, inklusive der Plural-Schlüssel.
 
@@ -264,6 +285,7 @@ Grundmatrix je Zustand: Breiten 375, 768, 1280 px, je hell und dunkel = 6 Screen
 | P10 | Abspielseite A11 anderer Grund | 1280 hell | kein roher Code im DOM |
 | P11 | Leck-Probe: ausgeschlossener Nutzer öffnet eine Datei mit Grund `no_speech` | 1280 hell | Ausschnitt-Block byte-gleich mit P4; Container-Log zeigt keine `/excerpt`-Anfrage |
 | P12 | Leck-Probe: Verweis nicht active (z. B. entzogene Freigabe, Datei noch lesbar über anderen Weg ohne active-Verweis) | 1280 hell | Ausschnitt-Block gleich P4 |
+| P13 | Abspielseite A13 zu wenig Speicherplatz | 1280 hell, FR 375 hell | Text T12 (Nachtrag Plan 03-01) |
 
 Summe: 14 Vollmatrix-Shots (S1) plus Einzelaufnahmen, rund 60 Bilder. Kein Browser und kein Docker in dieser Recherche gestartet.
 
