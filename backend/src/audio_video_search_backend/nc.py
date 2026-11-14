@@ -20,7 +20,8 @@ work stock (claim, ack, unlock), which run every 30 seconds on one long lived
 client instead of a new nc_py_api client per call (plan 02-05), and the same
 way the four routes of the periodic reconcile (plan 02-20). nc_queue.py and
 nc_files.py hold the contracts of those routes and never import a client
-themselves.
+themselves. And one job outside the Nextcloud: the model files of plan 03-07
+(``fetch_model_asset``), on a client of its own with a host allowlist.
 """
 
 import asyncio
@@ -31,7 +32,7 @@ import re
 import secrets
 import shutil
 from base64 import b64encode
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,12 +59,14 @@ __all__ = [
     "fetch_file_sha256",
     "fetch_handshake",
     "fetch_head",
+    "fetch_model_asset",
     "fetch_to_tempfile",
     "nc_app",
     "new_queue_client",
     "new_reconcile_client",
     "queue_post",
     "reconcile_request",
+    "report_init_status",
     "run_app",
     "set_handlers",
 ]
@@ -644,6 +647,160 @@ async def fetch_head(file_id: int, user_id: str, *, client: httpx.AsyncClient | 
     except httpx.HTTPError as error:
         LOGGER.warning("head stream broke off", extra={"file_id": file_id, "error_type": type(error).__name__})
         return _head_refused(file_id, GATEWAY_FAILED, None)
+
+
+# The model files (plan 03-07): the only requests of the container that do not
+# go to the Nextcloud. One GET per hop, redirects followed by hand so every hop
+# is checked against the allowlist of the caller before it is asked, only
+# https, at most MODEL_MAX_REDIRECTS hops, never more bytes than expected. The
+# request carries no credential, no cookie and a user agent that names the
+# software and nothing else; nothing of the instance or its content goes out.
+MODEL_FETCHED: Final = "fetched"
+MODEL_FOREIGN_HOST: Final = "foreign_host"
+MODEL_HTTP_ERROR: Final = "http_error"
+MODEL_TOO_LARGE: Final = "too_large"
+MODEL_NETWORK: Final = "network"
+MODEL_FETCH_OUTCOMES: Final = frozenset(
+    {MODEL_FETCHED, MODEL_FOREIGN_HOST, MODEL_HTTP_ERROR, MODEL_TOO_LARGE, MODEL_NETWORK}
+)
+# Hugging Face and GitHub need one hop today; five leave room and still end a loop.
+MODEL_MAX_REDIRECTS: Final = 5
+# Connect fast or fail; a CDN may pause a while between two blocks.
+MODEL_TIMEOUT: Final = httpx.Timeout(60.0, connect=15.0)
+_REDIRECT_STATUS: Final = frozenset({301, 302, 303, 307, 308})
+
+
+def model_user_agent() -> str:
+    """The user agent of a model download: the software and its version, nothing personal."""
+    return f"audio_video_search_backend/{os.environ.get('APP_VERSION', 'unknown')}"
+
+
+def new_model_client() -> httpx.AsyncClient:
+    """A client for model files, sharing nothing with the Nextcloud clients.
+
+    No AppAPI header, no ``verify=_certificate_setting()`` (NPA_NC_CERT names the
+    CA of the Nextcloud, not the one of a CDN), redirects followed by hand.
+    ``trust_env`` stays on, so a proxy the admin set for the container applies.
+    """
+    return httpx.AsyncClient(
+        follow_redirects=False,
+        timeout=MODEL_TIMEOUT,
+        headers={"User-Agent": model_user_agent(), "Accept-Encoding": "identity"},
+    )
+
+
+def _model_hop(url: str | httpx.URL, allowed_hosts: frozenset[str]) -> httpx.URL | None:
+    target = httpx.URL(url)
+    if target.scheme != "https" or target.host not in allowed_hosts:
+        return None
+    return target
+
+
+def _open_model_part(dest: Path) -> BinaryIO:
+    return dest.open("wb")
+
+
+async def _stream_model(
+    client: httpx.AsyncClient,
+    url: str,
+    dest: Path,
+    expected_size: int,
+    allowed_hosts: frozenset[str],
+    on_chunk: Callable[[bytes], Awaitable[None]] | None,
+) -> str:
+    target = _model_hop(url, allowed_hosts)
+    if target is None:
+        return MODEL_FOREIGN_HOST
+    for _hop in range(MODEL_MAX_REDIRECTS + 1):
+        # A cookie one hop sets must not reach the next one.
+        client.cookies.clear()
+        async with client.stream("GET", target) as response:
+            status = response.status_code
+            if status in _REDIRECT_STATUS:
+                location = response.headers.get("location")
+                if not location:
+                    return MODEL_HTTP_ERROR
+                # Checked before the next request exists: a foreign host gets nothing.
+                target = _model_hop(response.url.join(location), allowed_hosts)
+                if target is None:
+                    return MODEL_FOREIGN_HOST
+                continue
+            if status != _STATUS_OK:
+                return MODEL_HTTP_ERROR
+            declared = response.headers.get("Content-Length", "")
+            if declared.isdigit() and int(declared) > expected_size:
+                return MODEL_TOO_LARGE
+            received = 0
+            handle = await asyncio.to_thread(_open_model_part, dest)
+            try:
+                async for chunk in response.aiter_bytes(CHUNK_SIZE):
+                    received += len(chunk)
+                    if received > expected_size:
+                        return MODEL_TOO_LARGE
+                    await asyncio.to_thread(_write, handle, chunk)
+                    if on_chunk is not None:
+                        await on_chunk(chunk)
+            finally:
+                await asyncio.to_thread(handle.close)
+            # A body that ends early is a broken transfer, not a verdict on the file.
+            return MODEL_FETCHED if received == expected_size else MODEL_NETWORK
+    return MODEL_HTTP_ERROR
+
+
+async def fetch_model_asset(
+    url: str,
+    dest: Path,
+    *,
+    expected_size: int,
+    allowed_hosts: frozenset[str],
+    client: httpx.AsyncClient | None = None,
+    on_chunk: Callable[[bytes], Awaitable[None]] | None = None,
+) -> str:
+    """Stream one model file into ``dest`` and return a code of :data:`MODEL_FETCH_OUTCOMES`.
+
+    ``dest`` is the ``.part`` file the caller chose; it exists afterwards only
+    for ``fetched``, with exactly ``expected_size`` bytes. Every hop must be
+    https on a host of ``allowed_hosts`` (``foreign_host`` otherwise, no request
+    to that host); a status other than 200 or a redirect, or more than
+    :data:`MODEL_MAX_REDIRECTS` hops, is ``http_error``; more bytes than
+    ``expected_size`` is ``too_large``; a transport error or a short body is
+    ``network``. ``on_chunk`` sees every block after it is written, so the
+    caller hashes in the stream. The caller owns the verdict on the bytes.
+
+    A local write error (volume full, read only) is raised as the OSError it is;
+    ``dest`` is removed first. Logs carry a code and an error type, never a URL.
+    """
+    outcome = MODEL_NETWORK
+    try:
+        if client is not None:
+            outcome = await _stream_model(client, url, dest, expected_size, allowed_hosts, on_chunk)
+        else:
+            async with new_model_client() as owned:
+                outcome = await _stream_model(owned, url, dest, expected_size, allowed_hosts, on_chunk)
+    except httpx.HTTPError as error:
+        LOGGER.warning("model file not reached", extra={"error_type": type(error).__name__})
+        outcome = MODEL_NETWORK
+    finally:
+        if outcome != MODEL_FETCHED:
+            await asyncio.to_thread(_unlink, dest)
+    if outcome != MODEL_FETCHED:
+        LOGGER.warning("model file refused", extra={"outcome": outcome})
+    return outcome
+
+
+async def report_init_status(progress: int, error: str = "") -> bool:
+    """Tell AppAPI how far /init is (``set_init_status``); False when Nextcloud was not reached.
+
+    Never raises: a progress line that does not arrive must not stop the
+    download behind it. Logs carry the error type only.
+    """
+    try:
+        async with nc_app() as nc:
+            await nc.set_init_status(progress, error)
+    except Exception as exc:
+        LOGGER.warning("init status not delivered", extra={"error_type": type(exc).__name__})
+        return False
+    return True
 
 
 def remove_stale_parts(tmp_dir: Path) -> int:
