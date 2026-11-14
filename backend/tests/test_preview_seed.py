@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from audio_video_search_backend.store import repo
 from audio_video_search_backend.store.repo import ORIGINS, IntakeItem, Store
 
 NOW = 1_800_000_000
@@ -300,3 +301,27 @@ def test_removing_the_last_sample_of_an_orphan_with_a_job_does_not_fail(store: S
     assert store.remove_sample(20) == ("removed", media_id)
 
     assert _jobs(path) == []
+
+
+@pytest.mark.parametrize(
+    ("state", "stage", "seeds"),
+    [
+        ("active", "keyed", True),
+        ("trashed", "keyed", False),
+        ("unreadable", "keyed", False),
+        ("active", "probing", False),
+    ],
+)
+def test_the_seed_itself_takes_only_an_active_keyed_reference(
+    store: Store, path: Path, state: str, stage: str, seeds: bool
+) -> None:
+    # mark_keyed and attach_by_proof make the reference active and keyed just
+    # before the seed, so the condition of the statement is a guard no public
+    # way reaches; it is checked here on the statement itself (T-03-09).
+    media_id = store.media_for_file_sha256(SHA_A)
+    common: dict[str, Any] = {"storage_id": 3, "etag": "e1", "size": 1, "mtime": 5, "reason": None}
+    store.upsert_file_ref(10, media_id, state=state, stage=stage, **common)
+
+    store.reading_connection().execute(repo._SEED_PREVIEW_JOB, {"file_id": 10, "now": NOW})
+
+    assert _jobs(path) == ([(media_id, 0, "queued", "crawl", 5, NOW)] if seeds else [])
