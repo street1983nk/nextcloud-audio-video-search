@@ -11,14 +11,23 @@ without is ``pending``. The samples of phase 1 move to their own layer
 is dropped. ``media`` gains ``head_sha256`` (the first 64 KiB, for
 the read proof) and ``orphaned_at`` (the last reference went away).
 
+v2 to v3 (phase 3, plan 03-03): the table ``preview_job`` with its order
+index, and ``file_ref.origin`` (event or crawl, D-03-05). Every content with
+at least one active, keyed reference gets one job in state ``queued`` with
+origin ``crawl`` (the stock was found by the crawl or by events nobody can
+tell apart any more), ``sort_mtime`` the newest mtime of its active
+references and ``epoch`` the one of its media item. References in the trash,
+unreadable ones and samples (D-02-15) give no job (T-03-09).
+
 Every statement runs inside ``BEGIN IMMEDIATE``; any failure rolls the whole
-file back to v1, so an interrupted update never leaves a half migrated store
-(T-02-05). The steps are a module constant on purpose: the test inserts a
-failing statement between them.
+file back to the version it had, so an interrupted update never leaves a half
+migrated store (T-02-05, T-03-07). The steps are module constants on purpose:
+the tests insert a failing statement between them.
 """
 
 import logging
 import sqlite3
+import time
 from typing import Final
 
 _LOG: Final = logging.getLogger(__name__)
@@ -82,6 +91,52 @@ V1_TO_V2_STEPS: tuple[str, ...] = (
     "UPDATE meta SET value = '2' WHERE key = 'schema_version'",
 )
 
+# Must stay identical to the preview_job definition and its index in schema.sql
+# (without IF NOT EXISTS); tests/test_store_migration_v3.py compares both.
+PREVIEW_JOB_V3: Final = """
+CREATE TABLE preview_job (
+    media_id      INTEGER PRIMARY KEY REFERENCES media (media_id),
+    epoch         INTEGER NOT NULL,
+    state         TEXT    NOT NULL CHECK (state IN ('queued', 'running', 'waiting', 'complete', 'skipped')),
+    reason        TEXT,
+    origin        TEXT    NOT NULL CHECK (origin IN ('event', 'crawl')),
+    sort_mtime    INTEGER NOT NULL,
+    duration_ms   INTEGER,
+    next_start_ms INTEGER NOT NULL DEFAULT 0 CHECK (next_start_ms >= 0),
+    chunks_done   INTEGER NOT NULL DEFAULT 0 CHECK (chunks_done >= 0),
+    version_id    INTEGER,
+    kept_words    INTEGER NOT NULL DEFAULT 0,
+    drop_script   INTEGER NOT NULL DEFAULT 0,
+    drop_language INTEGER NOT NULL DEFAULT 0,
+    drop_conf     INTEGER NOT NULL DEFAULT 0,
+    speech_ms     INTEGER NOT NULL DEFAULT 0,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    next_try_at   INTEGER,
+    second_pass   INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL
+)
+"""
+PREVIEW_JOB_ORDER_V3: Final = """
+CREATE INDEX preview_job_order
+    ON preview_job (state, CASE origin WHEN 'event' THEN 0 ELSE 1 END, sort_mtime DESC, media_id)
+"""
+# The column definition of file_ref.origin, the last column in schema.sql.
+FILE_REF_ORIGIN_V3: Final = "origin TEXT NOT NULL DEFAULT 'crawl' CHECK (origin IN ('event', 'crawl'))"
+
+V2_TO_V3_STEPS: tuple[str, ...] = (
+    PREVIEW_JOB_V3,
+    PREVIEW_JOB_ORDER_V3,
+    f"ALTER TABLE file_ref ADD COLUMN {FILE_REF_ORIGIN_V3}",
+    """
+    INSERT INTO preview_job (media_id, epoch, state, origin, sort_mtime, updated_at)
+    SELECT m.media_id, m.epoch, 'queued', 'crawl', MAX(f.mtime), :now
+    FROM media m JOIN file_ref f ON f.media_id = m.media_id
+    WHERE f.state = 'active' AND f.stage = 'keyed'
+    GROUP BY m.media_id
+    """,
+    "UPDATE meta SET value = '3' WHERE key = 'schema_version'",
+)
+
 _GET_VERSION: Final = "SELECT value FROM meta WHERE key = 'schema_version'"
 _HAS_META: Final = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
 
@@ -107,3 +162,18 @@ def migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
         raise
     connection.execute("COMMIT")
     _LOG.info("store migrated", extra={"from": 1, "to": 2, "file_refs": rows})
+
+
+def migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+    """Lift a v2 file to v3 in one transaction; on any error the file stays v2."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        for step in V2_TO_V3_STEPS:
+            connection.execute(step, {"now": int(time.time())})
+        jobs = int(connection.execute("SELECT COUNT(*) FROM preview_job").fetchone()[0])
+    except BaseException:
+        connection.execute("ROLLBACK")
+        _LOG.error("store migration failed, the file stays at version 2", extra={"from": 2, "to": 3})
+        raise
+    connection.execute("COMMIT")
+    _LOG.info("store migrated", extra={"from": 2, "to": 3, "preview_jobs": jobs})

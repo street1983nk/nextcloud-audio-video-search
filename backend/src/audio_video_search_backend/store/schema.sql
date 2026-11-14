@@ -11,8 +11,12 @@
 -- All times are whole milliseconds of audio time, INTEGER (pitfall 8).
 --
 -- Schema version 2 (phase 2). A file of version 1 is lifted by
--- store/migrate.py in one transaction before this script runs; this script
--- describes version 2 for a new file.
+-- store/migrate.py in one transaction before this script runs.
+--
+-- Schema version 3 (phase 3): the table preview_job (one row per content) and
+-- the column file_ref.origin. A file of version 2 is lifted by store/migrate.py
+-- in one transaction, a file of version 1 runs through both steps; this script
+-- describes version 3 for a new file.
 
 -- Version marks: schema_version, index_generation. Open names, so a later mark
 -- needs no migration.
@@ -67,6 +71,12 @@ CREATE TABLE IF NOT EXISTS media_key (
 -- such a reference neither counts nor gives hits, and comes back without a
 -- download. state, stage and reason are codes from the closed lists in repo.py,
 -- never free text.
+--
+-- origin (schema v3, D-03-05) says how the PHP app came to the file: event (an
+-- upload or a change a user made) or crawl (the walk over a storage). event
+-- always wins over crawl and never the other way round; a file changed by a
+-- user is an event even when the crawl saw it first. The column is the last
+-- one because the migration adds it with ALTER TABLE.
 CREATE TABLE IF NOT EXISTS file_ref (
     file_id        INTEGER PRIMARY KEY,
     media_id       INTEGER REFERENCES media (media_id),
@@ -83,7 +93,8 @@ CREATE TABLE IF NOT EXISTS file_ref (
     next_try_at    INTEGER,
     proved_at      INTEGER,
     vanished_since INTEGER,
-    updated_at     INTEGER NOT NULL
+    updated_at     INTEGER NOT NULL,
+    origin         TEXT    NOT NULL DEFAULT 'crawl' CHECK (origin IN ('event', 'crawl'))
 );
 CREATE INDEX IF NOT EXISTS file_ref_media ON file_ref (media_id);
 CREATE INDEX IF NOT EXISTS file_ref_storage ON file_ref (storage_id);
@@ -173,3 +184,56 @@ CREATE TABLE IF NOT EXISTS index_outbox (
     index_rev INTEGER NOT NULL,
     PRIMARY KEY (media_id, index_rev)
 );
+
+-- The preview of a content (schema v3, phase 3): one row per media_id, never
+-- per file_id, so two copies of the same recording are transcribed once.
+-- Written only by repo.py; the capture seeds a row in the same commit that keys
+-- a reference (mark_keyed, attach_by_proof), the migration seeds the stock.
+--
+-- state is where the preview stands:
+--   queued   waits for the worker;
+--   running  is being computed piece by piece;
+--   waiting  waits for disk space (reason disk_full) until next_try_at;
+--   complete the whole content is transcribed (the end mark for phase 6);
+--   skipped  will not be transcribed, with a reason.
+-- reason is a code from the closed list in repo.py (too_long, no_audio,
+-- damaged, protected, format_unsupported, no_speech, unsupported_language,
+-- disk_full), never free text, so no CHECK here.
+--
+-- origin (D-03-05) is event or crawl; event always wins, and the order of the
+-- work is event before crawl, then the newest file first (sort_mtime, the
+-- largest mtime of the active references). epoch is media.epoch when the row
+-- was seeded; a result of an older epoch is stale.
+--
+-- duration_ms is the length of the content once known; a too_long row comes
+-- back when the admin raises the limit (D-03-09). next_start_ms is the audio
+-- time where the next piece begins; it is written in the same commit as the
+-- words of a piece, so a restart goes on from there (TRANS-07). chunks_done
+-- counts the committed pieces, version_id is the preview version the pieces
+-- hang at (D-03-07). kept_words and the drop_* counters say how many words
+-- were kept or dropped and why (script, language, confidence), speech_ms how
+-- much speech the VAD found. attempts and next_try_at belong to retries;
+-- second_pass is 1 once the second VAD pass is done (D-03-16).
+CREATE TABLE IF NOT EXISTS preview_job (
+    media_id      INTEGER PRIMARY KEY REFERENCES media (media_id),
+    epoch         INTEGER NOT NULL,
+    state         TEXT    NOT NULL CHECK (state IN ('queued', 'running', 'waiting', 'complete', 'skipped')),
+    reason        TEXT,
+    origin        TEXT    NOT NULL CHECK (origin IN ('event', 'crawl')),
+    sort_mtime    INTEGER NOT NULL,
+    duration_ms   INTEGER,
+    next_start_ms INTEGER NOT NULL DEFAULT 0 CHECK (next_start_ms >= 0),
+    chunks_done   INTEGER NOT NULL DEFAULT 0 CHECK (chunks_done >= 0),
+    version_id    INTEGER,
+    kept_words    INTEGER NOT NULL DEFAULT 0,
+    drop_script   INTEGER NOT NULL DEFAULT 0,
+    drop_language INTEGER NOT NULL DEFAULT 0,
+    drop_conf     INTEGER NOT NULL DEFAULT 0,
+    speech_ms     INTEGER NOT NULL DEFAULT 0,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    next_try_at   INTEGER,
+    second_pass   INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS preview_job_order
+    ON preview_job (state, CASE origin WHEN 'event' THEN 0 ELSE 1 END, sort_mtime DESC, media_id);

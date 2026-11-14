@@ -33,11 +33,11 @@ from typing import Final, Literal
 from audio_video_search_backend.model import overlay
 from audio_video_search_backend.model.overlay import Correction, Word
 from audio_video_search_backend.model.provenance import Level, Provenance, validate
-from audio_video_search_backend.store.migrate import migrate_v1_to_v2, stored_version
+from audio_video_search_backend.store.migrate import migrate_v1_to_v2, migrate_v2_to_v3, stored_version
 
 _LOG: Final = logging.getLogger(__name__)
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 _SCHEMA_FILE: Final = Path(__file__).with_name("schema.sql")
 _BUSY_TIMEOUT_MS: Final = 5000
 
@@ -723,8 +723,11 @@ class Store:
     def open(cls, path: Path, *, read_only: bool = False) -> "Store":
         """Open the database; the writer migrates, applies the schema and the version marks.
 
-        A file of version 1 is lifted to version 2 in one transaction before
-        the schema script runs (store/migrate.py). A reader never migrates, and
+        A file of version 2 is lifted to version 3 in one transaction before
+        the schema script runs, a file of version 1 first to version 2 and then
+        on to 3, each step in a transaction of its own (store/migrate.py): a
+        failure in the second step leaves a file of version 2, which the next
+        start lifts again. A reader never migrates, and
         a version this code does not know is refused before anything is
         written.
         """
@@ -735,6 +738,9 @@ class Store:
                 found = stored_version(connection)
                 if found == 1:
                     migrate_v1_to_v2(connection)
+                    found = 2
+                if found == 2:
+                    migrate_v2_to_v3(connection)
                 elif found not in (0, SCHEMA_VERSION):
                     raise RuntimeError(f"unsupported store schema version {found}")
                 connection.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
