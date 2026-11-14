@@ -20,6 +20,8 @@ use Symfony\Component\Console\Output\OutputInterface;
  * "X of Y contents transcribed (N files)" (D-02-06): both numbers count
  * contents by content key, the file count stands beside them. Below them the
  * parts: due work and the work stock by state and by stage in the container,
+ * the preview jobs by reason or state (line "Preview:", D-03-13: codes and
+ * counts in the fixed order of ExAppService::PREVIEW_NAMES, never a file),
  * the PHP queue by kind, and how many first crawls are finished. Then the
  * external storages that are skipped (D-02-03): per mount configuration its
  * id, backend, authentication, reason and number of users, and the sentence
@@ -30,7 +32,7 @@ use Symfony\Component\Console\Output\OutputInterface;
  * The admin page shows the same numbers from phase 9 on.
  *
  * --json: the fields of GET /coverage of the container (contents,
- * transcribed, files, byState, byStage, dueWork) plus queue {ok, open} and
+ * transcribed, files, byState, byStage, dueWork, byPreview) plus queue {ok, open} and
  * crawl {finished, open}, skippedStorages [{mountId, backend, authKind,
  * reason, users}] and backgroundRescan ("on" or "disabled_by_config") of the
  * PHP app; the acceptance test reads it (ci/discovery/compare.sh). Texts are
@@ -80,6 +82,7 @@ class StatusCommand extends Command {
 		$output->writeln(sprintf('Due work: %d', $coverage['dueWork']));
 		$output->writeln('By state: ' . self::listed($coverage['byState']));
 		$output->writeln('By stage: ' . self::listed($coverage['byStage']));
+		$output->writeln('Preview: ' . self::listed($coverage['byPreview'] ?? []));
 		$output->writeln(($queue['ok'] ? 'Queue: ' : 'Queue (could not be read): ') . self::listed($queue['open']));
 		$output->writeln(sprintf('First crawls: %d finished, %d open', $crawl['finished'], $crawl['open']));
 		if ($skipped === []) {
