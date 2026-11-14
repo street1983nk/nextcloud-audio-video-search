@@ -279,7 +279,7 @@ def test_the_rule_fires_when_one_leg_stops_the_others() -> None:
     assert harp_findings(broken) == ["deploy-harp.yml stops every leg when one fails (fail-fast is not false)"]
 
 
-# -- the lifecycle proof: upgrade 0.0.1 to this commit, drift (plan 10) --------
+# -- the lifecycle proof: upgrade 0.1.0 to this commit, drift (plan 10, 02-21) --
 
 REDEPLOY = REPO_ROOT / "ci" / "redeploy.sh"
 # The step and the jq assertion it has to carry (the step name alone is no proof).
@@ -290,6 +290,47 @@ DRIFT_STEPS = (
     ("Drift 4", '.error == "companion_missing"'),
 )
 ENV_TAGS = ("@disabled", "@unreachable", "@nodebug", "@drift", "@patch", "@missing")
+
+
+# The release 0.1.0 is the tip of origin/phase-01 (plan 02-21): the upgrade job
+# builds prev/ out of exactly this commit, not out of its own one.
+PREV_COMMIT_0_1_0 = "82f1655481775a87f4fececa2e2b27d7c1f2f496"
+_PREV_COMMIT = re.compile(r"^\s+PREV_COMMIT: '([0-9a-f]+)'$", re.MULTILINE)
+# What the positive control before the update and the check after it name.
+BEFORE_CONTROL = ("schema_version", "oc_avs_", "upgrade positive control failed", ".schemaVersion == 1")
+AFTER_CHECK = (
+    "sample_ref",
+    "oc_avs_queue",
+    "oc_avs_crawl",
+    "oc_avs_storage",
+    "audio_video_search:status --json",
+)
+
+
+def real_prev_findings(upgrade: str) -> list[str]:
+    """Every place where the upgrade job does not start from the real release 0.1.0."""
+    findings: list[str] = []
+    if "PREV_VERSION: '0.1.0'" not in upgrade:
+        findings.append("the upgrade job does not start from 0.1.0")
+    commit = _PREV_COMMIT.search(upgrade)
+    if commit is None or len(commit.group(1)) != 40:
+        findings.append("the upgrade job does not name the full commit of 0.1.0")
+    elif commit.group(1) != PREV_COMMIT_0_1_0:
+        findings.append("the upgrade job names another commit than the release 0.1.0")
+    checkout = [text for name, text in steps_of(upgrade) if name == "Check out this app"]
+    if not checkout or "fetch-depth: 0" not in checkout[0]:
+        findings.append("the upgrade job checks out this app without its history (fetch-depth: 0)")
+    if 'git -C app-src worktree add --detach "${GITHUB_WORKSPACE}/prev" "${PREV_COMMIT}"' not in upgrade:
+        findings.append("the upgrade job does not build prev/ with git worktree add from PREV_COMMIT")
+    if "cp -R app-src prev" in upgrade:
+        findings.append("the upgrade job still copies prev/ out of its own commit")
+    findings += [
+        f"the positive control before the update does not check {item}"
+        for item in BEFORE_CONTROL
+        if item not in upgrade
+    ]
+    findings += [f"the check after the update does not look at {item}" for item in AFTER_CHECK if item not in upgrade]
+    return findings
 
 
 def job_text(source: str, job: str) -> str:
@@ -304,8 +345,7 @@ def lifecycle_findings(source: str, redeploy: str) -> list[str]:
     upgrade = job_text(source, "upgrade")
     if not upgrade:
         return ["deploy-harp.yml has no job upgrade"]
-    if "PREV_VERSION: '0.0.1'" not in upgrade:
-        findings.append("the upgrade job does not start from 0.0.1")
+    findings += real_prev_findings(upgrade)
     if not re.search(r"app_api:app:update audio_video_search_backend \\\n\s+--info-xml ", upgrade):
         findings.append("the upgrade job does not update the ExApp with app_api:app:update --info-xml")
     if "./occ upgrade" not in upgrade:
@@ -383,6 +423,45 @@ def test_the_lifecycle_rule_fires_when_the_main_run_takes_the_drift_tests() -> N
         "the main Playwright run does not leave out @drift",
         "the main Playwright run does not leave out @patch",
         "the main Playwright run does not leave out @missing",
+    ]
+
+
+def test_the_upgrade_rule_fires_on_the_synthetic_previous_version() -> None:
+    source = harp_source()
+    upgrade = job_text(source, "upgrade")
+    broken = (
+        upgrade.replace("PREV_VERSION: '0.1.0'", "PREV_VERSION: '0.0.1'")
+        .replace(PREV_COMMIT_0_1_0, PREV_COMMIT_0_1_0[:7])
+        .replace("fetch-depth: 0", "fetch-depth: 1")
+        .replace("git -C app-src worktree add", "cp -R app-src prev # git -C app-src worktree drop")
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the upgrade job does not start from 0.1.0",
+        "the upgrade job does not name the full commit of 0.1.0",
+        "the upgrade job checks out this app without its history (fetch-depth: 0)",
+        "the upgrade job does not build prev/ with git worktree add from PREV_COMMIT",
+        "the upgrade job still copies prev/ out of its own commit",
+    ]
+
+
+def test_the_upgrade_rule_fires_on_another_commit() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    broken = upgrade.replace(PREV_COMMIT_0_1_0, "0" * 40)
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == ["the upgrade job names another commit than the release 0.1.0"]
+
+
+def test_the_upgrade_rule_fires_without_the_positive_control() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    broken = upgrade.replace("upgrade positive control failed", "x").replace("oc_avs_storage", "oc_avs_store")
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the positive control before the update does not check upgrade positive control failed",
+        "the check after the update does not look at oc_avs_storage",
     ]
 
 
