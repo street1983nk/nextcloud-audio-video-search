@@ -20,6 +20,18 @@ memos of an instance language without a kept word at most 2,1 s of speech;
 single clips of the unsupported languages have from 4,3 s and from 55 % on.
 The borders are the middles of the two gaps.
 
+D-03-23: the second VAD pass (D-03-16, threshold 0.3, files up to 60 s
+without a kept word) brought 2 words of salad into the index for FLEURS
+Japanese ja_jp_00 (text language en, p 0.249, mean confidence 0.658). Measured
+in plan 03-13b with the real engine (``verdict23.py``, ``eval23.py``, 338
+files): a sure instance language (p >= 0.9) does not separate, because two
+French 2-word memos have p 0.315 and 0.748. Owner decision, option A: a window
+of the second pass keeps its words only from a mean word confidence of
+SECOND_PASS_CONF on, with no language condition beyond the catch rule. 0.68 is
+the middle of the gap between ja_jp_00 (0.658) and the French memo fr_11
+(0.7034), floored to two places; the French memo fr_02 (0.6098) loses its two
+words. A small sample with a narrow gap, decided by the owner.
+
 The text language and its probability come in as arguments; the language
 identification itself belongs to the engine (plan 03-10).
 """
@@ -47,6 +59,8 @@ CONF_SPEECH_SHARE: Final = 0.3
 # D-03-22 (plan 03-13): no kept word, but at least this much VAD speech at this share.
 SPEECH_ONLY_MS: Final = 3_000
 SPEECH_ONLY_SHARE: Final = 0.5
+# D-03-23 (plan 03-13b, owner option A): a window of the second VAD pass needs this mean confidence.
+SECOND_PASS_CONF: Final = 0.68
 
 # The verdicts of a window.
 KEEP: Final = "keep"
@@ -69,12 +83,21 @@ def latin_share(text: str) -> float:
     return latin / len(letters)
 
 
-def window_verdict(latin: float, lid: str, lid_p: float, n_words: int, conf_mean: float) -> str:
-    """KEEP or the reason a window is dropped."""
+def window_verdict(
+    latin: float, lid: str, lid_p: float, n_words: int, conf_mean: float, *, second_pass: bool = False
+) -> str:
+    """KEEP or the reason a window is dropped.
+
+    ``second_pass``: the window comes from the second VAD pass (D-03-16); after
+    the script and language checks it is kept only from SECOND_PASS_CONF on
+    (D-03-23), otherwise it is dropped for its confidence.
+    """
     if latin < MIN_LATIN:
         return DROP_SCRIPT
     if lid not in INSTANCE and lid_p >= LID_P and n_words >= LID_MIN_WORDS:
         return DROP_LANGUAGE
+    if second_pass:
+        return KEEP if conf_mean >= SECOND_PASS_CONF else DROP_CONFIDENCE
     if conf_mean >= CONF or (lid in INSTANCE and lid_p >= LID_P and conf_mean >= CONF_INSTANCE):
         return KEEP
     return DROP_CONFIDENCE

@@ -8,6 +8,7 @@ only lowers its threshold and its minimum speech. TRANS-08: every word time is
 the offset of the chunk in the medium plus the token time in the decoded span.
 TRANS-03: each merged window gets the catch rule (engine/catch.window_verdict);
 a window that is not kept carries no word out of the child, only its counts.
+A window of the second VAD pass needs the higher confidence of D-03-23.
 
 sherpa_onnx and py3langid are imported when an Engine is built, never at module
 level: the main process imports this module for Window and EngineWord, and the
@@ -251,7 +252,7 @@ class Engine:
             lid, lid_p = self._language(text)
             latin = round(latin_share(text), 3)
             conf_mean = round(float(np.mean([word.conf for word in words])), 4) if words else 0.0
-            verdict = window_verdict(latin, lid, lid_p, len(words), conf_mean)
+            verdict = window_verdict(latin, lid, lid_p, len(words), conf_mean, second_pass=second_pass)
             windows.append(
                 Window(
                     start_ms=offset_ms + _ms(start),

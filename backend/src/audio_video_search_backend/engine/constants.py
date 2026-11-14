@@ -10,8 +10,9 @@ tests/test_engine_constants.py holds both with a fingerprint.
 
 from typing import Final
 
-# The provenance of a transcript names this version; raise it with every change below.
-CONFIG_VERSION: Final = 1
+# The provenance of a transcript names this version; raise it with every change below
+# and in engine/catch.py. 2: D-03-23 (plan 03-13b), the second VAD pass keeps fewer words.
+CONFIG_VERSION: Final = 2
 
 SAMPLE_RATE: Final = 16000
 
