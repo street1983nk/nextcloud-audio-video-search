@@ -388,3 +388,25 @@ def test_the_lifespan_starts_the_capture_with_the_services(monkeypatch: pytest.M
 
     assert len(started) == 1
     assert isinstance(started[0], Services)
+
+
+def test_the_lifespan_runs_the_preview_and_stops_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    from audio_video_search_backend.api import Services
+    from audio_video_search_backend.worker import preview
+
+    started: list[object] = []
+    names_inside: set[str] = set()
+
+    async def hanging(services: object) -> None:
+        started.append(services)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(preview, "run_forever", hanging)
+    with TestClient(main.APP):
+        names_inside = {task.get_name() for task in main._TASKS}  # pyright: ignore[reportPrivateUsage]
+
+    assert "preview" in names_inside
+    assert len(started) == 1
+    assert isinstance(started[0], Services)
+    # The loop never ends on its own; the shutdown cancels it with the others.
+    assert not any(task.get_name() == "preview" for task in main._TASKS)  # pyright: ignore[reportPrivateUsage]
