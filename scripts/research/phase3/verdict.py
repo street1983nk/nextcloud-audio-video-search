@@ -1,12 +1,13 @@
 """Endregel der Research: Fensterregel + Dateiurteil, je Datei ausgegeben.
 
-Fenster: verwerfen bei Schrift < 0,5 lateinisch ("script"); verwerfen bei Text-Sprache ausserhalb DE/EN/FR mit
-p >= 0,9 und >= 3 Woertern ("language"); behalten bei conf >= 0,6 oder (Text-Sprache DE/EN/FR mit p >= 0,9 und
+Fenster: verwerfen bei Schrift < 0,5 lateinisch ("script"); verwerfen bei Text-Sprache außerhalb DE/EN/FR mit
+p >= 0,9 und >= 3 Wörtern ("language"); behalten bei conf >= 0,6 oder (Text-Sprache DE/EN/FR mit p >= 0,9 und
 conf >= 0,5); sonst verwerfen ("confidence").
-Datei: behalten >= 1 Wort -> "transcript"; sonst "unsupported", wenn (script+language) >= 5 Woerter oder
-(confidence >= 10 Woerter und VAD-Sprache >= 10 s und VAD-Anteil >= 30 %); sonst "no_speech".
+Datei: behalten >= 1 Wort -> "transcript"; sonst "unsupported", wenn (script+language) >= 5 Wörter oder
+(confidence >= 10 Wörter und VAD-Sprache >= 10 s und VAD-Anteil >= 30 %); sonst "no_speech".
 python -I verdict.py <dir> [<dir> ...]
 """
+
 import json
 import pathlib
 import sys
@@ -38,5 +39,7 @@ for d in sys.argv[1:]:
             v = "unsupported"
         else:
             v = "no_speech"
-        print(f"{r['file'][:30]:<31}{r['dur_s']:7.0f}{r['speech_s']:7.1f}{100 * share:5.0f}%{r['n_words']:5d}"
-              f"  keep {t['keep']:4d} conf {t['confidence']:4d} lang {t['language']:4d} script {t['script']:4d}  -> {v}")
+        print(
+            f"{r['file'][:30]:<31}{r['dur_s']:7.0f}{r['speech_s']:7.1f}{100 * share:5.0f}%{r['n_words']:5d}"
+            f"  keep {t['keep']:4d} conf {t['confidence']:4d} lang {t['language']:4d} script {t['script']:4d}  -> {v}"
+        )

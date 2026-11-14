@@ -1,8 +1,11 @@
+# pyright: reportMissingImports=false
+# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: echte Kurzmemos (1 bis 4 Wörter) an Wortgrenzen geschnitten, mit 0,5 s Stille davor und danach.
 
 Schnittpunkte aus den Parakeet-Wortzeiten der vollen Clips (results/memo_*.json): Ende des k-ten Worts + 0,25 s.
 python -I build_short.py <corpus_dir> <results_dir>  -> <corpus_dir>/short/*.wav
 """
+
 import json
 import pathlib
 import sys
@@ -45,7 +48,7 @@ for code in ("de_de", "en_us", "fr_fr"):
             end = words[k - 1][2] + 0.25
             nxt = words[k][1]
             end = min(end, nxt - 0.02)
-            piece = a[int(start * SR): int(end * SR)]
+            piece = a[int(start * SR) : int(end * SR)]
             pad = np.zeros(SR // 2, dtype=np.int16)
             wr(OUT / f"short{k}w_{code}_{i:02d}.wav", np.concatenate([pad, piece, pad]))
             n += 1

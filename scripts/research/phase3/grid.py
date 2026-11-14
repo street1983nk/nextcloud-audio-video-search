@@ -1,9 +1,10 @@
-"""Raster ueber die Abfangregel: C (Konfidenz allgemein), C2 (Konfidenz bei sicherer Instanz-Sprache), P (LID).
+"""Raster über die Abfangregel: C (Konfidenz allgemein), C2 (Konfidenz bei sicherer Instanz-Sprache), P (LID).
 
-Fensterregel: verwerfen bei Schrift < 50 % lateinisch; verwerfen bei fremder Text-Sprache mit p >= P und >= 3 Woertern;
+Fensterregel: verwerfen bei Schrift < 50 % lateinisch; verwerfen bei fremder Text-Sprache mit p >= P und >= 3 Wörtern;
 sonst behalten, wenn conf >= C oder (Text-Sprache in DE/EN/FR mit p >= P und conf >= C2).
 python -I grid.py <dir> [<dir> ...]
 """
+
 import json
 import pathlib
 import sys
@@ -57,6 +58,8 @@ for c in (0.5, 0.55, 0.6, 0.65):
             for g, w in wins:
                 if keep(w, c, c2, pp):
                     k[g] = k.get(g, 0) + w["nw"]
-            print(f"{c:5.2f}{c2:5.2f}{pp:5.2f} | {k.get('inst_clean', 0):5d}/{tot['inst_clean']} "
-                  f"{k.get('inst_noisy', 0):5d}/{tot['inst_noisy']} | {k.get('unsupported', 0):4d}/{tot['unsupported']} "
-                  f"{k.get('foreign_pk', 0):4d}/{tot['foreign_pk']} {k.get('music_sing', 0):4d}/{tot['music_sing']}")
+            print(
+                f"{c:5.2f}{c2:5.2f}{pp:5.2f} | {k.get('inst_clean', 0):5d}/{tot['inst_clean']} "
+                f"{k.get('inst_noisy', 0):5d}/{tot['inst_noisy']} | {k.get('unsupported', 0):4d}/{tot['unsupported']} "
+                f"{k.get('foreign_pk', 0):4d}/{tot['foreign_pk']} {k.get('music_sing', 0):4d}/{tot['music_sing']}"
+            )

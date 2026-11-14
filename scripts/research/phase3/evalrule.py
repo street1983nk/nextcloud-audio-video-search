@@ -2,8 +2,9 @@
 
 python -I evalrule.py <C> <P> <results_dir> [<results_dir> ...]
 Fensterregel: behalten, wenn Schrift >= 50 % lateinisch, mittlere Wortkonfidenz >= C und nicht
-(Text-Sprache ausserhalb DE/EN/FR mit p >= P und mind. 3 Woerter).
+(Text-Sprache außerhalb DE/EN/FR mit p >= P und mind. 3 Wörter).
 """
+
 import json
 import pathlib
 import sys
@@ -37,5 +38,7 @@ for d in sys.argv[3:]:
 print(f"C={C} P={P}")
 print(f"{'Datei':<30}{'Dauer':>7}{'VAD-s':>7}{'Wort':>6}{'keep':>6}{'conf':>6}{'lid':>5}{'skr':>5}{'W/VADs':>8}")
 for f, du, sp, nw, t in rows:
-    print(f"{f[:29]:<30}{du:7.0f}{sp:7.1f}{nw:6d}{t['keep']:6d}{t['conf']:6d}{t['lid']:5d}{t['script']:5d}"
-          f"{(nw / sp if sp else 0):8.2f}")
+    print(
+        f"{f[:29]:<30}{du:7.0f}{sp:7.1f}{nw:6d}{t['keep']:6d}{t['conf']:6d}{t['lid']:5d}{t['script']:5d}"
+        f"{(nw / sp if sp else 0):8.2f}"
+    )

@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: zweiter Durchgang für Dateien ohne Wörter.
 
 Varianten je Datei (nur erste 30 s):
@@ -6,6 +8,7 @@ Varianten je Datei (nur erste 30 s):
   novad  ganze 30 s ohne VAD an Parakeet (nur zum Vergleich, nicht als Produktweg)
 python -I shortpass.py <models_dir> <out_json> <wav> [<wav> ...]
 """
+
 import json
 import math
 import pathlib
@@ -21,9 +24,14 @@ MODELS = pathlib.Path(sys.argv[1])
 OUT = pathlib.Path(sys.argv[2])
 
 rec = sherpa_onnx.OfflineRecognizer.from_transducer(
-    encoder=str(MODELS / "parakeet" / "encoder.int8.onnx"), decoder=str(MODELS / "parakeet" / "decoder.int8.onnx"),
-    joiner=str(MODELS / "parakeet" / "joiner.int8.onnx"), tokens=str(MODELS / "parakeet" / "tokens.txt"),
-    num_threads=2, model_type="nemo_transducer", decoding_method="greedy_search")
+    encoder=str(MODELS / "parakeet" / "encoder.int8.onnx"),
+    decoder=str(MODELS / "parakeet" / "decoder.int8.onnx"),
+    joiner=str(MODELS / "parakeet" / "joiner.int8.onnx"),
+    tokens=str(MODELS / "parakeet" / "tokens.txt"),
+    num_threads=2,
+    model_type="nemo_transducer",
+    decoding_method="greedy_search",
+)
 
 
 def rd(p: pathlib.Path) -> np.ndarray:
@@ -39,12 +47,12 @@ def decode(a: np.ndarray) -> list[tuple[str, float]]:
     r = st.result
     lp = list(r.ys_log_probs) if len(r.ys_log_probs) == len(r.tokens) else [0.0] * len(r.tokens)
     ww: list[list] = []
-    for tok, l in zip(r.tokens, lp):
+    for tok, lpv in zip(r.tokens, lp, strict=False):
         if tok.startswith(" ") or not ww:
-            ww.append([tok.strip(), [l]])
+            ww.append([tok.strip(), [lpv]])
         else:
             ww[-1][0] += tok
-            ww[-1][1].append(l)
+            ww[-1][1].append(lpv)
     return [(w, round(math.exp(min(l_)), 3)) for w, l_ in ww if w]
 
 
@@ -61,7 +69,7 @@ def vad(a: np.ndarray, thr: float) -> list[tuple[int, int]]:
     ws = cfg.silero_vad.window_size
     segs = []
     for i in range(0, len(a), ws):
-        v.accept_waveform(a[i:i + ws])
+        v.accept_waveform(a[i : i + ws])
         while not v.empty():
             segs.append((v.front.start, len(v.front.samples)))
             v.pop()
@@ -82,7 +90,7 @@ for arg in sys.argv[3:]:
         words = []
         for st, n in segs:
             s0 = max(0, st - int(0.4 * SR))
-            words += decode(a[s0: st + n + int(0.4 * SR)])
+            words += decode(a[s0 : st + n + int(0.4 * SR)])
         out[name] = {"speech_s": round(sum(n for _, n in segs) / SR, 2), "words": words}
     out["novad"] = {"words": decode(a)}
     res[p.stem] = out

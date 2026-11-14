@@ -1,7 +1,10 @@
+# pyright: reportMissingImports=false
+# numpy, sherpa_onnx und py3langid gehören zur Messumgebung, nicht zur Umgebung des Backends.
 """Phase-3-Research: abgeleitete Testdateien aus dem geladenen Korpus bauen (alles 16 kHz mono s16).
 
 python -I build_corpus.py <corpus_dir>   -> <corpus_dir>/test/<name>.wav
 """
+
 import pathlib
 import sys
 import wave
@@ -94,13 +97,13 @@ t = np.arange(120 * SR) / SR
 wr("ns_sine440_2min", (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32))
 wr("ns_hum50_2min", (0.2 * np.sin(2 * np.pi * 50 * t) + 0.05 * np.sin(2 * np.pi * 150 * t)).astype(np.float32))
 
-# Musik und Gesang unveraendert
+# Musik und Gesang unverändert
 for p in sorted(WAV.glob("music_*.wav")) + sorted(WAV.glob("sing_*.wav")):
     wr(p.stem, rd(p))
 
 # Gemischte Dateien
 es, tr, ar = clips("es_419"), clips("tr_tr"), clips("ar_eg")
-wr("mix_de50_es50", cat([x for pair in zip(de[:8], es[:8]) for x in pair]))
+wr("mix_de50_es50", cat([x for pair in zip(de[:8], es[:8], strict=False) for x in pair]))
 wr("mix_de20_tr80", cat(de[:2] + tr[:8]))
 wr("mix_de10_ar90", cat(de[:1] + ar[:9]))
 wr("mix_fr30_ja70", cat(fr[:3] + clips("ja_jp")[:7]))

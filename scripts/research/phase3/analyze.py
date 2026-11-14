@@ -1,7 +1,8 @@
-"""Phase-3-Research: Auswertung der Messung (Kandidatenregeln fuer keine Sprache / nicht unterstuetzt).
+"""Phase-3-Research: Auswertung der Messung (Kandidatenregeln für keine Sprache / nicht unterstützt).
 
 python -I analyze.py <results_dir>
 """
+
 import json
 import pathlib
 import sys
@@ -20,8 +21,15 @@ def group(name: str) -> str:
         if code in INST:
             return "speech_inst"
         return "foreign_pk" if code in {"es", "it", "pl", "nl", "ru", "el"} else "foreign_unsup"
-    for pre, g in (("memo3s_", "memo3s"), ("memo_", "memo"), ("ns_", "nonspeech"), ("music_", "music"),
-                   ("sing_", "sing"), ("mix_", "mixed"), ("podcast", "memo")):
+    for pre, g in (
+        ("memo3s_", "memo3s"),
+        ("memo_", "memo"),
+        ("ns_", "nonspeech"),
+        ("music_", "music"),
+        ("sing_", "sing"),
+        ("mix_", "mixed"),
+        ("podcast", "memo"),
+    ):
         if name.startswith(pre):
             return g
     return "other"
@@ -38,15 +46,17 @@ def window_kept(w: dict, rule: str) -> bool:
     if rule == "lid":
         return w["lid"] in INST
     if rule == "lid_or_short":
-        # sehr kurze Fenster (<3 Woerter) sind fuer jede Text-LID zu kurz: behalten, wenn Datei-LID Instanz ist
+        # sehr kurze Fenster (<3 Wörter) sind für jede Text-LID zu kurz: behalten, wenn Datei-LID Instanz ist
         return w["lid"] in INST or w["nw"] < 3
     raise ValueError(rule)
 
 
 def main() -> None:
     rows = load()
-    print(f"{'Datei':<34}{'Gruppe':<14}{'Dauer':>7}{'VAD-s':>7}{'Ant%':>6}{'Wort':>6}{'W/s':>6}{'Konf':>6}"
-          f"{'lat':>5}{'LID':>5}{'p':>6}{'stop':>6}{'keep':>6}{'keep%':>6}")
+    print(
+        f"{'Datei':<34}{'Gruppe':<14}{'Dauer':>7}{'VAD-s':>7}{'Ant%':>6}{'Wort':>6}{'W/s':>6}{'Konf':>6}"
+        f"{'lat':>5}{'LID':>5}{'p':>6}{'stop':>6}{'keep':>6}{'keep%':>6}"
+    )
     for r in rows:
         g = group(r["file"])
         speech = r["speech_s"]
@@ -55,9 +65,11 @@ def main() -> None:
         nw = r["n_words"]
         wps = nw / speech if speech else 0
         stop = r["stop_lang"] or "-"
-        print(f"{r['file'][:33]:<34}{g:<14}{r['dur_s']:7.0f}{speech:7.1f}{share:6.1f}{nw:6d}{wps:6.2f}"
-              f"{(r['conf_mean'] or 0):6.2f}{r['latin']:5.2f}{r['lid'][:4]:>5}{r['lid_p']:6.2f}{stop:>6}{kept:6d}"
-              f"{(100 * kept / nw if nw else 0):6.0f}")
+        print(
+            f"{r['file'][:33]:<34}{g:<14}{r['dur_s']:7.0f}{speech:7.1f}{share:6.1f}{nw:6d}{wps:6.2f}"
+            f"{(r['conf_mean'] or 0):6.2f}{r['latin']:5.2f}{r['lid'][:4]:>5}{r['lid_p']:6.2f}{stop:>6}{kept:6d}"
+            f"{(100 * kept / nw if nw else 0):6.0f}"
+        )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Verteilung der mittleren Wortkonfidenz je VAD-Fenster nach Gruppe.  python -I confdist.py <dir> [<dir> ...]"""
+
 import json
 import pathlib
 import sys
@@ -33,8 +34,10 @@ for g, vals in groups.items():
     n = len(cs)
     below = {t: sum(v[1] for v in vals if v[0] < t) for t in (0.5, 0.6, 0.7)}
     total = sum(v[1] for v in vals)
-    print(f"{g:<38} Fenster {n:4d} Woerter {total:5d}  min {cs[0]:.2f} p05 {cs[n // 20]:.2f} median {cs[n // 2]:.2f}"
-          f" p95 {cs[min(n - 1, 19 * n // 20)]:.2f} max {cs[-1]:.2f} | Woerter unter 0,5/0,6/0,7: "
-          f"{below[0.5]}/{below[0.6]}/{below[0.7]}")
+    print(
+        f"{g:<38} Fenster {n:4d} Woerter {total:5d}  min {cs[0]:.2f} p05 {cs[n // 20]:.2f} median {cs[n // 2]:.2f}"
+        f" p95 {cs[min(n - 1, 19 * n // 20)]:.2f} max {cs[-1]:.2f} | Woerter unter 0,5/0,6/0,7: "
+        f"{below[0.5]}/{below[0.6]}/{below[0.7]}"
+    )
     low = sorted(vals)[:3]
     print("   niedrigste:", [(round(c, 2), nw, f) for c, nw, f in low])
