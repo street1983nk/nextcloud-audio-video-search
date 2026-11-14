@@ -13,6 +13,7 @@ use OCP\IAppConfig;
 use OCP\IGroupManager;
 use OCP\IUserManager;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -329,17 +330,167 @@ final class ExAppServiceTest extends TestCase {
 	// -- excerpt, sample, removeSample ------------------------------------------
 
 	public function testExcerptHasItsShape(): void {
-		$service = $this->service($this->json(['known' => true, 'excerpt' => 'an dieser Stelle']));
+		$service = $this->service($this->json([
+			'known' => true,
+			'excerpt' => 'an dieser Stelle',
+			'stage' => 'preview',
+			'partial' => true,
+			'pendingHere' => false,
+			'reason' => null,
+		]));
 
-		self::assertSame(['known' => true, 'excerpt' => 'an dieser Stelle'], $service->excerpt('alice', 11, 42000));
+		self::assertSame([
+			'known' => true,
+			'excerpt' => 'an dieser Stelle',
+			'stage' => 'preview',
+			'partial' => true,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		], $service->excerpt('alice', 11, 42000));
 		self::assertSame(['fileId' => 11, 'atMs' => 42000], $this->calls[0]['params']);
 		self::assertSame('/excerpt', $this->calls[0]['path']);
 	}
 
 	public function testExcerptOfAnUnknownFileIsKnownFalse(): void {
-		$service = $this->service($this->json(['known' => false, 'excerpt' => null]));
+		$unknown = [
+			'known' => false,
+			'excerpt' => null,
+			'stage' => null,
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		];
 
-		self::assertSame(['known' => false, 'excerpt' => null], $service->excerpt('alice', 11, 0));
+		self::assertSame($unknown, $this->service($this->json(['known' => false]))->excerpt('alice', 11, 0));
+		self::assertSame($unknown, $this->service($this->json(['known' => false, 'excerpt' => null]))->excerpt('alice', 11, 0));
+	}
+
+	public function testWithKnownFalseEveryOtherFieldIsIgnored(): void {
+		// Whatever comes along with known false, even out of type, never
+		// reaches the page: the answer is the one of an unknown file.
+		$answer = $this->service($this->json([
+			'known' => false,
+			'excerpt' => 'der Haushalt wird beraten',
+			'stage' => 7,
+			'partial' => 'yes',
+			'pendingHere' => true,
+			'reason' => 'no_speech',
+			'limitHours' => 99,
+		]))->excerpt('alice', 11, 0);
+
+		self::assertIsArray($answer);
+		self::assertFalse($answer['known']);
+		self::assertNull($answer['excerpt']);
+		self::assertNull($answer['stage']);
+		self::assertFalse($answer['partial']);
+		self::assertFalse($answer['pendingHere']);
+		self::assertNull($answer['reason']);
+		self::assertNull($answer['limitHours']);
+	}
+
+	public function testMissingFieldsOfAKnownFileHaveTheirDefaults(): void {
+		self::assertSame([
+			'known' => true,
+			'excerpt' => null,
+			'stage' => null,
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		], $this->service($this->json(['known' => true]))->excerpt('alice', 11, 0));
+	}
+
+	public function testAReasonAndTheLimitArePassedOnForTheControllerToCheck(): void {
+		$answer = $this->service($this->json([
+			'known' => true,
+			'excerpt' => null,
+			'stage' => null,
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => 'too_long',
+			'limitHours' => 12,
+		]))->excerpt('alice', 11, 0);
+
+		self::assertIsArray($answer);
+		self::assertSame('too_long', $answer['reason']);
+		self::assertSame(12, $answer['limitHours']);
+	}
+
+	/** @return array<string, array{mixed, ?string}> */
+	public static function stages(): array {
+		return [
+			'preview' => ['preview', 'preview'],
+			'final' => ['final', 'final'],
+			'sample' => ['sample', 'sample'],
+			'null' => [null, null],
+			'an unknown text' => ['draft', null],
+		];
+	}
+
+	#[DataProvider('stages')]
+	public function testTheStageIsAClosedListAndAnUnknownTextIsNull(mixed $stage, ?string $expected): void {
+		$answer = $this->service($this->json(['known' => true, 'excerpt' => 'x', 'stage' => $stage]))->excerpt('alice', 11, 0);
+
+		self::assertIsArray($answer);
+		self::assertSame($expected, $answer['stage']);
+	}
+
+	/** @return array<string, array{string, mixed}> */
+	public static function fieldsOutOfType(): array {
+		return [
+			'excerpt a number' => ['excerpt', 5],
+			'stage a number' => ['stage', 2],
+			'stage a list' => ['stage', ['final']],
+			'stage true' => ['stage', true],
+			'partial a text' => ['partial', 'true'],
+			'partial a number' => ['partial', 1],
+			'partial null' => ['partial', null],
+			'pendingHere a text' => ['pendingHere', 'false'],
+			'pendingHere a number' => ['pendingHere', 0],
+			'pendingHere null' => ['pendingHere', null],
+			'reason a number' => ['reason', 3],
+			'reason a list' => ['reason', ['no_speech']],
+			'reason false' => ['reason', false],
+			'limitHours a text' => ['limitHours', '12'],
+			'limitHours a float' => ['limitHours', 12.0],
+			'limitHours zero' => ['limitHours', 0],
+			'limitHours negative' => ['limitHours', -1],
+			'limitHours beyond a day' => ['limitHours', 25],
+			'limitHours true' => ['limitHours', true],
+		];
+	}
+
+	#[DataProvider('fieldsOutOfType')]
+	public function testOneFieldOutOfTypeMakesTheWholeAnswerNoAnswer(string $field, mixed $value): void {
+		$valid = [
+			'known' => true,
+			'excerpt' => null,
+			'stage' => 'preview',
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => 'too_long',
+			'limitHours' => 12,
+		];
+		// Positive control: the same answer with every field in type is valid.
+		self::assertIsArray($this->service($this->json($valid))->excerpt('alice', 11, 0));
+
+		$valid[$field] = $value;
+		self::assertNull($this->service($this->json($valid))->excerpt('alice', 11, 0));
+	}
+
+	/** @return array<string, array{int}> */
+	public static function limitsInRange(): array {
+		return ['one hour' => [1], 'twelve hours' => [12], 'a day' => [24]];
+	}
+
+	#[DataProvider('limitsInRange')]
+	public function testTheLimitFromOneToTwentyFourHoursIsKept(int $hours): void {
+		$answer = $this->service($this->json(['known' => true, 'reason' => 'too_long', 'limitHours' => $hours]))->excerpt('alice', 11, 0);
+
+		self::assertIsArray($answer);
+		self::assertSame($hours, $answer['limitHours']);
 	}
 
 	public function testExcerptRefusesBadInputAndBadAnswers(): void {
@@ -348,6 +499,7 @@ final class ExAppServiceTest extends TestCase {
 		self::assertSame([], $this->calls);
 		self::assertNull($this->service($this->json(['known' => 'yes', 'excerpt' => 'x']))->excerpt('alice', 1, 0));
 		self::assertNull($this->service($this->json(['known' => true, 'excerpt' => 5]))->excerpt('alice', 1, 0));
+		self::assertNull($this->service($this->json(['excerpt' => 'x']))->excerpt('alice', 1, 0));
 	}
 
 	public function testSamplePublishesWithTheUserAndTheLongerTimeout(): void {

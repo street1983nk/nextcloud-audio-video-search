@@ -57,8 +57,11 @@ final class PlayControllerTest extends TestCase {
 	/** @var array<int, File> the files the user may read, by id */
 	private array $readable = [];
 
-	/** @var array{known:bool,excerpt:?string}|null */
-	private ?array $excerpt = ['known' => true, 'excerpt' => 'der Haushalt wird beraten'];
+	/** @var array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}|null */
+	private ?array $excerpt = null;
+
+	/** Set where the container must not be asked at all: excerpt() then expects never(). */
+	private bool $containerNeverAsked = false;
 
 	private bool $searchAllowed = true;
 	private bool $viewWithoutDownload = true;
@@ -106,7 +109,8 @@ final class PlayControllerTest extends TestCase {
 		$this->uid = self::UID;
 		$this->t = '';
 		$this->readable = [];
-		$this->excerpt = ['known' => true, 'excerpt' => 'der Haushalt wird beraten'];
+		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
+		$this->containerNeverAsked = false;
 		$this->searchAllowed = true;
 		$this->viewWithoutDownload = true;
 		$this->excerptCalls = [];
@@ -171,11 +175,13 @@ final class PlayControllerTest extends TestCase {
 
 			return $this->searchAllowed;
 		});
-		$exApp->method('excerpt')->willReturnCallback(function (string $uid, int $fileId, int $startMs): ?array {
-			$this->excerptCalls[] = [$uid, $fileId, $startMs];
+		$exApp->expects($this->containerNeverAsked ? self::never() : self::any())
+			->method('excerpt')
+			->willReturnCallback(function (string $uid, int $fileId, int $startMs): ?array {
+				$this->excerptCalls[] = [$uid, $fileId, $startMs];
 
-			return $this->excerpt;
-		});
+				return $this->excerpt;
+			});
 
 		$exclusions = $this->createMock(ExclusionService::class);
 		$exclusions->method('reload')->willReturnCallback(function (): void {
@@ -210,6 +216,54 @@ final class PlayControllerTest extends TestCase {
 			$this->logger(),
 			$this->realExclusions ?? $exclusions,
 		);
+	}
+
+	/**
+	 * An answer of the container about a file it may speak about, in the
+	 * shape ExAppService::excerpt hands on.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}
+	 */
+	private static function found(array $fields): array {
+		return $fields + [
+			'known' => true,
+			'excerpt' => null,
+			'stage' => 'preview',
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		];
+	}
+
+	/**
+	 * The answer of the container about a file it may not speak about.
+	 *
+	 * @return array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}
+	 */
+	private static function unknownFile(): array {
+		return [
+			'known' => false,
+			'excerpt' => null,
+			'stage' => null,
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		];
+	}
+
+	/**
+	 * The excerpt block of a page as the server renders it: the template of
+	 * the response without the layout around it, cut to its section.
+	 */
+	private static function excerptBlock(TemplateResponse $response): string {
+		$blank = new TemplateResponse($response->getApp(), $response->getTemplateName(), $response->getParams(), TemplateResponse::RENDER_AS_BLANK);
+		$html = $blank->render();
+		self::assertSame(1, preg_match('#<section class="avs-excerpt"[^>]*>.*?</section>#s', $html, $match), 'no excerpt block in the page');
+
+		return $match[0];
 	}
 
 	/** A logger that keeps every line with its context as one text. */
@@ -247,13 +301,15 @@ final class PlayControllerTest extends TestCase {
 	 * @return array{status: int, app: string, template: string, renderAs: string, params: array<string, mixed>}
 	 */
 	private function answerWithoutTranscript(int $fileId): array {
-		$this->excerpt = ['known' => false, 'excerpt' => null];
+		$this->excerpt = self::unknownFile();
 		$answer = self::answer($this->response($fileId));
 		self::assertSame('none', $answer['params']['excerptState']);
 		self::assertSame('', $answer['params']['excerpt']);
+		self::assertSame('', $answer['params']['excerptNote']);
+		self::assertSame(0, $answer['params']['excerptHours']);
 		self::assertCount(1, $this->excerptCalls);
 
-		$this->excerpt = ['known' => true, 'excerpt' => 'der Haushalt wird beraten'];
+		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
 		$this->excerptCalls = [];
 		$this->allowedCalls = 0;
 		$this->askedUsers = [];
@@ -528,7 +584,7 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame('ok', $params['excerptState']);
 		self::assertSame('der Haushalt wird beraten', $params['excerpt']);
 
-		$this->excerpt = ['known' => false, 'excerpt' => null];
+		$this->excerpt = self::unknownFile();
 		$params = $this->play(7);
 		self::assertSame('none', $params['excerptState']);
 		self::assertSame('', $params['excerpt']);
@@ -550,6 +606,170 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame('ready', $params['state']);
 	}
 
+	// -- the states A1 to A13 (plan 03-16, UI-SPEC surface 2) -----------------------------
+
+	/**
+	 * One case per state of the table, and the edges between them: what the
+	 * container answers and what the page gets as excerptState, excerpt,
+	 * excerptNote and excerptHours.
+	 *
+	 * @return array<string, array{?array<string, mixed>, string, string, string, int}>
+	 */
+	public static function excerptStates(): array {
+		$text = 'der Haushalt wird beraten';
+
+		return [
+			'A1 preview' => [['excerpt' => $text, 'stage' => 'preview'], 'ok', $text, 'preview', 0],
+			'A1 without a stage' => [['excerpt' => $text, 'stage' => null], 'ok', $text, 'preview', 0],
+			'A1 a sample is preliminary' => [['excerpt' => $text, 'stage' => 'sample'], 'ok', $text, 'preview', 0],
+			'A2 partial' => [['excerpt' => $text, 'stage' => 'preview', 'partial' => true], 'ok', $text, 'partial', 0],
+			'A2 partial beats final' => [['excerpt' => $text, 'stage' => 'final', 'partial' => true], 'ok', $text, 'partial', 0],
+			'A2 partial while the disk is full' => [['excerpt' => $text, 'partial' => true, 'reason' => 'disk_full'], 'ok', $text, 'partial', 0],
+			'A3 final' => [['excerpt' => $text, 'stage' => 'final'], 'ok', $text, '', 0],
+			'A4 pending here' => [['partial' => true, 'pendingHere' => true], 'pending_here', '', '', 0],
+			'A5 known without text and reason' => [[], 'none', '', '', 0],
+			'A5 a text of blanks' => [['excerpt' => "  \t "], 'none', '', '', 0],
+			'A6 no speech' => [['reason' => 'no_speech'], 'no_speech', '', '', 0],
+			'A7 damaged' => [['reason' => 'damaged'], 'skipped_damaged', '', '', 0],
+			'A8 protected' => [['reason' => 'protected'], 'skipped_protected', '', '', 0],
+			'A9 unsupported language' => [['reason' => 'unsupported_language'], 'unsupported_language', '', '', 0],
+			'A10 too long, twelve hours' => [['reason' => 'too_long', 'limitHours' => 12], 'too_long', '', '', 12],
+			'A10 too long, one hour' => [['reason' => 'too_long', 'limitHours' => 1], 'too_long', '', '', 1],
+			'A11 an unknown reason' => [['reason' => 'xyz'], 'skipped_other', '', '', 0],
+			'A11 a code of the container outside the list' => [['reason' => 'engine_failed'], 'skipped_other', '', '', 0],
+			'A11 too long without its limit' => [['reason' => 'too_long'], 'skipped_other', '', '', 0],
+			'A11 the limit belongs to too_long only' => [['reason' => 'no_speech', 'limitHours' => 12], 'no_speech', '', '', 0],
+			'A12 no answer' => [null, 'unavailable', '', '', 0],
+			'A13 disk full' => [['reason' => 'disk_full'], 'disk_full', '', '', 0],
+		];
+	}
+
+	/** @param array<string, mixed>|null $fields */
+	#[DataProvider('excerptStates')]
+	public function testTheContainerAnswerBecomesExactlyOneState(?array $fields, string $state, string $text, string $note, int $hours): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$this->excerpt = $fields === null ? null : self::found($fields);
+
+		$params = $this->play(7);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame($state, $params['excerptState']);
+		self::assertSame($text, $params['excerpt']);
+		self::assertSame($note, $params['excerptNote']);
+		self::assertSame($hours, $params['excerptHours']);
+		self::assertSame([[self::UID, 7, 42000]], $this->excerptCalls);
+	}
+
+	public function testEveryReasonOfTheListHasItsOwnStateAndNoOtherIsNamed(): void {
+		self::assertSame(
+			['no_speech', 'damaged', 'protected', 'unsupported_language', 'too_long', 'disk_full'],
+			array_keys(PageController::REASON_STATES),
+		);
+		$states = array_values(PageController::REASON_STATES);
+		self::assertSame($states, array_values(array_unique($states)));
+		self::assertNotContains(PageController::EXCERPT_NONE, $states);
+		self::assertNotContains(PageController::EXCERPT_SKIPPED_OTHER, $states);
+	}
+
+	public function testAFileTheContainerMayNotSpeakAboutIsNoTranscriptYet(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->excerpt = self::unknownFile();
+
+		$params = $this->play(7);
+
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame('', $params['excerpt']);
+		self::assertSame('', $params['excerptNote']);
+		self::assertSame(0, $params['excerptHours']);
+		self::assertCount(1, $this->excerptCalls);
+	}
+
+	public function testAPageWithoutAMediumCarriesNoNoteAndNoHours(): void {
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+
+		$params = $this->play(3);
+
+		self::assertSame('skipped', $params['excerptState']);
+		self::assertSame('', $params['excerptNote']);
+		self::assertSame(0, $params['excerptHours']);
+		self::assertSame('', $this->response(5)->getParams()['excerptNote']);
+		self::assertSame(0, $this->response(5)->getParams()['excerptHours']);
+	}
+
+	// -- the leak rule (UI-SPEC P11, T-03-54) ---------------------------------------------
+
+	/** @return array<string, array{string}> */
+	public static function exclusionKinds(): array {
+		return [
+			'excluded user' => ['user'],
+			'excluded file' => ['file'],
+			'question fails' => ['fails'],
+		];
+	}
+
+	#[DataProvider('exclusionKinds')]
+	public function testAnExcludedFileWithAReasonLooksLikeAnUnknownFileAndTheContainerIsNeverAsked(string $kind): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$unknown = $this->answerWithoutTranscript(7);
+
+		$this->excerpt = self::found(['reason' => 'no_speech']);
+		match ($kind) {
+			'user' => $this->excludedUsers = [self::UID],
+			'file' => $this->excludedFiles = [7],
+			'fails' => $this->exclusionsFail = true,
+		};
+		$this->containerNeverAsked = true;
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+		self::assertSame('none', $excluded['params']['excerptState']);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testTheExcerptBlockOfAnExcludedUserIsByteEqualToTheOneOfAnUnknownFile(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		// The reference: a file the container knows nothing about (P4).
+		$this->excerpt = self::unknownFile();
+		$unknown = self::excerptBlock($this->response(7));
+
+		// Positive control: with the reason given to a user who may see it,
+		// the block is a different one, so the comparison below can fail.
+		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
+		$readable = self::excerptBlock($this->response(7));
+		self::assertNotSame($unknown, $readable);
+		self::assertStringContainsString('der Haushalt wird beraten', $readable);
+
+		// The probe: an excluded user opens a file with the reason no_speech (P11).
+		$this->excerpt = self::found(['reason' => 'no_speech']);
+		$this->excludedUsers = [self::UID];
+		$this->containerNeverAsked = true;
+		$this->excerptCalls = [];
+		$excluded = self::excerptBlock($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+		self::assertStringContainsString('avs-excerpt__hint', $excluded);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAnUnknownReasonNeverReachesThePage(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->excerpt = self::found(['reason' => 'xyz']);
+
+		$response = $this->response(7);
+		$params = $response->getParams();
+
+		self::assertSame('skipped_other', $params['excerptState']);
+		self::assertStringNotContainsString('xyz', json_encode($params, JSON_THROW_ON_ERROR));
+		$block = self::excerptBlock($response);
+		self::assertStringNotContainsString('xyz', $block);
+		self::assertStringContainsString('avs-excerpt__hint', $block);
+	}
+
 	// -- the exclusions (plan 02-16b) ---------------------------------------------------
 
 	public function testAnExcludedUserGetsTheAnswerOfAFileWithoutATranscriptAndTheContainerIsNeverAsked(): void {
@@ -558,6 +778,7 @@ final class PlayControllerTest extends TestCase {
 		$withoutTranscript = $this->answerWithoutTranscript(7);
 
 		$this->excludedUsers = [self::UID];
+		$this->containerNeverAsked = true;
 		$excluded = self::answer($this->response(7));
 
 		self::assertSame($withoutTranscript, $excluded);
@@ -574,6 +795,7 @@ final class PlayControllerTest extends TestCase {
 		$withoutTranscript = $this->answerWithoutTranscript(7);
 
 		$this->excludedFiles = [7];
+		$this->containerNeverAsked = true;
 		$excluded = self::answer($this->response(7));
 
 		self::assertSame($withoutTranscript, $excluded);
@@ -613,6 +835,7 @@ final class PlayControllerTest extends TestCase {
 		$withoutTranscript = $this->answerWithoutTranscript(7);
 
 		$this->exclusionsFail = true;
+		$this->containerNeverAsked = true;
 		$failed = self::answer($this->response(7));
 
 		self::assertSame($withoutTranscript, $failed);

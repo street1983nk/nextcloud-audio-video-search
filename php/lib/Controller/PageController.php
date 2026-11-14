@@ -66,6 +66,36 @@ final class PageController extends Controller {
 	public const EXCERPT_UNAVAILABLE = 'unavailable';
 	/** No excerpt was asked for, because nothing is played. */
 	public const EXCERPT_SKIPPED = 'skipped';
+	/** The file is partly transcribed, but not yet up to this point (A4). */
+	public const EXCERPT_PENDING_HERE = 'pending_here';
+	public const EXCERPT_NO_SPEECH = 'no_speech';
+	public const EXCERPT_SKIPPED_DAMAGED = 'skipped_damaged';
+	public const EXCERPT_SKIPPED_PROTECTED = 'skipped_protected';
+	public const EXCERPT_UNSUPPORTED_LANGUAGE = 'unsupported_language';
+	public const EXCERPT_TOO_LONG = 'too_long';
+	public const EXCERPT_DISK_FULL = 'disk_full';
+	/** A reason outside of REASON_STATES (A11): the raw code is never shown. */
+	public const EXCERPT_SKIPPED_OTHER = 'skipped_other';
+
+	/**
+	 * The closed list of reasons the page names (UI-SPEC, leak rule): the code
+	 * of the container on the left, the state of the page on the right. Any
+	 * other text is EXCERPT_SKIPPED_OTHER, so no value of the container
+	 * reaches the template.
+	 */
+	public const REASON_STATES = [
+		'no_speech' => self::EXCERPT_NO_SPEECH,
+		'damaged' => self::EXCERPT_SKIPPED_DAMAGED,
+		'protected' => self::EXCERPT_SKIPPED_PROTECTED,
+		'unsupported_language' => self::EXCERPT_UNSUPPORTED_LANGUAGE,
+		'too_long' => self::EXCERPT_TOO_LONG,
+		'disk_full' => self::EXCERPT_DISK_FULL,
+	];
+
+	/** The note under an excerpt: none, preliminary (A1) or partial (A2), never both. */
+	public const NOTE_NONE = '';
+	public const NOTE_PREVIEW = 'preview';
+	public const NOTE_PARTIAL = 'partial';
 
 	public function __construct(
 		IRequest $request,
@@ -112,12 +142,11 @@ final class PageController extends Controller {
 
 		$src = '';
 		$mediaSrc = '';
-		$excerptState = self::EXCERPT_SKIPPED;
-		$excerpt = '';
+		$excerpt = self::excerptState(self::EXCERPT_SKIPPED);
 		if ($state === self::STATE_READY) {
 			$src = $this->davUrl($uid, $userFolder, $file);
 			$mediaSrc = $startMs > 0 ? $src . '#t=' . self::seconds($startMs) : $src;
-			[$excerptState, $excerpt] = $this->excerpt($uid, $fileId, $startMs);
+			$excerpt = $this->excerpt($uid, $fileId, $startMs);
 		}
 
 		$fileName = (string)$file->getName();
@@ -129,8 +158,10 @@ final class PageController extends Controller {
 			'mediaTag' => $mediaTag,
 			'src' => $src,
 			'mediaSrc' => $mediaSrc,
-			'excerptState' => $excerptState,
-			'excerpt' => $excerpt,
+			'excerptState' => $excerpt['state'],
+			'excerpt' => $excerpt['text'],
+			'excerptNote' => $excerpt['note'],
+			'excerptHours' => $excerpt['hours'],
 			'filesUrl' => $this->urlGenerator->linkToRoute('files.view.showFile', ['fileid' => $fileId]),
 			'downloadAllowed' => $downloadAllowed,
 		], $startMs);
@@ -257,8 +288,9 @@ final class PageController extends Controller {
 	}
 
 	/**
-	 * The excerpt state and text. A drift on record or a silent container is
-	 * "cannot be loaded right now", an unknown file is "no transcript yet".
+	 * The excerpt state, text, note and hours (UI-SPEC, surface 2, A1 to A13).
+	 * A drift on record or a silent container is "cannot be loaded right
+	 * now" (A12), an unknown file is "no transcript yet" (A5).
 	 *
 	 * An excluded user, by name or through a group, and an excluded file are
 	 * answered first, before anything that could reach the container, and
@@ -268,7 +300,15 @@ final class PageController extends Controller {
 	 * yes for rules it cannot read, and a question that throws is a yes here.
 	 * The log line names neither the user nor the file.
 	 *
-	 * @return array{string, string}
+	 * Then the answer of the container, in this order: known false is A5;
+	 * a text is A1, A2 or A3 (partial beats preliminary, a stage other than
+	 * final is preliminary); no text but pendingHere is A4; no text but a
+	 * reason is its state from REASON_STATES, any other text A11, and
+	 * too_long without its limit A11 as well, because the sentence names the
+	 * number of hours; none of these is A5. Only constants of this class and
+	 * the checked text and limit leave this method.
+	 *
+	 * @return array{state: string, text: string, note: string, hours: int}
 	 */
 	private function excerpt(string $uid, int $fileId, int $startMs): array {
 		try {
@@ -282,24 +322,61 @@ final class PageController extends Controller {
 			$excluded = true;
 		}
 		if ($excluded) {
-			return [self::EXCERPT_NONE, ''];
+			return self::excerptState(self::EXCERPT_NONE);
 		}
 
 		if (!$this->exAppService->searchAllowed()) {
-			return [self::EXCERPT_UNAVAILABLE, ''];
+			return self::excerptState(self::EXCERPT_UNAVAILABLE);
 		}
 
 		$answer = $this->exAppService->excerpt($uid, $fileId, $startMs);
 		if ($answer === null) {
-			return [self::EXCERPT_UNAVAILABLE, ''];
+			return self::excerptState(self::EXCERPT_UNAVAILABLE);
+		}
+		if (!$answer['known']) {
+			return self::excerptState(self::EXCERPT_NONE);
 		}
 
 		$text = trim((string)($answer['excerpt'] ?? ''));
-		if (!$answer['known'] || $text === '') {
-			return [self::EXCERPT_NONE, ''];
+		if ($text !== '') {
+			$note = self::NOTE_NONE;
+			if ($answer['partial']) {
+				$note = self::NOTE_PARTIAL;
+			} elseif ($answer['stage'] !== 'final') {
+				$note = self::NOTE_PREVIEW;
+			}
+
+			return ['state' => self::EXCERPT_OK, 'text' => $text, 'note' => $note, 'hours' => 0];
 		}
 
-		return [self::EXCERPT_OK, $text];
+		if ($answer['pendingHere']) {
+			return self::excerptState(self::EXCERPT_PENDING_HERE);
+		}
+
+		$reason = $answer['reason'];
+		if ($reason === null) {
+			return self::excerptState(self::EXCERPT_NONE);
+		}
+		$reasonState = self::REASON_STATES[$reason] ?? self::EXCERPT_SKIPPED_OTHER;
+		if ($reasonState !== self::EXCERPT_TOO_LONG) {
+			return self::excerptState($reasonState);
+		}
+
+		$hours = $answer['limitHours'];
+		if ($hours === null) {
+			return self::excerptState(self::EXCERPT_SKIPPED_OTHER);
+		}
+
+		return ['state' => self::EXCERPT_TOO_LONG, 'text' => '', 'note' => self::NOTE_NONE, 'hours' => $hours];
+	}
+
+	/**
+	 * A state without text, note and hours.
+	 *
+	 * @return array{state: string, text: string, note: string, hours: int}
+	 */
+	private static function excerptState(string $state): array {
+		return ['state' => $state, 'text' => '', 'note' => self::NOTE_NONE, 'hours' => 0];
 	}
 
 	private function unavailable(int $fileId, int $startMs): TemplateResponse {
@@ -314,6 +391,8 @@ final class PageController extends Controller {
 			'mediaSrc' => '',
 			'excerptState' => self::EXCERPT_SKIPPED,
 			'excerpt' => '',
+			'excerptNote' => self::NOTE_NONE,
+			'excerptHours' => 0,
 			'filesUrl' => $this->urlGenerator->linkToRoute('files.view.index'),
 			'downloadAllowed' => false,
 		], $startMs);

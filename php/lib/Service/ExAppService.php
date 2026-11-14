@@ -231,9 +231,27 @@ class ExAppService {
 	}
 
 	/**
-	 * The excerpt of one file at one point in time.
+	 * The excerpt of one file at one point in time, with the stage of the
+	 * text, the state of a file that is still being transcribed and the reason
+	 * of a file that was not (plan 03-16).
 	 *
-	 * @return array{known:bool,excerpt:?string}|null
+	 * The container answers {known: false} for every file it may not speak
+	 * about (UI-SPEC, leak rule); with known false every other field is
+	 * ignored, so nothing it sent along can reach the page. With known true
+	 * each field is checked for its type and range, and one field out of type
+	 * makes the whole answer no answer (state A12): a page that guessed would
+	 * show a reason or a hint that may not be true.
+	 *
+	 * - stage: one of HIT_STAGES or null; another text is null (shown as a
+	 *   preview, like a hit of the search), anything else invalidates.
+	 * - partial, pendingHere: bool, missing is false.
+	 * - reason: a text or null. It is a key for the closed list of the
+	 *   controller and never printed; the controller maps an unknown text to
+	 *   "another reason".
+	 * - limitHours: an int from 1 to 24, missing or null is null. It is the
+	 *   setting of the instance, never the length of the file.
+	 *
+	 * @return array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}|null
 	 */
 	public function excerpt(string $uid, int $fileId, int $startMs): ?array {
 		if ($fileId <= 0 || $startMs < 0) {
@@ -245,17 +263,64 @@ class ExAppService {
 			return null;
 		}
 
-		$raw = $answer['excerpt'] ?? null;
-		if ($raw === null) {
-			return ['known' => $answer['known'], 'excerpt' => null];
+		$unknown = [
+			'known' => false,
+			'excerpt' => null,
+			'stage' => null,
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		];
+		if ($answer['known'] === false) {
+			return $unknown;
 		}
-		if (!is_string($raw)) {
+
+		$raw = $answer['excerpt'] ?? null;
+		$text = null;
+		if ($raw !== null) {
+			if (!is_string($raw)) {
+				return null;
+			}
+			$text = self::plainText($raw, self::MAX_EXCERPT_LENGTH);
+			if ($text === null) {
+				return null;
+			}
+		}
+
+		$stage = $answer['stage'] ?? null;
+		if ($stage !== null && !is_string($stage)) {
+			return null;
+		}
+		if ($stage !== null && !in_array($stage, self::HIT_STAGES, true)) {
+			$stage = null;
+		}
+
+		$partial = array_key_exists('partial', $answer) ? $answer['partial'] : false;
+		$pendingHere = array_key_exists('pendingHere', $answer) ? $answer['pendingHere'] : false;
+		if (!is_bool($partial) || !is_bool($pendingHere)) {
 			return null;
 		}
 
-		$text = self::plainText($raw, self::MAX_EXCERPT_LENGTH);
+		$reason = $answer['reason'] ?? null;
+		if ($reason !== null && !is_string($reason)) {
+			return null;
+		}
 
-		return $text === null ? null : ['known' => $answer['known'], 'excerpt' => $text];
+		$limitHours = $answer['limitHours'] ?? null;
+		if ($limitHours !== null && (!is_int($limitHours) || $limitHours < 1 || $limitHours > 24)) {
+			return null;
+		}
+
+		return [
+			'known' => true,
+			'excerpt' => $text,
+			'stage' => $stage,
+			'partial' => $partial,
+			'pendingHere' => $pendingHere,
+			'reason' => $reason,
+			'limitHours' => $limitHours,
+		];
 	}
 
 	/**
