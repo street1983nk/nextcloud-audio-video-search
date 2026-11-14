@@ -557,6 +557,76 @@ async def fetch_to_tempfile(
         await asyncio.to_thread(_unlink, part)
 
 
+def _rename(part: Path, target: Path) -> None:
+    os.replace(part, target)
+
+
+@asynccontextmanager
+async def fetch_media_file(
+    file_id: int,
+    user_id: str,
+    tmp_dir: Path,
+    expected_size: int,
+    max_bytes: int,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> AsyncIterator[tuple[FetchResult, Path | None]]:
+    """Like :func:`fetch_to_tempfile`, but the file stays for ffmpeg until the block is left (plan 03-13).
+
+    ``async with fetch_media_file(...) as (result, path)``: on success ``path``
+    is the whole file under ``tmp_dir`` with a random name and no extension
+    (``secrets.token_hex(16)``), so ffprobe chooses the demuxer by the content
+    alone and the name tells nothing of the file; ``result.sha256`` is the hash
+    of all bytes. On every refusal ``result.error`` carries the code of
+    :data:`FETCH_ERRORS` and ``path`` is None. The bytes are written to a part
+    file first and renamed only when complete, so a stopped process leaves at
+    most a part file, which :func:`remove_stale_parts` takes away at the next
+    start. The file is deleted when the block ends, also by an exception or a
+    cancellation (T-03-44). Logs: the codes of fetch_to_tempfile, nothing more.
+    """
+    name = secrets.token_hex(16)
+    part = tmp_dir / (name + PART_SUFFIX)
+    target = tmp_dir / name
+    try:
+        result = await _fetch_whole(file_id, user_id, part, expected_size, max_bytes, client)
+        if result.error is None:
+            await asyncio.to_thread(_rename, part, target)
+            yield result, target
+        else:
+            yield result, None
+    finally:
+        await asyncio.to_thread(_unlink, part)
+        await asyncio.to_thread(_unlink, target)
+
+
+async def _fetch_whole(
+    file_id: int, user_id: str, part: Path, expected_size: int, max_bytes: int, client: httpx.AsyncClient | None
+) -> FetchResult:
+    """The checks and the stream of fetch_to_tempfile into ``part``, which the caller removes."""
+    if expected_size > max_bytes:
+        return _refused(file_id, TOO_LARGE, None)
+    try:
+        free = await asyncio.to_thread(free_bytes, part.parent)
+    except OSError:
+        return _refused(file_id, DISK_FULL, None)
+    if free < expected_size + DISK_RESERVE_BYTES:
+        return _refused(file_id, DISK_FULL, None)
+    try:
+        async with asyncio.timeout(capture_deadline(expected_size)):
+            if client is not None:
+                return await _stream_to_file(client, file_id, user_id, part, expected_size)
+            async with new_capture_client() as owned:
+                return await _stream_to_file(owned, file_id, user_id, part, expected_size)
+    except (TimeoutError, httpx.TimeoutException):
+        return _refused(file_id, READ_TIMEOUT, None)
+    except httpx.HTTPError as error:
+        LOGGER.warning("capture stream broke off", extra={"file_id": file_id, "error_type": type(error).__name__})
+        return _refused(file_id, GATEWAY_FAILED, None)
+    except OSError as error:
+        LOGGER.warning("capture could not write", extra={"file_id": file_id, "error_type": type(error).__name__})
+        return _refused(file_id, DISK_FULL, None)
+
+
 # The read proof of a further copy (plan 02-13, D-02-01a): the first 64 KiB of
 # a file through its own file id and its own reader. The bytes are hashed on
 # the way and never kept. PHP cannot interrupt a hanging smbclient (Findling
