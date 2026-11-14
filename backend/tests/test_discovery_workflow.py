@@ -579,6 +579,26 @@ RECONCILE_AFTER = {
     "delete-user": 'bash "${d}/topology.sh" delete_dan && ./occ audio_video_search:reconcile',
 }
 
+# Phases whose rule only SchedulerJob turns into work (plan 02-18): a user, a
+# storage or a folder excluded after the first crawl. The job runs every
+# 300 s, and compare.sh wait cannot see a rule that is not applied yet: run
+# 43561950802 judged all three phases 0 s after the rule, with no
+# exclude_storage or exclude row ever created. So the phase runs the job and
+# every clearing job it plans at once.
+EXCLUSIONS_AFTER = {
+    "exclude-user-after": 'bash "${d}/topology.sh" exclude_user_after && bash "${d}/compare.sh" exclusions',
+    "exclude-storage-after": 'bash "${d}/topology.sh" exclude_storage_after && bash "${d}/compare.sh" exclusions',
+    "exclude-after": 'bash "${d}/topology.sh" exclude_after && bash "${d}/compare.sh" exclusions',
+}
+# What compare.sh exclusions has to contain: its subcommand, the forced run and
+# the two jobs of the app it runs.
+EXCLUSIONS_RUN = (
+    "exclusions) cmd_exclusions ;;",
+    "background-job:execute --force-execute",
+    "OCA\\AudioVideoSearch\\BackgroundJobs\\SchedulerJob",
+    "OCA\\AudioVideoSearch\\BackgroundJobs\\ExclusionClearJob",
+)
+
 
 def code_lines(script: str) -> list[str]:
     """The lines of a bash script that are not comments."""
@@ -633,6 +653,9 @@ def script_findings(scripts: dict[str, str]) -> list[str]:
         findings.append("compare.sh wait takes a stock without any first crawl for complete")
     if 'echo "PHASE PASS ${PHASE}"' not in compare:
         findings.append("compare.sh does not write PHASE PASS")
+    compare_code = "\n".join(code_lines(compare))
+    if any(part not in compare_code for part in EXCLUSIONS_RUN):
+        findings.append("compare.sh exclusions does not run SchedulerJob and its clearing jobs")
 
     controls = scripts["controls.sh"]
     if 'echo "LEAK CONTROL SHOWED THE LEAK"' not in controls:
@@ -665,6 +688,9 @@ def flow_findings(workflow: str) -> list[str]:
     for phase, operation in RECONCILE_AFTER.items():
         if not re.search(rf"^\s*{re.escape(phase)}\) {re.escape(operation)} ;;$", discovery, re.MULTILINE):
             findings.append(f"the phase {phase} does not start a reconcile right after its operation")
+    for phase, operation in EXCLUSIONS_AFTER.items():
+        if not re.search(rf"^\s*{re.escape(phase)}\) {re.escape(operation)} ;;$", discovery, re.MULTILINE):
+            findings.append(f"the phase {phase} does not apply its exclusion right after its operation")
     return findings
 
 
@@ -790,6 +816,37 @@ def test_the_flow_rule_fires_without_the_reconcile_after_its_operation(phase: st
     broken = text.replace(line, f"{phase}) {operation} ;;")
 
     assert flow_findings(broken) == [f"the phase {phase} does not start a reconcile right after its operation"]
+
+
+@pytest.mark.parametrize("phase", sorted(EXCLUSIONS_AFTER))
+def test_the_flow_rule_fires_without_applying_the_exclusion_after_its_operation(phase: str) -> None:
+    text = source()
+    line = f"{phase}) {EXCLUSIONS_AFTER[phase]} ;;"
+    operation = EXCLUSIONS_AFTER[phase].split(" && ")[0]
+    assert text.count(line) == 1
+    broken = text.replace(line, f"{phase}) {operation} ;;")
+
+    assert flow_findings(broken) == [f"the phase {phase} does not apply its exclusion right after its operation"]
+
+
+@pytest.mark.parametrize("part", EXCLUSIONS_RUN)
+def test_the_script_rule_fires_when_compare_does_not_run_the_exclusion_jobs(part: str) -> None:
+    scripts = verdict_scripts()
+    assert part in scripts["compare.sh"]
+    scripts["compare.sh"] = scripts["compare.sh"].replace(part, "true")
+
+    assert script_findings(scripts) == ["compare.sh exclusions does not run SchedulerJob and its clearing jobs"]
+
+
+def test_the_script_rule_ignores_the_exclusion_jobs_in_a_comment_only() -> None:
+    scripts = verdict_scripts()
+    commented = "\n".join(f"# {part}" for part in EXCLUSIONS_RUN)
+    scripts["compare.sh"] = "\n".join(
+        line for line in scripts["compare.sh"].splitlines() if not any(part in line for part in EXCLUSIONS_RUN)
+    )
+    scripts["compare.sh"] += f"\n{commented}\n"
+
+    assert script_findings(scripts) == ["compare.sh exclusions does not run SchedulerJob and its clearing jobs"]
 
 
 def test_the_flow_rule_fires_when_the_access_log_control_comes_first() -> None:
