@@ -992,4 +992,133 @@ final class ExclusionServiceTest extends TestCase {
 		);
 		self::assertStringContainsString("Excluded users (0):\n", $printed);
 	}
+
+	// -- what plan 02-18 needs to apply a change ----------------------------------
+
+	public function testTheSnapshotIsTheRulesInForceAndNullWhileTheyCannotBeRead(): void {
+		$this->store(ExclusionService::LIST_USERS, ['eva', 'Ana']);
+		$this->store(ExclusionService::LIST_FOLDERS, ['/privat//tief/']);
+		$service = $this->service();
+
+		self::assertSame([
+			ExclusionService::LIST_USERS => ['eva', 'Ana'],
+			ExclusionService::LIST_GROUPS => [],
+			ExclusionService::LIST_FOLDERS => ['privat/tief'],
+			ExclusionService::LIST_MOUNTS => [],
+		], $service->snapshot());
+
+		$this->stored[ExclusionService::LIST_MOUNTS] = 'not json';
+		$service->reload();
+
+		self::assertNull($service->snapshot());
+		self::assertNull($service->changesSince([]));
+	}
+
+	public function testChangesSinceNamesWhatWasAddedAndWhatWasLiftedPerList(): void {
+		$this->store(ExclusionService::LIST_USERS, ['ana', 'eva']);
+		$this->store(ExclusionService::LIST_GROUPS, ['extern']);
+		$this->store(ExclusionService::LIST_FOLDERS, ['privat']);
+		$applied = [
+			// Another spelling of the same user is no change.
+			ExclusionService::LIST_USERS => ['ANA', 'ben'],
+			ExclusionService::LIST_GROUPS => ['extern'],
+			ExclusionService::LIST_FOLDERS => ['Archiv'],
+			ExclusionService::LIST_MOUNTS => ['1'],
+		];
+
+		self::assertSame([
+			'added' => [
+				ExclusionService::LIST_USERS => ['eva'],
+				ExclusionService::LIST_GROUPS => [],
+				ExclusionService::LIST_FOLDERS => ['privat'],
+				ExclusionService::LIST_MOUNTS => [],
+			],
+			'lifted' => [
+				ExclusionService::LIST_USERS => ['ben'],
+				ExclusionService::LIST_GROUPS => [],
+				ExclusionService::LIST_FOLDERS => ['Archiv'],
+				ExclusionService::LIST_MOUNTS => ['1'],
+			],
+		], $this->service()->changesSince($applied));
+	}
+
+	/** Nothing applied yet, or a remembered set nobody can read: every rule in force is new. */
+	public function testAnUnusableRememberedSetCountsAsNoRule(): void {
+		$this->store(ExclusionService::LIST_USERS, ['ana']);
+		$service = $this->service();
+		$expected = [
+			'added' => [
+				ExclusionService::LIST_USERS => ['ana'],
+				ExclusionService::LIST_GROUPS => [],
+				ExclusionService::LIST_FOLDERS => [],
+				ExclusionService::LIST_MOUNTS => [],
+			],
+			'lifted' => [
+				ExclusionService::LIST_USERS => [],
+				ExclusionService::LIST_GROUPS => [],
+				ExclusionService::LIST_FOLDERS => [],
+				ExclusionService::LIST_MOUNTS => [],
+			],
+		];
+
+		self::assertSame($expected, $service->changesSince([]));
+		self::assertSame($expected, $service->changesSince([ExclusionService::LIST_USERS => 'ana', 'other' => ['x']]));
+		self::assertSame($expected, $service->changesSince([ExclusionService::LIST_USERS => [true, ['ana'], "a
+b"]]));
+	}
+
+	/** @return array<string, array{array<string, list<string>>, list<int>}> */
+	public static function storageRules(): array {
+		return [
+			// D-02-08, D-02-11: the home and the storage built with the own login, not the copy of ben, not the storage of three.
+			'a user' => [[ExclusionService::LIST_USERS => ['ANA']], [4, 8, 11]],
+			'a group' => [[ExclusionService::LIST_GROUPS => ['extern']], [7]],
+			'a mount configuration' => [[ExclusionService::LIST_MOUNTS => ['1']], [7, 8]],
+			'the second configuration of a storage' => [[ExclusionService::LIST_MOUNTS => ['4']], [11]],
+			'a folder is no rule about a storage' => [[ExclusionService::LIST_FOLDERS => ['privat']], []],
+			'nothing' => [[], []],
+		];
+	}
+
+	/**
+	 * @param array<string, list<string>> $lists
+	 * @param list<int> $expected
+	 */
+	#[DataProvider('storageRules')]
+	public function testTheStorageRulesOfASetReachTheStoragesTheyName(array $lists, array $expected): void {
+		$this->members = ['extern' => ['ben']];
+		$service = $this->service();
+
+		$reached = array_values(array_filter([3, 4, 5, 7, 8, 9, 11], static fn (int $storageId): bool => $service->storageRuleCovers($lists, $storageId)));
+
+		self::assertSame($expected, $reached);
+	}
+
+	public function testAMountCacheThatFailsReachesTheStorageAndLogsNoName(): void {
+		$this->mountCacheFails = true;
+
+		self::assertTrue($this->service()->storageRuleCovers([ExclusionService::LIST_USERS => ['ben']], 3));
+		self::assertStringNotContainsString('eva', implode("
+", $this->logged));
+	}
+
+	public function testAGroupIsListedOnlyWhenItIsAnExcludedGroup(): void {
+		$this->store(ExclusionService::LIST_GROUPS, ['extern']);
+		$service = $this->service();
+
+		self::assertTrue($service->groupListed('extern'));
+		self::assertFalse($service->groupListed('intern'));
+		self::assertFalse($service->groupListed(''));
+	}
+
+	public function testReloadReadsTheRulesAgain(): void {
+		$service = $this->service();
+		self::assertFalse($service->isExcludedUser('eva'));
+
+		$this->store(ExclusionService::LIST_USERS, ['eva']);
+		self::assertFalse($service->isExcludedUser('eva'), 'read once per instance');
+
+		$service->reload();
+		self::assertTrue($service->isExcludedUser('eva'));
+	}
 }
