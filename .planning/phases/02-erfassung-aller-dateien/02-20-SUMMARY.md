@@ -85,7 +85,7 @@ Kein PHP geändert, daher kein Container-Lauf (kein Docker gestartet).
 
 ## Deviations from Plan
 
-**1. [Rule 2 - Datenschutz] Zurück aus vanished auf SMB/SFTP als unreadable statt active** (`Store.mark_present`): must_have 2 sagt "active, auf SMB/SFTP sofort stage probing". active plus probing gäbe Treffer bis zum Beweis und würde in `_CLAIM_CAPTURE` nicht vorgezogen. Umgesetzt wie der Owner-Entscheid vom 12.11.2026 für das Wiederherstellen (deferred items 02-15b hatte genau diese Frage an Plan 20 gestellt): unreadable und probing, Beweis zuerst. Owner-Bestätigung offen.
+**1. [Rule 2 - Datenschutz] Zurück aus vanished auf SMB/SFTP als unreadable statt active** (`Store.mark_present`): must_have 2 sagt "active, auf SMB/SFTP sofort stage probing". active plus probing gäbe Treffer bis zum Beweis und würde in `_CLAIM_CAPTURE` nicht vorgezogen. Umgesetzt wie der Owner-Entscheid vom 12.11.2026 für das Wiederherstellen (deferred items 02-15b hatte genau diese Frage an Plan 20 gestellt): unreadable und probing, Beweis zuerst. **OWNER-ENTSCHEID 14.11.2026** ("Ja, erst Beweis (Empfohlen)", AskUserQuestion der Hauptsitzung): bestätigt.
 
 **2. [Rule 2] Ordner im Papierkorb: fehlende Verweise werden beiseitegelegt** (`Store.mark_missing`). Der Plan sagt "file_id in state.db, aber nicht in der Scheibe -> nichts"; das gilt weiter je Scheibe (Test `a_known_file_missing_from_one_slice_is_no_finding`). Der Auftrag der Hauptsitzung und deferred items 02-18/02-19 verlangen das Wegräumen im Container: nur Speicher, deren alle Mounts fertig gecrawlt und vollständig durchlaufen sind, nur active/unreadable, nur seit Walk-Beginn unberührt, als trashed (Inhalt vorgemerkt, kein Vergessen). Rückkehr über Scheibe, requeue, admissible und `_restore` ohne Download.
 
@@ -97,15 +97,20 @@ Kein PHP geändert, daher kein Container-Lauf (kein Docker gestartet).
 
 **6. Zusatzdateien** außerhalb files_modified: `nc.py` (einzige Datei mit HTTP-Client, test_boundary), `worker/intake.py`, `tests/conftest.py` (Schleife in Tests aus), deferred-items.md.
 
+## Nachtrag 14.11.2026: Workflow (Owner-Entscheid "Ja, vor Push 9 (Empfohlen)")
+
+- 29ce322 test(02-20): Gate-Regel in `test_discovery_workflow.py` (`RECONCILE_AFTER`): reprove, vanish und delete-user rufen direkt nach ihrer Operation `occ audio_video_search:reconcile` (reprove mit `--reprove`); Selbsttest je Phase. RED: 6 rot (Regel und Selbsttests).
+- 7f323ec ci(02-20): `discovery-e2e.yml` ruft nach `vanish_cem` und `delete_dan` `./occ audio_video_search:reconcile`. Nicht lokal ausgeführt.
+- Gates danach: ruff, ruff format (76), pyright 0, vulture 0, pytest **1004 passed**.
+
 ## Known Stubs
 
 Keine. Die Lücke aus 02-19 (occ :reconcile ohne Container-Route) ist geschlossen.
 
 ## Offene Punkte
 
-- CI: reprove sollte mit dem nächsten Push grün werden (occ :reconcile --reprove hat jetzt die Route). vanish und delete-user hängen am Takt 300 s gegen `compare.sh wait` (neue Zeile in deferred-items); dafür braucht es in Plan 22 einen Aufruf von occ :reconcile im Workflow oder einen fälligen Sweep in dueWork.
+- CI: reprove sollte mit dem nächsten Push grün werden (occ :reconcile --reprove hat jetzt die Route). vanish und delete-user: Workflow ruft jetzt direkt nach der Operation `occ audio_video_search:reconcile` (siehe Nachtrag); Beleg folgt mit Push 9.
 - POST /reconcile/run läuft den ganzen Walk in der Anfrage, Timeout von PHP 120 s (neue Zeile in deferred-items).
-- Owner-Bestätigung für Abweichung 1.
 - STATE.md/ROADMAP.md nicht per gsd-sdk fortgeschrieben (Auftrag der Hauptsitzung).
 
 ## Threat Flags
