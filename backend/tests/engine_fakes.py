@@ -50,7 +50,7 @@ class FakeEngine:
         if command == REPORT:
             texts += [f"{name}={os.environ.get(name, '<absent>')}" for name in REPORTED_VARIABLES]
             texts.append(f"sherpa={'sherpa_onnx' in sys.modules}")
-            texts.append(f"nice={os.nice(0) if hasattr(os, 'nice') else 'none'}")
+            texts.append(f"nice={os.nice(0) if sys.platform != 'win32' else 'none'}")
         words = tuple(_word(text, offset_ms + 100 * index) for index, text in enumerate(texts))
         return [
             Window(

@@ -233,11 +233,18 @@ def test_writing_the_thread_variables_in_the_child_is_no_finding(tree: Path) -> 
     assert scan(tree) == []
 
 
+def _next_line(root: Path, relative: Path) -> int:
+    """The number the second appended line gets (child.py exists since plan 03-10)."""
+    path = root / relative
+    return (len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else 0) + 2
+
+
 def test_reading_the_environment_in_the_child_is_one_finding(tree: Path) -> None:
+    number = _next_line(tree, ENGINE / "child.py")
     _append(tree, ENGINE / "child.py", 'import os\nTHREADS = os.environ["X"]\n')
     findings = scan(tree)
     assert len(findings) == 1, findings
-    assert findings[0].startswith(f"{ENGINE.as_posix()}/child.py:2:")
+    assert findings[0].startswith(f"{ENGINE.as_posix()}/child.py:{number}:")
 
 
 @pytest.mark.parametrize(
@@ -255,10 +262,11 @@ def test_reading_the_environment_in_the_child_is_one_finding(tree: Path) -> None
     ],
 )
 def test_every_other_read_in_the_engine_is_a_finding(tree: Path, line: str) -> None:
+    number = _next_line(tree, ENGINE / "child.py")
     _append(tree, ENGINE / "child.py", "import os\n" + line)
     findings = scan(tree)
     assert len(findings) == 1, findings
-    assert findings[0].startswith(f"{ENGINE.as_posix()}/child.py:2:")
+    assert findings[0].startswith(f"{ENGINE.as_posix()}/child.py:{number}:")
 
 
 def test_a_route_for_the_vad_is_a_finding(tree: Path) -> None:
