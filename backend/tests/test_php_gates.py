@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The fifteen rules:
+The sixteen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -53,6 +53,12 @@ The fifteen rules:
     ``php/appinfo/info.xml``, and ``HandshakeController::handshake`` asks
     ``ensure()`` only after the guard of rule 1, so a foreign caller never
     writes into the job list (T-02-84).
+16. The reconcile hands every file it found different back through the one
+    pre-check (plan 02-19, D-02-05, T-02-69): ``ReconcileController`` calls
+    ``->enqueue(`` in ``requeue`` only, there only for the content kind and
+    only after ``->admissible(``, so the container never puts a file into the
+    work stock past the exclusions. The four reconcile routes carry
+    ``ExAppRequired`` (and with it the guard of rule 1).
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -892,3 +898,76 @@ def test_self_rule15_fires_when_the_handshake_skips_or_precedes_the_guard() -> N
     commented = inline.replace("$this->jobs->ensure();", "// $this->jobs->ensure();")
     assert handshake_job_findings(commented) == [f"{HANDSHAKE}::handshake does not put the jobs back"]
     assert handshake_job_findings("") == [f"{HANDSHAKE} has no handshake"]
+
+
+# -- rule 16 ------------------------------------------------------------------------
+
+RECONCILE = "php/lib/Controller/ReconcileController.php"
+RECONCILE_ROUTES = ("mounts", "slice", "classify", "requeue")
+ENQUEUE_CALL = "->enqueue("
+ADMISSIBLE_CALL = "->admissible("
+CONTENT_KIND = "QueueMapper::KIND_CONTENT"
+
+
+def reconcile_requeue_findings(source: str) -> list[str]:
+    """Whether the reconcile routes exist and requeue enqueues content only, after admissible."""
+    if not source:
+        return [f"{RECONCILE} is missing"]
+    routes = exapp_methods(source)
+    findings = [f"{RECONCILE} has no ExApp route {route}" for route in RECONCILE_ROUTES if route not in routes]
+    body = php_method(source, "requeue")
+    if body is None:
+        return [*findings, f"{RECONCILE} has no requeue"]
+    if php_code(source).count(ENQUEUE_CALL) != body.count(ENQUEUE_CALL):
+        findings.append(f"{RECONCILE} enqueues outside requeue")
+    admissible = body.find(ADMISSIBLE_CALL)
+    enqueue = body.find(ENQUEUE_CALL)
+    if enqueue < 0:
+        findings.append(f"{RECONCILE}::requeue enqueues nothing")
+    elif admissible < 0 or enqueue < admissible:
+        findings.append(f"{RECONCILE}::requeue enqueues before the pre-check")
+    elif CONTENT_KIND not in body[enqueue : enqueue + 80]:
+        findings.append(f"{RECONCILE}::requeue enqueues another kind than content")
+    return findings
+
+
+def test_rule16_the_reconcile_hands_back_through_the_one_pre_check() -> None:
+    sources = _lib_sources()
+    assert RECONCILE in sources, "ReconcileController.php is missing"
+    assert reconcile_requeue_findings(sources[RECONCILE]) == []
+
+
+_ROUTE_ATTRIBUTE = "\t#[\\OCP\\AppFramework\\Http\\Attribute\\ExAppRequired]\n"
+_GUARD_LINE = "\t\t$foreign = $this->rejectForeignCaller();\n"
+REQUEUE_SAMPLE = (
+    "<?php\nclass R {\n"
+    + "".join(
+        f"{_ROUTE_ATTRIBUTE}\tpublic function {route}(): DataResponse {{\n{_GUARD_LINE}"
+        "\t\treturn new DataResponse([]);\n\t}\n"
+        for route in RECONCILE_ROUTES[:3]
+    )
+    + f"{_ROUTE_ATTRIBUTE}\tpublic function requeue(): DataResponse {{\n{_GUARD_LINE}"
+    + "\t\tif (!$this->queueService->admissible($s, $m, $r)) {\n\t\t\treturn null;\n\t\t}\n"
+    + "\t\t$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $id, $s);\n"
+    + "\t\treturn new DataResponse([]);\n\t}\n}\n"
+)
+
+
+def test_self_rule16_fires_on_an_enqueue_past_the_pre_check() -> None:
+    assert reconcile_requeue_findings(REQUEUE_SAMPLE) == []
+    no_check = REQUEUE_SAMPLE.replace("$this->queueService->admissible($s, $m, $r)", "$known")
+    assert reconcile_requeue_findings(no_check) == [f"{RECONCILE}::requeue enqueues before the pre-check"]
+    other_kind = REQUEUE_SAMPLE.replace("KIND_CONTENT", "KIND_RESTORE")
+    assert reconcile_requeue_findings(other_kind) == [f"{RECONCILE}::requeue enqueues another kind than content"]
+    mounts_head = f"public function mounts(): DataResponse {{\n{_GUARD_LINE}"
+    outside = REQUEUE_SAMPLE.replace(
+        mounts_head, mounts_head + "\t\t$this->queueService->enqueue(QueueMapper::KIND_CONTENT, 1, 2);\n"
+    )
+    assert outside != REQUEUE_SAMPLE
+    assert reconcile_requeue_findings(outside) == [f"{RECONCILE} enqueues outside requeue"]
+    commented = REQUEUE_SAMPLE.replace("$this->queueService->enqueue(", "// $this->queueService->enqueue(")
+    assert reconcile_requeue_findings(commented) == [f"{RECONCILE}::requeue enqueues nothing"]
+    unguarded = REQUEUE_SAMPLE.replace(f"{_ROUTE_ATTRIBUTE}\tpublic function slice", "\tpublic function slice")
+    assert unguarded != REQUEUE_SAMPLE
+    assert reconcile_requeue_findings(unguarded) == [f"{RECONCILE} has no ExApp route slice"]
+    assert reconcile_requeue_findings("") == [f"{RECONCILE} is missing"]
