@@ -21,7 +21,8 @@
 #
 #   alice    owns stille-60s.ogg, kaputt.mp3, geschuetzt.m4a, lang-12h01.flac,
 #            tuerkisch.wav and ohne-ton.mp4 (one reason each) and shares them
-#            with dora, elke and fleur for the review projects; lang-40min.ogg
+#            with the group "review" (dora, elke and fleur) for the review
+#            projects; lang-40min.ogg
 #            is not seeded, preview.spec.ts uploads it when it needs the
 #            partial state
 #   bob      owns viele-stellen.ogg (four places) and zwei-stellen.ogg (two):
@@ -54,6 +55,7 @@ SERVER_VERSION="${SERVER_VERSION:-}"
 AT_SECONDS=42
 TEAM_FOLDER=Team
 TEAM_GROUP=team
+REVIEW_GROUP=review
 
 occ() {
 	# shellcheck disable=SC2086 # OCC may carry arguments, for example "php occ".
@@ -136,7 +138,24 @@ rm -f "${broken}"
 
 # -- the shares -----------------------------------------------------------------
 
+# Nextcloud limits the creation of shares to 20 per user in 600 s
+# (ShareAPIController::createShare, #[UserRateLimit(limit: 20, period: 600)],
+# stable33 to stable35); the 21st answers 429. The seed stays under it on the
+# default configuration of the instance instead of raising the limit, and
+# counts every share, so a later change fails here with a clear message.
+SHARE_LIMIT=20
+declare -A SHARES_MADE=()
+count_share() {
+	local user="$1"
+	SHARES_MADE[${user}]=$(( ${SHARES_MADE[${user}]:-0} + 1 ))
+	if [ "${SHARES_MADE[${user}]}" -gt "${SHARE_LIMIT}" ]; then
+		echo "the seed would create more than ${SHARE_LIMIT} shares as ${user} in 600 s; Nextcloud answers 429 from share $(( SHARE_LIMIT + 1 )) on"
+		exit 1
+	fi
+}
+
 share() {
+	count_share alice
 	curl -sfS -u "alice:${ALICE_PASS}" \
 		-H 'OCS-APIRequest: true' -H 'Accept: application/json' \
 		-X POST "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares" \
@@ -225,19 +244,27 @@ for name in "${PHASE3_BOB[@]}"; do
 	upload bob "${BOB_PASS}" "${MEDIA_DIR}/${name}" "${name}"
 done
 
+# share_as USER PASS PATH WITH [TYPE]: TYPE 0 is a user share, 1 a group share.
 share_as() {
-	local user="$1" pass="$2" path="$3" with="$4"
+	local user="$1" pass="$2" path="$3" with="$4" type="${5:-0}"
+	count_share "${user}"
 	curl -sfS -u "${user}:${pass}" \
 		-H 'OCS-APIRequest: true' -H 'Accept: application/json' \
 		-X POST "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares" \
 		--data-urlencode "path=/${path}" --data-urlencode "shareWith=${with}" \
-		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' > /dev/null
+		--data-urlencode "shareType=${type}" --data-urlencode 'permissions=1' > /dev/null
 }
 
+# One share per file to a group of the three review users instead of one per
+# user: 6 shares instead of 18 keeps alice at 15 of the 20 shares Nextcloud
+# allows a user in 600 s. Only dora, elke and fleur are in it; carol, mallory
+# and oskar stay outside, so what each of them reads does not change.
+occ group:add "${REVIEW_GROUP}"
 for reviewer in dora elke fleur; do
-	for name in "${PHASE3_ALICE[@]}"; do
-		share_as alice "${ALICE_PASS}" "${name}" "${reviewer}"
-	done
+	occ group:adduser "${REVIEW_GROUP}" "${reviewer}"
+done
+for name in "${PHASE3_ALICE[@]}"; do
+	share_as alice "${ALICE_PASS}" "${name}" "${REVIEW_GROUP}" 1
 done
 share_as bob "${BOB_PASS}" viele-stellen.ogg dora
 share_as alice "${ALICE_PASS}" stille-60s.ogg oskar
