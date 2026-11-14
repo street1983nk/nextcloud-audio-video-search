@@ -63,7 +63,7 @@ def test_a_signed_status_request_answers_with_versions_state_and_settings(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def saved(_nc: object) -> dict[str, str]:
-        return {"processing_enabled": "0", "max_file_size_mb": "100"}
+        return {"processing_enabled": "0", "max_duration_hours": "12"}
 
     monkeypatch.setattr(settings, "read", saved)
 
@@ -80,7 +80,7 @@ def test_a_signed_status_request_answers_with_versions_state_and_settings(
         "companionVersion": "0.1.0",
         "schemaVersion": 3,
         "sampleCount": 0,
-        "settings": {"processing_enabled": "0", "max_file_size_mb": "100"},
+        "settings": {"processing_enabled": "0", "max_duration_hours": "12"},
     }
 
 
