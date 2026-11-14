@@ -24,6 +24,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+from audio_video_search_backend.engine import child, parakeet
+from audio_video_search_backend.engine.catch import DROP_CONFIDENCE, DROP_LANGUAGE, DROP_SCRIPT, KEEP
 from audio_video_search_backend.engine.child import (
     CHUNK_WALL_SECONDS,
     CRASHED,
@@ -38,11 +41,8 @@ from audio_video_search_backend.engine.child import (
     TIMEOUT,
     EngineWorker,
 )
-from audio_video_search_backend.engine.parakeet import Engine, EngineWord, Window, merge_segments, words_from_tokens
-
-from audio_video_search_backend.engine import child, parakeet
-from audio_video_search_backend.engine.catch import DROP_CONFIDENCE, DROP_LANGUAGE, DROP_SCRIPT, KEEP
 from audio_video_search_backend.engine.constants import SAMPLE_RATE
+from audio_video_search_backend.engine.parakeet import Engine, EngineWord, Window, merge_segments, words_from_tokens
 from tests import engine_fakes
 from tests.conftest import BACKEND_ROOT
 
@@ -491,3 +491,52 @@ def test_the_guard_keeps_the_window_result_when_the_part_gives_no_more() -> None
 def test_windows_and_words_cross_the_pipe() -> None:
     window = Window(start_ms=1, end_ms=2, speech_ms=1, n_words=1, verdict=KEEP, words=(EngineWord("a", 1, 2, 0.5),))
     assert pickle.loads(pickle.dumps(window)) == window  # noqa: S301 - our own bytes, just written
+
+
+def test_a_child_that_dies_while_it_builds_the_engine_is_crashed_at_once(tmp_path: Path) -> None:
+    worker = _worker(tmp_path, factory="tests.engine_fakes:dying_engine")
+    try:
+        started = time.monotonic()
+        assert worker.ask(_pcm(), 0, False, deadline=30.0) == (CRASHED, [])
+        assert time.monotonic() - started < 15.0
+        assert worker.pid is None
+    finally:
+        worker.stop()
+
+
+class _Pipe:
+    def __init__(self, ready_after: int | None) -> None:
+        self.ready_after = ready_after
+        self.polls: list[float] = []
+
+    def poll(self, timeout: float) -> bool:
+        self.polls.append(timeout)
+        return self.ready_after is not None and len(self.polls) > self.ready_after
+
+
+class _Process:
+    def __init__(self, alive: bool) -> None:
+        self.alive = alive
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+
+def test_waiting_stops_early_when_the_child_is_gone() -> None:
+    """A child that died before it held its pipe end does not wake the poll on Windows (measured)."""
+    pipe = _Pipe(ready_after=None)
+    started = time.monotonic()
+
+    assert child._answered(_Process(alive=False), pipe, 30.0) is False  # type: ignore[arg-type]
+
+    assert time.monotonic() - started < 5.0
+    assert pipe.polls[-1] == 0
+
+
+def test_waiting_returns_the_answer_and_honours_the_deadline() -> None:
+    assert child._answered(_Process(alive=True), _Pipe(ready_after=2), 30.0) is True  # type: ignore[arg-type]
+    slow = _Pipe(ready_after=None)
+    started = time.monotonic()
+    assert child._answered(_Process(alive=True), slow, 0.3) is False  # type: ignore[arg-type]
+    assert time.monotonic() - started < 2.0
+    assert all(timeout <= child._POLL_SLICE_SECONDS for timeout in slow.polls)

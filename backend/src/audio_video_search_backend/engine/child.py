@@ -72,6 +72,8 @@ _JOB: Final = "transcribe"
 _STOP: Final = "stop"
 # A kill takes effect at once; the grace only keeps a wedged join from becoming a hang.
 _JOIN_GRACE_SECONDS: Final = 5.0
+# How often a waiting ask looks whether the child is still there.
+_POLL_SLICE_SECONDS: Final = 1.0
 
 
 def _kill_child_tree(process: SpawnProcess) -> None:
@@ -89,6 +91,24 @@ def _kill_child_tree(process: SpawnProcess) -> None:
         except (ProcessLookupError, PermissionError, OSError):
             pass
     process.kill()
+
+
+def _answered(process: SpawnProcess, pipe: PipeEnd, deadline: float) -> bool:
+    """Wait for the answer up to the deadline; stop waiting early when the child is gone.
+
+    A child that dies before it ever holds its end of the pipe (a failure while
+    it boots) does not always wake a waiting poll on Windows; looking at the
+    process once per slice keeps that from becoming a wait for the whole deadline.
+    """
+    end = time.monotonic() + deadline
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            return False
+        if pipe.poll(min(_POLL_SLICE_SECONDS, left)):
+            return True
+        if not process.is_alive():
+            return pipe.poll(0)
 
 
 def _factory(path: str) -> Callable[[Path], Any]:
@@ -197,7 +217,10 @@ class EngineWorker:
         except (BrokenPipeError, OSError):
             self._recycle()
             return CRASHED, []
-        if not pipe.poll(deadline):
+        if not _answered(process, pipe, deadline):
+            if not process.is_alive():
+                self._recycle()
+                return CRASHED, []
             _kill_child_tree(process)
             process.join(_JOIN_GRACE_SECONDS)
             self._recycle()

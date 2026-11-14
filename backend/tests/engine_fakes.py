@@ -74,3 +74,7 @@ def exhausted_engine(models_root: Path) -> FakeEngine:
 
 def broken_engine(models_root: Path) -> FakeEngine:
     raise FileNotFoundError(str(models_root))
+
+
+def dying_engine(models_root: Path) -> FakeEngine:
+    os._exit(3)
