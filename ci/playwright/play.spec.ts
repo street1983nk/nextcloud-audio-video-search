@@ -19,111 +19,22 @@ import {
 	reviewer,
 	SAMPLE_MARK,
 	screenshot,
+	searchInDialog,
 	submitLogin,
 	TEST_FILE_NAMES,
 	users,
 } from './helpers';
 
 const MEDIA_NAME = 'tone-90s.webm';
-// The provider name in the three catalogue languages (php/l10n). The result
-// list carries it as its name: "Audio and video" on 33 and 34, "More from
-// Audio and video" on 35 (checked in the CI snapshots of all three).
-const GROUP_NAME = /(^|\s)(Audio and video|Audio und Video|Audio et vidéo)$/;
 // The heading of a page that names no file, in the three languages.
 const NEUTRAL_HEADING = /^(Playback|Wiedergabe|Lecture)$/;
 
 /**
- * Open the Unified Search from the header, the way a user does. Nextcloud 33
- * has a header button "Unified search"; 34 and 35 put the trigger into a
- * search landmark: a button on narrow screens and on wide 34, the combobox
- * itself on wide 35.
+ * Open the Unified Search, type the query and return the visible hit on the
+ * medium at 0:44. The dialog helpers live in helpers.ts since plan 03-18.
  */
-async function openUnifiedSearch(page: Page): Promise<void> {
-	const landmark = page.getByRole('search');
-	const trigger = landmark
-		.getByRole('button')
-		.or(landmark.getByRole('combobox'))
-		.or(page.locator('#unified-search button, header [aria-label="Unified search"], header [aria-label="Einheitliche Suche"], header [aria-label="Recherche unifiée"]'))
-		.first();
-	await expect(trigger).toBeVisible();
-	await trigger.click();
-}
-
-/** Where the query goes once the search is open: the dialog field, or on wide 35 the header combobox. */
-function searchField(page: Page) {
-	return page
-		.getByRole('dialog')
-		.locator('input[type="search"], input[type="text"]')
-		.or(page.locator('.unified-search-modal-root input[type="search"]'))
-		.or(page.getByRole('search').getByRole('combobox'))
-		.first();
-}
-
-// Nextcloud 33 to 35 wait this long after the last keystroke before they
-// search: debounce(this.find, 300) in core/src/components/UnifiedSearch/UnifiedSearchModal.vue.
-const SEARCH_DEBOUNCE_MS = 300;
-const PROVIDER_SEARCH = '/search/providers/audio_video_search/search?';
-
-/**
- * Note in the page when the query was typed and when each search of this
- * provider started, both on the clock of the page. A resource entry only
- * arrives once its response is complete, and observers see it even when the
- * resource timing buffer of the page is full.
- */
-async function watchProviderSearches(page: Page): Promise<void> {
-	await page.evaluate((path) => {
-		const state = window as unknown as { avsInputAt: number; avsSearchStarts: number[] };
-		state.avsInputAt = Number.POSITIVE_INFINITY;
-		state.avsSearchStarts = [];
-		document.addEventListener('input', () => {
-			state.avsInputAt = performance.now();
-		}, true);
-		new PerformanceObserver((list) => {
-			for (const entry of list.getEntries()) {
-				if (entry.name.includes(path)) {
-					state.avsSearchStarts.push(entry.startTime);
-				}
-			}
-		}).observe({ type: 'resource' });
-	}, PROVIDER_SEARCH);
-}
-
-/**
- * Wait for the search that answers the typed query, not an earlier one. On 35
- * the modal opens with the first keystroke on wide screens and loads its
- * providers then; when they arrive before the debounce runs out, the modal
- * searches at once (the open watcher calls find()) and clears its busy flag,
- * shows the results with no placeholder, and 300 ms after the keystroke the
- * debounced find() empties the list and searches a second time. Whichever
- * search comes last starts at least the debounce after the keystroke, so the
- * hit counts only once such a search of this provider has come back.
- */
-async function expectFinalSearchDone(page: Page): Promise<void> {
-	await expect
-		.poll(
-			() =>
-				page.evaluate((debounce) => {
-					const state = window as unknown as { avsInputAt: number; avsSearchStarts: number[] };
-					return state.avsSearchStarts.some((start) => start >= state.avsInputAt + debounce);
-				}, SEARCH_DEBOUNCE_MS),
-			{ timeout: 15_000 },
-		)
-		.toBe(true);
-}
-
-/** Open the Unified Search, type the query and return the visible hit on the medium at 0:44. */
 async function searchHit(page: Page) {
-	await watchProviderSearches(page);
-	await openUnifiedSearch(page);
-
-	const input = searchField(page);
-	await expect(input).toBeVisible();
-	await input.fill(QUERY);
-	await expectFinalSearchDone(page);
-
-	// A list on 33, 34 and narrow 35, a listbox on wide 35.
-	const group = page.getByRole('list', { name: GROUP_NAME }).or(page.getByRole('listbox', { name: GROUP_NAME }));
-	await expect(group).toBeVisible();
+	const group = await searchInDialog(page, QUERY);
 	// Options hide the role of the link inside them, so the hit is found as an anchor.
 	const hit = group
 		.locator('a[href]')
