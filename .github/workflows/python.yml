@@ -30,7 +30,8 @@ jobs:
   gates:
     name: ruff, format, pyright, vulture, pytest, shellcheck
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The first run on a new model pin downloads about 670 MB before the tests.
+    timeout-minutes: 20
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,6 +101,58 @@ jobs:
           "$RUNNER_TEMP/ffmpeg/ffprobe" -version > /dev/null
           echo "AVS_FFMPEG=$RUNNER_TEMP/ffmpeg/ffmpeg" >> "$GITHUB_ENV"
           echo "AVS_FFPROBE=$RUNNER_TEMP/ffmpeg/ffprobe" >> "$GITHUB_ENV"
+
+      # The model tests (tests/test_engine_model.py) run Parakeet on the pinned FLEURS
+      # clips. Models and clips come from a cache keyed by their sha256 (MODEL_SHA256 of
+      # models/catalog.py; the member sha256 of ci/media/fetch_speech.py plus the sha256
+      # of the ffmpeg that turned them into WAV). A cache entry never replaces the model
+      # check: the verdict files of procure are not cached, so the test hashes every model
+      # file again. A clip is only cached after fetch_speech.py checked its member sha256;
+      # its WAV sha256 is compared after every restore and, like fetch_speech.py itself
+      # does, only warned about when another ffmpeg build wrote it.
+      - name: Cache keys of the speech models and clips
+        id: speech-keys
+        run: |
+          set -euo pipefail
+          MODELS_KEY="avs-models-$(uv run python -c 'from audio_video_search_backend.models.catalog import MODEL_SHA256; print(MODEL_SHA256)')"
+          FFMPEG_SHA256="$(sha256sum "$AVS_FFMPEG" | cut -c1-64)"
+          SPEECH_KEY="avs-speech-$(uv run python -I -c 'import hashlib, runpy, sys; m = runpy.run_path("../ci/media/fetch_speech.py"); print(hashlib.sha256(",".join([*sorted(c.member_sha256 for c in m["CLIPS"]), sys.argv[1]]).encode()).hexdigest())' "$FFMPEG_SHA256")"
+          echo "models=$MODELS_KEY" >> "$GITHUB_OUTPUT"
+          echo "speech=$SPEECH_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the speech models
+        id: models-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/avs-models
+            !${{ runner.temp }}/avs-models/**/*.verified.json
+          key: ${{ steps.speech-keys.outputs.models }}
+
+      - name: Fetch the speech models on a cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: uv run python -m audio_video_search_backend.models.procure --root "$RUNNER_TEMP/avs-models"
+
+      - name: Restore the speech clips
+        id: speech-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/avs-speech
+          key: ${{ steps.speech-keys.outputs.speech }}
+
+      - name: Fetch the speech clips on a cache miss
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: uv run python -I ../ci/media/fetch_speech.py "$RUNNER_TEMP/avs-speech"
+
+      - name: Check the speech clips and hand them to the tests
+        run: |
+          set -euo pipefail
+          uv run python -I -c 'import hashlib, pathlib, runpy, sys; m = runpy.run_path("../ci/media/fetch_speech.py"); d = pathlib.Path(sys.argv[1]); [print(f"::warning::{c.name} wav sha256 {h} differs from {c.wav_sha256} (other ffmpeg build)") for c in m["CLIPS"] if (h := hashlib.sha256((d / c.name).read_bytes()).hexdigest()) != c.wav_sha256]' "$RUNNER_TEMP/avs-speech"
+          WORD="$(uv run python -I -c 'import runpy; print(runpy.run_path("../ci/media/fetch_speech.py")["EXPECTED_WORD"])')"
+          echo "AVS_TEST_MODELS=$RUNNER_TEMP/avs-models" >> "$GITHUB_ENV"
+          echo "AVS_TEST_SPEECH=$RUNNER_TEMP/avs-speech/speech_de.wav" >> "$GITHUB_ENV"
+          echo "AVS_TEST_SPEECH_TR=$RUNNER_TEMP/avs-speech/speech_tr.wav" >> "$GITHUB_ENV"
+          echo "AVS_TEST_WORD=$WORD" >> "$GITHUB_ENV"
 
       # -rs names every skip with its reason; the coverage floor (fail_under in
       # pyproject.toml) rides along, so a feature without tests fails here.

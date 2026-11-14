@@ -435,3 +435,47 @@ def test_a_file_without_a_jobs_block_is_reported() -> None:
 
     assert len(violations) == 1
     assert "no jobs block" in violations[0]
+
+
+# The model cache of python.yml (plan 03-10). The model tests carry the coverage
+# floor, so CI must run them: the cache key comes from MODEL_SHA256 (a new model
+# pin is a new key, never a stale hit) and no pytest call deselects the marker.
+
+_MODEL_KEY = re.compile(r"avs-models-\$\(uv run python -c '[^']*\bMODEL_SHA256\b[^']*'\)")
+_DESELECT = re.compile(r"""-m\s+["']?not\s+model|--deselect\S*\s+\S*engine_model|-k\s+["']?not\s+model""")
+
+
+def scan_model_cache(source: str) -> list[str]:
+    """Findings about the model cache and the model tests in one python.yml text."""
+    findings: list[str] = []
+    if not _MODEL_KEY.search(source):
+        findings.append("python.yml does not build the model cache key from MODEL_SHA256")
+    if "actions/cache@" not in source or "key: ${{ steps.speech-keys.outputs.models }}" not in source:
+        findings.append("python.yml does not restore the models under the MODEL_SHA256 key")
+    if "AVS_TEST_MODELS=" not in source:
+        findings.append("python.yml does not hand the models to the tests")
+    for number, line in enumerate(source.splitlines(), start=1):
+        if "pytest" in line and _DESELECT.search(line):
+            findings.append(f"python.yml:{number}: the model tests are deselected")
+    return findings
+
+
+def test_python_yml_caches_the_models_by_model_sha256_and_runs_the_model_tests() -> None:
+    assert scan_model_cache((WORKFLOWS / "python.yml").read_text(encoding="utf-8")) == []
+
+
+def test_a_key_without_model_sha256_or_a_deselected_model_test_is_reported() -> None:
+    source = (WORKFLOWS / "python.yml").read_text(encoding="utf-8")
+    other_key = source.replace("print(MODEL_SHA256)", "print(MODEL_RELEASE_TAG)").replace(
+        "import MODEL_SHA256", "import MODEL_RELEASE_TAG"
+    )
+    deselected = source.replace("uv run pytest -q", 'uv run pytest -q -m "not model"')
+    no_env = source.replace("AVS_TEST_MODELS=", "AVS_MODELS=")
+
+    assert scan_model_cache(other_key) == ["python.yml does not build the model cache key from MODEL_SHA256"]
+    assert len(scan_model_cache(deselected)) == 1
+    assert "the model tests are deselected" in scan_model_cache(deselected)[0]
+    assert scan_model_cache(no_env) == ["python.yml does not hand the models to the tests"]
+    assert scan_model_cache(
+        source.replace("uv run pytest -q", "uv run pytest -q --deselect tests/test_engine_model.py")
+    )
