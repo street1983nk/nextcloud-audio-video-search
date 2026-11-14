@@ -79,6 +79,10 @@ def test_pipeline_constant(name: str, expected: object) -> None:
         ("CONF_DROPS", 10),
         ("CONF_SPEECH_MS", 10_000),
         ("CONF_SPEECH_SHARE", 0.3),
+        # D-03-22, plan 03-13 (verdict22.py): no kept word, VAD speech >= 3 s and share >= 50 %;
+        # the middles of the measured gaps (2,1 s / 4,3 s and 45 % / 55 %).
+        ("SPEECH_ONLY_MS", 3_000),
+        ("SPEECH_ONLY_SHARE", 0.5),
     ],
 )
 def test_catch_constant(name: str, expected: object) -> None:
@@ -129,6 +133,8 @@ catch.LID_MIN_WORDS=3
 catch.LID_P=0.9
 catch.MIN_LATIN=0.5
 catch.NO_SPEECH='no_speech'
+catch.SPEECH_ONLY_MS=3000
+catch.SPEECH_ONLY_SHARE=0.5
 catch.TRANSCRIPT='transcript'
 catch.UNSUPPORTED_DROPS=5
 catch.UNSUPPORTED_LANGUAGE='unsupported_language'
