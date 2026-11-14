@@ -86,6 +86,26 @@ def no_capture(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def no_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lifespan starts the preview; in tests it never reads Nextcloud or runs an engine.
+
+    A Preview built in a test reads its settings from a fake that fails like an
+    unreachable Nextcloud, so the stored limit stays; tests/test_preview_settings.py
+    hands its own readers and calls the real one with a fake client.
+    """
+    from audio_video_search_backend.worker import preview
+
+    async def idle(_services: object) -> None:
+        return None
+
+    async def unreachable() -> dict[str, str]:
+        raise ConnectionError("no Nextcloud in tests")
+
+    monkeypatch.setattr(preview, "run_forever", idle)
+    monkeypatch.setattr(preview, "read_admin_settings", unreachable)
+
+
+@pytest.fixture(autouse=True)
 def no_reconcile(monkeypatch: pytest.MonkeyPatch) -> None:
     """The lifespan starts the periodic reconcile; in tests it never asks the PHP routes.
 

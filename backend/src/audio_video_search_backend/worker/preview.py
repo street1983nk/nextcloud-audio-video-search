@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
 
-from audio_video_search_backend import companion, config, nc
+from audio_video_search_backend import companion, config, nc, settings
 from audio_video_search_backend.api import Services, run_locked
 from audio_video_search_backend.engine import child
 from audio_video_search_backend.engine.catch import (
@@ -104,6 +104,9 @@ NO_ROOM_RETRY_SECONDS: Final = 60
 # A refused download or other bytes than the content key: the capture judges the
 # reference meanwhile; until then the job waits instead of downloading in a loop.
 FETCH_RETRY_SECONDS: Final = 300
+# The admin settings are read at the start and then this often (D-03-09).
+SETTINGS_REFRESH_SECONDS: Final = 300
+_MS_PER_HOUR: Final = 3_600_000
 # The provenance of the preview; phase 6 brings the profiles.
 PROFILE: Final = "balanced"
 # The language of a preview version: Parakeet names none.
@@ -153,6 +156,7 @@ type Fetch = Callable[[int, str, Path, int, int], AbstractAsyncContextManager[tu
 type EngineFactory = Callable[[Path], Engine]
 type Probe = Callable[[Path], ProbeResult]
 type Decode = Callable[..., DecodeResult]
+type SettingsReader = Callable[[], Awaitable[dict[str, str]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +234,12 @@ def preview_dir() -> Path:
     return tmp_dir() / PREVIEW_DIRNAME
 
 
+async def read_admin_settings() -> dict[str, str]:
+    """The saved admin settings, read from Nextcloud (appconfig_ex) in a client of its own."""
+    async with nc.nc_app() as client:
+        return await settings.read(client)
+
+
 def _default_engine(models_root: Path) -> Engine:
     return child.EngineWorker(models_root)
 
@@ -263,6 +273,7 @@ class Preview:
         probe: Probe = probe_module.probe,
         decode: Decode = decode_module.decode_chunk,
         clock: Callable[[], float] = time.time,
+        read_settings: SettingsReader | None = None,
     ) -> None:
         self._services = services
         self._directory = preview_dir() if directory is None else directory
@@ -272,6 +283,7 @@ class Preview:
         self._probe = probe
         self._decode = decode
         self._clock = clock
+        self._read_settings = read_admin_settings if read_settings is None else read_settings
         self._serial = asyncio.Lock()
 
     def _now(self) -> int:
@@ -283,6 +295,37 @@ class Preview:
         store = self._services.store
         reset = await run_locked(self._services, store.reset_running)
         LOGGER.info("preview prepared", extra={"removed_files": removed, "reset_jobs": reset})
+
+    async def sync_limits(self, read_settings: SettingsReader) -> int | None:
+        """Take the duration limit of the admin settings; returns the jobs brought back, None when unread.
+
+        Only a higher limit brings the jobs skipped as too_long that now fit
+        back into the work stock (D-03-09); a lower or equal one touches no job,
+        so a file of unknown length that ran past the limit does not come back
+        every few minutes. The jobs come back before the new limit is stored:
+        a stop between both steps reads the old limit next time and brings
+        them back again, which changes nothing. The reader talks to Nextcloud
+        outside the services lock; a failed read keeps the stored limit.
+        """
+        try:
+            values = await read_settings()
+        except Exception as exc:  # Nextcloud unreachable or an odd answer: the stored limit stays
+            LOGGER.warning("settings not read", extra={"error_type": type(exc).__name__})
+            return None
+        hours = settings.read_max_duration_hours(values)
+        store = self._services.store
+
+        def apply() -> tuple[int, int]:
+            previous = store.max_duration_hours()
+            back = store.requeue_too_long(hours * _MS_PER_HOUR) if hours > previous else 0
+            if hours != previous:
+                store.set_max_duration_hours(hours)
+            return previous, back
+
+        previous, back = await run_locked(self._services, apply)
+        if hours != previous:
+            LOGGER.info("duration limit changed", extra={"hours": hours, "previous": previous, "jobs_back": back})
+        return back
 
     async def run_once(self) -> PreviewStep:
         async with self._serial:
@@ -348,7 +391,7 @@ class Preview:
             return await self._skip(job, probed.reason or DAMAGED, None)
         store = self._services.store
         hours = await run_locked(self._services, store.max_duration_hours)
-        max_ms = hours * 3_600_000
+        max_ms = hours * _MS_PER_HOUR
         if probed.duration_ms is not None and probed.duration_ms > max_ms:
             return await self._skip(job, "too_long", probed.duration_ms)
         engine = self._engine_factory(self._models_root)
@@ -488,11 +531,19 @@ class Preview:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         rounds: int | None = None,
     ) -> None:
-        """Step while the PHP app is there and the models are ready; otherwise every ``idle`` seconds."""
+        """Step while the PHP app is there and the models are ready; otherwise every ``idle`` seconds.
+
+        The admin settings are taken at the start and then every
+        SETTINGS_REFRESH_SECONDS, before the next step.
+        """
         await self.prepare()
         done = 0
+        next_sync: float | None = None
         while rounds is None or done < rounds:
             done += 1
+            if next_sync is None or self._clock() >= next_sync:
+                await self.sync_limits(self._read_settings)
+                next_sync = self._clock() + SETTINGS_REFRESH_SECONDS
             step = _IDLE
             if companion.current().state == companion.OK and procure.models_ready():
                 try:
@@ -514,5 +565,5 @@ class Preview:
 
 
 async def run_forever(services: Services) -> None:
-    """The background task of main.py (wired in plan 03-15)."""
+    """The background task of main.py; it works only once the models are ready."""
     await Preview(services).run_forever()

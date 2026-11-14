@@ -41,7 +41,7 @@ from audio_video_search_backend.index.publish import SearchIndex
 from audio_video_search_backend.models import catalog, procure
 from audio_video_search_backend.nc import AppAPIAuthMiddleware, AsyncNextcloudApp, run_app, set_handlers
 from audio_video_search_backend.store.repo import Store
-from audio_video_search_backend.worker import capture, intake
+from audio_video_search_backend.worker import capture, intake, preview
 from audio_video_search_backend.worker import reconcile as file_reconcile
 
 LOGGER = logging.getLogger(APP_ID)
@@ -220,6 +220,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The capture: one full download per open reference, one at a time, also
     # only while the companion state is ok (worker/capture.py).
     capture_task = start_background(capture.run_forever(services), "capture")
+    # The preview: one keyed content at a time in chunks of 10 min, only while
+    # the companion state is ok and the models are ready; it also takes the
+    # duration limit of the admin settings (worker/preview.py, plan 03-15).
+    preview_task = start_background(preview.run_forever(services), "preview")
     # The periodic reconcile: sweep, proof planning and walk every five
     # minutes while the PHP app is there, and POST /reconcile/run at once
     # (worker/reconcile.py, plan 02-20).
@@ -233,6 +237,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         checker.cancel()
         intake_task.cancel()
         capture_task.cancel()
+        preview_task.cancel()
         reconcile_task.cancel()
         cancelled = await stop_background()
         app.state.reconciler = None
