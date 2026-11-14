@@ -52,6 +52,10 @@ _BUSY_TIMEOUT_MS: Final = 5000
 # The samples of the walking skeleton are not a state here: they live in
 # sample_ref (D-02-15).
 STATES: Final = frozenset({"active", "unreadable", "vanished", "trashed"})
+# origin (schema v3, D-03-05): how the PHP app came to the file, an event of a
+# user or the crawl over a storage. event always wins over crawl, at the
+# reference and at the preview job of its content, never the other way round.
+ORIGINS: Final = frozenset({"event", "crawl"})
 # stage: where the discovery of this file stands.
 STAGES: Final = frozenset({"pending", "probing", "fetching", "keyed", "failed"})
 STATE_REASONS: Final = frozenset(
@@ -157,20 +161,28 @@ _VERSION_KINDS: Final = frozenset({"content", "metadata", "restore"})
 _INTAKE_ROW: Final = "SELECT media_id, etag, size, mtime, state, stage, prefilter_key FROM file_ref WHERE file_id = ?"
 _INTAKE_NEW: Final = """
 INSERT INTO file_ref (file_id, media_id, storage_id, prefilter_key, reader_uid, etag, size, mtime, state, stage,
-                      reason, attempts, next_try_at, proved_at, vanished_since, updated_at)
+                      reason, attempts, next_try_at, proved_at, vanished_since, updated_at, origin)
 VALUES (:file_id, NULL, :storage_id, :prefilter_key, :reader_uid, :etag, :size, :mtime, 'active', 'pending',
-        NULL, 0, NULL, NULL, NULL, :now)
+        NULL, 0, NULL, NULL, NULL, :now, :origin)
 """
+# Every update of a version row below (metadata, changed, restore) carries the
+# origin of the row: event wins (D-03-05), a crawl row never turns an event
+# back into crawl.
+#
 # Same bytes as far as the cache can tell: the keyed state stays as it is.
 _INTAKE_METADATA: Final = """
-UPDATE file_ref SET prefilter_key = :prefilter_key, reader_uid = :reader_uid, updated_at = :now
+UPDATE file_ref SET prefilter_key = :prefilter_key, reader_uid = :reader_uid,
+    origin = CASE WHEN :origin = 'event' OR file_ref.origin = 'event' THEN 'event' ELSE 'crawl' END,
+    updated_at = :now
 WHERE file_id = :file_id
 """
 # Any change of etag, size or mtime: the content key is unknown again (D-02-01).
 _INTAKE_CHANGED: Final = """
 UPDATE file_ref SET media_id = NULL, storage_id = :storage_id, prefilter_key = :prefilter_key,
     reader_uid = :reader_uid, etag = :etag, size = :size, mtime = :mtime, state = 'active', stage = 'pending',
-    reason = NULL, attempts = 0, next_try_at = NULL, proved_at = NULL, vanished_since = NULL, updated_at = :now
+    reason = NULL, attempts = 0, next_try_at = NULL, proved_at = NULL, vanished_since = NULL,
+    origin = CASE WHEN :origin = 'event' OR file_ref.origin = 'event' THEN 'event' ELSE 'crawl' END,
+    updated_at = :now
 WHERE file_id = :file_id
 """
 # The trash (D-02-09): the reference stays with its content but gives no hit,
@@ -194,7 +206,9 @@ RETURNING media_id
 _INTAKE_RESTORE: Final = """
 UPDATE file_ref SET state = :state, stage = :stage, storage_id = :storage_id, prefilter_key = :prefilter_key,
     reader_uid = :reader_uid, reason = CASE WHEN :keep_reason THEN reason ELSE NULL END, attempts = 0,
-    next_try_at = NULL, updated_at = :now
+    next_try_at = NULL,
+    origin = CASE WHEN :origin = 'event' OR file_ref.origin = 'event' THEN 'event' ELSE 'crawl' END,
+    updated_at = :now
 WHERE file_id = :file_id AND state = 'trashed'
 """
 # The orphan rule (D-02-09, D-02-13): a content without an active reference
@@ -317,6 +331,23 @@ WHERE file_id = :file_id AND etag = :etag AND media_id IS NOT NULL AND stage = '
 RETURNING media_id
 """
 _CLEAR_ORPHAN: Final = "UPDATE media SET orphaned_at = NULL WHERE media_id = ?"
+# The preview job of a content (schema v3), seeded in the same commit that keys
+# a reference (mark_keyed) or attaches a copy (attach_by_proof): one row per
+# media_id, never per file. Only an active, keyed reference seeds; a sample
+# never does (D-02-15, T-03-09). A copy of a content that has its job already
+# only carries its origin (event wins) and its mtime (the newest wins) into a
+# job that still waits; a running, complete or skipped job stays as it is.
+_SEED_PREVIEW_JOB: Final = """
+INSERT INTO preview_job (media_id, epoch, state, origin, sort_mtime, updated_at)
+SELECT f.media_id, m.epoch, 'queued', f.origin, f.mtime, :now
+FROM file_ref f JOIN media m ON m.media_id = f.media_id
+WHERE f.file_id = :file_id AND f.state = 'active' AND f.stage = 'keyed'
+ON CONFLICT (media_id) DO UPDATE SET
+    origin = CASE WHEN excluded.origin = 'event' THEN 'event' ELSE preview_job.origin END,
+    sort_mtime = MAX(preview_job.sort_mtime, excluded.sort_mtime),
+    updated_at = excluded.updated_at
+WHERE preview_job.state IN ('queued', 'waiting')
+"""
 # A renewed proof read other bytes than the content has: the reference lets go
 # of it and is read in full like a new one.
 _RELEASE_REF: Final = """
@@ -347,6 +378,9 @@ DELETE FROM sample_ref WHERE file_id IN (SELECT value FROM json_each(?)) RETURNI
 _MEDIA_HAS_REF: Final = "SELECT 1 FROM file_ref WHERE media_id = ? LIMIT 1"
 _MEDIA_HAS_SAMPLE: Final = "SELECT 1 FROM sample_ref WHERE media_id = ? LIMIT 1"
 _FORGET_CORRECTIONS: Final = "DELETE FROM correction WHERE media_id = ?"
+# The preview job hangs at the media item by a foreign key: it goes before it,
+# also while a sample keeps the media item, since no reference is left to work for.
+_FORGET_PREVIEW_JOB: Final = "DELETE FROM preview_job WHERE media_id = ?"
 _FORGET_CURRENT: Final = """
 DELETE FROM current WHERE media_id = :m AND version_id IN (
     SELECT version_id FROM transcript WHERE media_id = :m AND (:everything OR engine <> 'sample'))
@@ -552,6 +586,7 @@ class IntakeItem:
     mtime: int | None
     prefilter_key: str | None
     reader_uid: str | None
+    origin: str = "crawl"
 
 
 @dataclass(slots=True)
@@ -603,6 +638,8 @@ def _check_intake(item: IntakeItem) -> None:
     A whole storage (exclude_storage) needs its storage id, every other kind
     a file id; a kind that describes a version of a file needs all the rest.
     """
+    if item.origin not in ORIGINS:
+        raise ValueError("invalid intake field: origin")
     if not _is_count(item.storage_id):
         raise ValueError("invalid intake field: storage_id")
     if item.kind == "exclude_storage":
@@ -980,6 +1017,7 @@ class Store:
             "etag": item.etag,
             "size": item.size,
             "mtime": item.mtime,
+            "origin": item.origin,
             "now": now,
         }
         row = self._conn.execute(_INTAKE_ROW, (item.file_id,)).fetchone()
@@ -1058,8 +1096,10 @@ class Store:
 
         In one transaction: find or create the media item of ``sha256``, write
         its head when it has none, clear its orphan mark (D-02-13), and set the
-        reference active, keyed, proved now. Stale means the intake changed the
-        reference while it was downloaded; then nothing is written.
+        reference active, keyed, proved now; the preview job of the content is
+        seeded in the same commit (one per content, plan 03-03). Stale means
+        the intake changed the reference while it was downloaded; then nothing
+        is written, also no job.
         """
         _require_hex64(sha256, "sha256")
         _require_hex64(head_sha256, "head_sha256")
@@ -1079,6 +1119,7 @@ class Store:
             values["media_id"] = media_id
             self._conn.execute(_KEY_MEDIA, values)
             self._conn.execute(_KEY_REF, values)
+            self._conn.execute(_SEED_PREVIEW_JOB, {"file_id": claimed.file_id, "now": moment})
             if previous is not None and previous != media_id:
                 self._conn.execute(_MARK_ORPHANED, {"m": previous, "now": moment})
             waiting = self._conn.execute(_WAITING_SIBLINGS, values).fetchall()
@@ -1189,7 +1230,8 @@ class Store:
         Conditional: the reference is claimed, still has the etag the proof was
         made for and no content yet, and a keyed, active sibling with its
         prefilter key still holds ``media_id``. Otherwise nothing is written
-        and the answer is False. Sets proved_at.
+        and the answer is False. Sets proved_at; the copy carries its origin
+        and mtime into the preview job of the content (plan 03-03).
         """
         moment = _now() if now is None else now
         values = {"file_id": file_id, "media_id": media_id, "etag": expected_etag, "now": moment}
@@ -1197,6 +1239,8 @@ class Store:
             if self._conn.execute(_SIBLING_HOLDS, values).fetchone() is None:
                 return False
             attached = self._conn.execute(_ATTACH_REF, values).rowcount == 1
+            if attached:
+                self._conn.execute(_SEED_PREVIEW_JOB, values)
         if attached:
             _LOG.info("reference attached by proof", extra={"file_id": file_id, "media_id": media_id})
         return attached
@@ -1260,6 +1304,7 @@ class Store:
         sampled = self._conn.execute(_MEDIA_HAS_SAMPLE, (media_id,)).fetchone() is not None
         values = {"m": media_id, "everything": 0 if sampled else 1}
         corrections = self._conn.execute(_FORGET_CORRECTIONS, (media_id,)).rowcount
+        self._conn.execute(_FORGET_PREVIEW_JOB, (media_id,))
         self._conn.execute(_FORGET_CURRENT, values)
         words = self._conn.execute(_FORGET_WORDS, values).rowcount
         transcripts = self._conn.execute(_FORGET_TRANSCRIPTS, values).rowcount
@@ -1716,6 +1761,7 @@ class Store:
             self._conn.execute(_DELETE_OUTBOX, (media_id,))
             self._conn.execute(_DELETE_SAMPLE_REF, (file_id,))
             if not self._conn.execute(_MEDIA_STILL_USED, {"m": media_id}).fetchone()[0]:
+                self._conn.execute(_FORGET_PREVIEW_JOB, (media_id,))
                 self._conn.execute(_DELETE_MEDIA_KEYS, (media_id,))
                 self._conn.execute(_DELETE_MEDIA, (media_id,))
         _LOG.info("sample removed", extra={"file_id": file_id, "media_id": media_id})
