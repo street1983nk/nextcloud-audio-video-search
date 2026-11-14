@@ -409,6 +409,25 @@ def test_a_piece_of_an_old_epoch_writes_nothing(store: Store, path: Path) -> Non
     assert (row["next_start_ms"], row["chunks_done"], row["kept_words"]) == (0, 0, 0)
 
 
+def test_a_further_piece_after_a_new_epoch_writes_nothing(store: Store, path: Path) -> None:
+    media_id = _keyed(store, 11, SHA[1])
+    job = _claim(store)
+    assert store.commit_chunk(job, prov=_prov(SHA[1]), words=[_w("eins", 0)], next_start_ms=600_000, counters=NO_COUNT)
+    store.bump_epoch(media_id)
+
+    done = store.commit_chunk(
+        job, prov=_prov(SHA[1]), words=[_w("zwei", 600_100)], next_start_ms=1_200_000, counters=_counters(1)
+    )
+
+    assert done is False
+    version_id = _transcripts(path, media_id)[0][0]
+    assert _words(path, version_id) == [(0, "eins", 0)]
+    assert _outbox(path, media_id) == [1]
+    row = _job_row(path, media_id)
+    assert row is not None
+    assert (row["next_start_ms"], row["chunks_done"], row["kept_words"]) == (600_000, 1, 0)
+
+
 def test_a_piece_whose_provenance_names_an_old_epoch_writes_nothing(store: Store, path: Path) -> None:
     media_id = _keyed(store, 11, SHA[1])
     store.bump_epoch(media_id)
@@ -421,6 +440,53 @@ def test_a_piece_whose_provenance_names_an_old_epoch_writes_nothing(store: Store
 
     assert done is False
     assert _transcripts(path, media_id) == []
+
+
+@pytest.mark.parametrize("piece", ["first", "further"])
+def test_a_piece_whose_provenance_names_a_newer_epoch_writes_nothing(store: Store, path: Path, piece: str) -> None:
+    _keyed(store, 11, SHA[1])
+    job = _claim(store)
+    if piece == "further":
+        assert store.commit_chunk(
+            job, prov=_prov(SHA[1]), words=[_w("eins", 0)], next_start_ms=600_000, counters=NO_COUNT
+        )
+
+    done = store.commit_chunk(
+        job, prov=_prov(SHA[1], epoch=1), words=[_w("zwei", 600_100)], next_start_ms=1_200_000, counters=NO_COUNT
+    )
+
+    assert done is False
+    assert _sql(path, "SELECT COUNT(*) FROM word WHERE surface = 'zwei'") == [(0,)]
+    assert _sql(path, "SELECT COUNT(*) FROM transcript WHERE epoch = 1") == [(0,)]
+
+
+def test_a_piece_after_another_version_became_current_writes_nothing(store: Store, path: Path) -> None:
+    media_id = _keyed(store, 11, SHA[1])
+    job = _claim(store)
+    assert store.commit_chunk(job, prov=_prov(SHA[1]), words=[_w("eins", 0)], next_start_ms=600_000, counters=NO_COUNT)
+    preview_version = _transcripts(path, media_id)[0][0]
+    refined = Provenance(
+        engine="whisper-turbo",
+        model_sha256=MODEL,
+        config_version=1,
+        profile="balanced",
+        level=Level.REFINED,
+        epoch=0,
+        language="de",
+        input_file_sha256=SHA[1],
+    )
+    assert store.publish_version(media_id, refined, [_w("Eins", 0)]).published
+
+    done = store.commit_chunk(
+        job, prov=_prov(SHA[1]), words=[_w("zwei", 600_100)], next_start_ms=1_200_000, counters=NO_COUNT
+    )
+
+    assert done is False
+    assert _words(path, preview_version) == [(0, "eins", 0)]
+    assert _outbox(path, media_id) == [1, 2]
+    row = _job_row(path, media_id)
+    assert row is not None
+    assert (row["next_start_ms"], row["chunks_done"]) == (600_000, 1)
 
 
 def test_a_piece_for_other_bytes_writes_nothing(store: Store, path: Path) -> None:
@@ -708,12 +774,16 @@ def test_retries_add_up(store: Store, path: Path) -> None:
     assert row["attempts"] == 3
 
 
+@pytest.mark.parametrize("job_too", [True, False], ids=["job-moved-on", "only-the-content-moved-on"])
 @pytest.mark.parametrize("operation", ["finish", "skip", "defer", "retry", "yield"])
-def test_a_verdict_for_a_job_of_an_old_epoch_writes_nothing(store: Store, path: Path, operation: str) -> None:
+def test_a_verdict_for_a_job_of_an_old_epoch_writes_nothing(
+    store: Store, path: Path, operation: str, job_too: bool
+) -> None:
     media_id = _keyed(store, 11, SHA[1])
     job = _claim(store)
     store.bump_epoch(media_id)
-    _sql(path, "UPDATE preview_job SET epoch = 1 WHERE media_id = ?", (media_id,))
+    if job_too:
+        _sql(path, "UPDATE preview_job SET epoch = 1 WHERE media_id = ?", (media_id,))
     before = _job_row(path, media_id)
 
     calls = {
