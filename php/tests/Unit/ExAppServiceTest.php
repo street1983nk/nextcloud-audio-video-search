@@ -137,23 +137,99 @@ final class ExAppServiceTest extends TestCase {
 
 	// -- search -----------------------------------------------------------------
 
-	public function testAValidAnswerIsTheListOfHits(): void {
-		$service = $this->service($this->json([
-			'appVersion' => '0.1.0',
-			'hits' => [
-				['fileId' => 11, 'startMs' => 754200, 'excerpt' => 'der Haushalt wird beraten', 'sample' => false],
-				['fileId' => 12, 'startMs' => 0, 'excerpt' => '', 'sample' => true],
-			],
-		]));
+	/**
+	 * A search answer of the container (plan 03-08) with the paging fields.
+	 *
+	 * @param list<mixed> $hits
+	 * @return array<string, mixed>
+	 */
+	private static function page(array $hits, int $nextOffset = 0, bool $hasMore = false): array {
+		return ['appVersion' => '0.1.0', 'hits' => $hits, 'nextOffset' => $nextOffset, 'hasMore' => $hasMore];
+	}
+
+	public function testAValidAnswerIsThePageOfHits(): void {
+		$service = $this->service($this->json(self::page([
+			['fileId' => 11, 'startMs' => 754200, 'excerpt' => 'der Haushalt wird beraten', 'sample' => false, 'stage' => 'final'],
+			['fileId' => 12, 'startMs' => 0, 'excerpt' => '', 'sample' => true, 'stage' => 'sample'],
+			['fileId' => 13, 'startMs' => 5000, 'excerpt' => 'vorläufig', 'sample' => false, 'stage' => 'preview'],
+		], 8, true)));
 
 		self::assertSame([
-			['fileId' => 11, 'startMs' => 754200, 'excerpt' => 'der Haushalt wird beraten', 'sample' => false],
-			['fileId' => 12, 'startMs' => 0, 'excerpt' => '', 'sample' => true],
-		], $service->search('alice', '  Haushalt  ', 25));
+			'hits' => [
+				['fileId' => 11, 'startMs' => 754200, 'excerpt' => 'der Haushalt wird beraten', 'sample' => false, 'stage' => 'final'],
+				['fileId' => 12, 'startMs' => 0, 'excerpt' => '', 'sample' => true, 'stage' => 'sample'],
+				['fileId' => 13, 'startMs' => 5000, 'excerpt' => 'vorläufig', 'sample' => false, 'stage' => 'preview'],
+			],
+			'nextOffset' => 8,
+			'hasMore' => true,
+		], $service->search('alice', '  Haushalt  ', 25, 5));
 		self::assertSame('/search', $this->calls[0]['path']);
 		self::assertSame('POST', $this->calls[0]['method']);
-		self::assertSame(['term' => 'Haushalt', 'limit' => 25], $this->calls[0]['params']);
 		self::assertSame(ExAppService::REQUEST_TIMEOUT_SECONDS, $this->calls[0]['timeout']);
+	}
+
+	public function testTheOffsetGoesIntoTheBody(): void {
+		$service = $this->service($this->json(self::page([], 17)));
+
+		$service->search('alice', 'Haushalt', 20, 17);
+		$service->search('alice', 'Haushalt', 20);
+		$service->search('alice', 'Haushalt', 20, 99999);
+		$service->search('alice', 'Haushalt', 20, -4);
+
+		self::assertSame(['term' => 'Haushalt', 'limit' => 20, 'offset' => 17], $this->calls[0]['params']);
+		self::assertSame(0, $this->calls[1]['params']['offset']);
+		self::assertSame(ExAppService::MAX_OFFSET, $this->calls[2]['params']['offset']);
+		self::assertSame(1200, ExAppService::MAX_OFFSET);
+		self::assertSame(0, $this->calls[3]['params']['offset']);
+	}
+
+	/** @return array<string, array{array<string, mixed>}> */
+	public static function answersWithoutPaging(): array {
+		return [
+			'missing nextOffset' => [['hits' => [], 'hasMore' => false]],
+			'missing hasMore' => [['hits' => [], 'nextOffset' => 5]],
+			'nextOffset as text' => [['hits' => [], 'nextOffset' => '5', 'hasMore' => false]],
+			'negative nextOffset' => [['hits' => [], 'nextOffset' => -1, 'hasMore' => false]],
+			'hasMore as number' => [['hits' => [], 'nextOffset' => 5, 'hasMore' => 1]],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider('answersWithoutPaging')]
+	public function testAnAnswerWithoutValidPagingIsNull(array $answer): void {
+		self::assertNull($this->service($this->json($answer))->search('alice', 'Haushalt', 25));
+	}
+
+	public function testAMissingOrUnknownStageIsAPreview(): void {
+		$service = $this->service($this->json(self::page([
+			['fileId' => 11, 'startMs' => 1, 'excerpt' => 'a', 'sample' => false],
+			['fileId' => 12, 'startMs' => 2, 'excerpt' => 'b', 'sample' => false, 'stage' => 'draft'],
+			['fileId' => 13, 'startMs' => 3, 'excerpt' => 'c', 'sample' => false, 'stage' => 'sample'],
+			['fileId' => 14, 'startMs' => 4, 'excerpt' => 'd', 'sample' => true, 'stage' => 'final'],
+			['fileId' => 15, 'startMs' => 5, 'excerpt' => 'e', 'sample' => false, 'stage' => null],
+		])));
+
+		$page = $service->search('alice', 'Haushalt', 25);
+
+		self::assertIsArray($page);
+		self::assertSame(
+			['preview', 'preview', 'preview', 'sample', 'preview'],
+			array_map(static fn (array $hit): string => $hit['stage'], $page['hits']),
+		);
+	}
+
+	public function testAStageThatIsNoTextDropsTheHit(): void {
+		$logger = $this->createMock(LoggerInterface::class);
+		$logger->expects(self::once())->method('warning')->with(self::stringContains('dropped'), ['count' => 2]);
+		$service = $this->service($this->json(self::page([
+			['fileId' => 11, 'startMs' => 1, 'excerpt' => 'a', 'sample' => false, 'stage' => 2],
+			['fileId' => 12, 'startMs' => 2, 'excerpt' => 'b', 'sample' => false, 'stage' => ['final']],
+			['fileId' => 13, 'startMs' => 3, 'excerpt' => 'c', 'sample' => false, 'stage' => 'final'],
+		])), $logger);
+
+		$page = $service->search('alice', 'Haushalt', 25);
+
+		self::assertIsArray($page);
+		self::assertSame([13], array_map(static fn (array $hit): int => $hit['fileId'], $page['hits']));
 	}
 
 	public function testMalformedHitsAreDroppedAndCounted(): void {
@@ -162,42 +238,43 @@ final class ExAppServiceTest extends TestCase {
 			self::stringContains('dropped'),
 			['count' => 6],
 		);
-		$service = $this->service($this->json([
-			'hits' => [
+		$service = $this->service($this->json(self::page([
 				['fileId' => 0, 'startMs' => 1, 'excerpt' => 'x', 'sample' => false],
 				['fileId' => -3, 'startMs' => 1, 'excerpt' => 'x', 'sample' => false],
 				['fileId' => 5, 'startMs' => -1, 'excerpt' => 'x', 'sample' => false],
 				['fileId' => 5, 'startMs' => 1, 'excerpt' => 42, 'sample' => false],
 				['fileId' => '5', 'startMs' => 1, 'excerpt' => 'x', 'sample' => false],
 				'not a hit',
-				['fileId' => 7, 'startMs' => 1, 'excerpt' => 'kept', 'sample' => false],
-			],
-		]), $logger);
+				['fileId' => 7, 'startMs' => 1, 'excerpt' => 'kept', 'sample' => false, 'stage' => 'final'],
+		])), $logger);
 
+		$page = $service->search('alice', 'Haushalt', 25);
+
+		self::assertIsArray($page);
 		self::assertSame(
-			[['fileId' => 7, 'startMs' => 1, 'excerpt' => 'kept', 'sample' => false]],
-			$service->search('alice', 'Haushalt', 25),
+			[['fileId' => 7, 'startMs' => 1, 'excerpt' => 'kept', 'sample' => false, 'stage' => 'final']],
+			$page['hits'],
 		);
 	}
 
 	public function testAHitNeverCarriesATitleOrAPathOfTheContainer(): void {
-		$service = $this->service($this->json([
-			'hits' => [['fileId' => 7, 'startMs' => 1, 'excerpt' => 'x', 'sample' => false, 'title' => 'secret.mp4', 'path' => '/bob/secret.mp4']],
-		]));
+		$service = $this->service($this->json(self::page(
+			[['fileId' => 7, 'startMs' => 1, 'excerpt' => 'x', 'sample' => false, 'stage' => 'final', 'title' => 'secret.mp4', 'path' => '/bob/secret.mp4']],
+		)));
 
-		$hits = $service->search('alice', 'Haushalt', 25);
+		$page = $service->search('alice', 'Haushalt', 25);
 
-		self::assertIsArray($hits);
-		self::assertSame(['fileId', 'startMs', 'excerpt', 'sample'], array_keys($hits[0]));
+		self::assertIsArray($page);
+		self::assertSame(['fileId', 'startMs', 'excerpt', 'sample', 'stage'], array_keys($page['hits'][0]));
 	}
 
 	public function testAnEmptyTermMakesNoCall(): void {
-		self::assertSame([], $this->service(null)->search('alice', "  \t ", 25));
+		self::assertSame(['hits' => [], 'nextOffset' => 0, 'hasMore' => false], $this->service(null)->search('alice', "  \t ", 25));
 		self::assertSame([], $this->calls);
 	}
 
 	public function testTheTermAndTheLimitAreClamped(): void {
-		$service = $this->service($this->json(['hits' => []]));
+		$service = $this->service($this->json(self::page([])));
 
 		$service->search('alice', str_repeat('ä', 250), 500);
 		$service->search('alice', 'x', 0);
@@ -208,13 +285,13 @@ final class ExAppServiceTest extends TestCase {
 	}
 
 	public function testTheBackendVersionOfAnAnswerIsRemembered(): void {
-		$this->service($this->json(['appVersion' => '0.1.3', 'hits' => []]))->search('alice', 'x', 5);
+		$this->service($this->json(['appVersion' => '0.1.3', 'hits' => [], 'nextOffset' => 0, 'hasMore' => false]))->search('alice', 'x', 5);
 
 		self::assertSame('0.1.3', $this->stored[ExAppService::KEY_BACKEND_VERSION] ?? null);
 	}
 
 	public function testAVersionThatIsNotAVersionIsNotRemembered(): void {
-		$this->service($this->json(['appVersion' => '<b>1</b>', 'hits' => []]))->search('alice', 'x', 5);
+		$this->service($this->json(['appVersion' => '<b>1</b>', 'hits' => [], 'nextOffset' => 0, 'hasMore' => false]))->search('alice', 'x', 5);
 
 		self::assertArrayNotHasKey(ExAppService::KEY_BACKEND_VERSION, $this->stored);
 	}

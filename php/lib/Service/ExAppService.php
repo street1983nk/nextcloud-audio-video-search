@@ -160,6 +160,15 @@ class ExAppService {
 	private const MIN_LIMIT = 1;
 	private const MAX_LIMIT = 50;
 
+	/** The deepest offset the container accepts (plan 03-08, MAX_OFFSET). */
+	public const MAX_OFFSET = 1200;
+
+	/**
+	 * The stages a hit may carry. Anything else, and a missing stage, is shown
+	 * as a preview: in doubt a hit is honestly preliminary (UI-SPEC).
+	 */
+	public const HIT_STAGES = ['preview', 'final', 'sample'];
+
 	/** Defense in depth: the provider shortens to 120 characters anyway. */
 	private const MAX_EXCERPT_LENGTH = 1000;
 
@@ -176,25 +185,38 @@ class ExAppService {
 	// -- the four calls of the contract -----------------------------------------
 
 	/**
-	 * Hits for one term, or null when there is no usable answer.
+	 * One page of hits for one term, or null when there is no usable answer.
 	 *
-	 * Null and an empty list are two different answers: null means the
-	 * backend is missing, slow or broken, an empty list means it found nothing.
-	 * An empty term is an empty list without a call.
+	 * Null and an empty page are two different answers: null means the
+	 * backend is missing, slow or broken, an empty page means it found nothing.
+	 * An empty term is an empty, final page without a call.
 	 *
-	 * @return list<array{fileId:int,startMs:int,excerpt:string,sample:bool}>|null
+	 * The page is a cut [offset, offset + limit) of the fixed order of the
+	 * container (plan 03-08). nextOffset and hasMore are part of the contract:
+	 * an answer without them, or with them out of type or range, is no answer
+	 * at all, because a provider that guessed them would page into gaps or
+	 * doublets.
+	 *
+	 * @return array{hits:list<array{fileId:int,startMs:int,excerpt:string,sample:bool,stage:string}>,nextOffset:int,hasMore:bool}|null
 	 */
-	public function search(string $uid, string $term, int $limit): ?array {
+	public function search(string $uid, string $term, int $limit, int $offset = 0): ?array {
 		$term = mb_substr(trim($term), 0, self::MAX_TERM_LENGTH);
+		$offset = max(0, min(self::MAX_OFFSET, $offset));
 		if ($term === '') {
-			return [];
+			return ['hits' => [], 'nextOffset' => $offset, 'hasMore' => false];
 		}
 
 		$answer = $this->call('/search', $uid, [
 			'term' => $term,
 			'limit' => max(self::MIN_LIMIT, min(self::MAX_LIMIT, $limit)),
+			'offset' => $offset,
 		], self::REQUEST_TIMEOUT_SECONDS);
 		if ($answer === null || !isset($answer['hits']) || !is_array($answer['hits'])) {
+			return null;
+		}
+		$nextOffset = $answer['nextOffset'] ?? null;
+		$hasMore = $answer['hasMore'] ?? null;
+		if (!is_int($nextOffset) || $nextOffset < 0 || !is_bool($hasMore)) {
 			return null;
 		}
 
@@ -205,7 +227,7 @@ class ExAppService {
 			}
 		}
 
-		return $this->filterHits($answer['hits']);
+		return ['hits' => $this->filterHits($answer['hits']), 'nextOffset' => $nextOffset, 'hasMore' => $hasMore];
 	}
 
 	/**
@@ -945,11 +967,15 @@ class ExAppService {
 	// -- field checks -----------------------------------------------------------
 
 	/**
-	 * What survives of a hit: file id, start time, excerpt and the sample flag,
-	 * each with its type and range, and nothing else.
+	 * What survives of a hit: file id, start time, excerpt, the sample flag and
+	 * the stage, each with its type and range, and nothing else.
+	 *
+	 * The stage is a closed list. A missing or unknown stage becomes 'preview',
+	 * a stage that is not a string drops the hit, and a sample is always the
+	 * stage 'sample', whatever the container said.
 	 *
 	 * @param array<mixed> $hits
-	 * @return list<array{fileId:int,startMs:int,excerpt:string,sample:bool}>
+	 * @return list<array{fileId:int,startMs:int,excerpt:string,sample:bool,stage:string}>
 	 */
 	private function filterHits(array $hits): array {
 		$kept = [];
@@ -965,9 +991,11 @@ class ExAppService {
 			$startMs = $hit['startMs'] ?? null;
 			$excerpt = $hit['excerpt'] ?? null;
 			$sample = $hit['sample'] ?? null;
+			$stage = $hit['stage'] ?? null;
 			if (!is_int($fileId) || $fileId <= 0
 				|| !is_int($startMs) || $startMs < 0
-				|| !is_string($excerpt) || !is_bool($sample)) {
+				|| !is_string($excerpt) || !is_bool($sample)
+				|| ($stage !== null && !is_string($stage))) {
 				$dropped++;
 				continue;
 			}
@@ -978,7 +1006,15 @@ class ExAppService {
 				continue;
 			}
 
-			$kept[] = ['fileId' => $fileId, 'startMs' => $startMs, 'excerpt' => $text, 'sample' => $sample];
+			if ($sample) {
+				$stage = 'sample';
+			} elseif (!in_array($stage, self::HIT_STAGES, true) || $stage === 'sample') {
+				// 'sample' without the flag is a contradiction of the container;
+				// it is no test result here, so it is the honest preview.
+				$stage = 'preview';
+			}
+
+			$kept[] = ['fileId' => $fileId, 'startMs' => $startMs, 'excerpt' => $text, 'sample' => $sample, 'stage' => $stage];
 		}
 
 		if ($dropped > 0) {
