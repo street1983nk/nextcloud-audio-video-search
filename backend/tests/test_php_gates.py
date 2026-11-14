@@ -69,7 +69,8 @@ The eighteen rules:
     ``QueueMapper::ORIGINS`` is exactly ``event`` and ``crawl``, ``enqueue``
     refuses every other origin, ``QueueService::ITEM_KEYS`` carries
     ``origin`` and ``describeRow`` drops a row whose origin is not on the
-    list. The container holds the same list (plan 03-11).
+    list. The container holds the same list twice, in the claim contract
+    (``nc_queue.ORIGINS``) and in the store (``repo.ORIGINS``, plan 03-11).
 18. Every enqueue of the content kind under ``php/lib`` names its origin:
     ``QueueMapper::ORIGIN_EVENT`` in the file and cache listeners,
     ``QueueMapper::ORIGIN_CRAWL`` in the first crawl and the reconcile, never
@@ -83,8 +84,11 @@ cannot pass on an empty directory.
 
 import json
 import re
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
+from audio_video_search_backend import nc_queue
+from audio_video_search_backend.store import repo
 from tests.conftest import REPO_ROOT
 
 PHP_ROOT = REPO_ROOT / "php"
@@ -1078,7 +1082,10 @@ def php_string_list(source: str, constant: str) -> list[str] | None:
     return values
 
 
-def queue_origin_findings(root: Path) -> list[str]:
+CONTAINER_ORIGINS: Mapping[str, Collection[str]] = {"nc_queue.ORIGINS": nc_queue.ORIGINS, "repo.ORIGINS": repo.ORIGINS}
+
+
+def queue_origin_findings(root: Path, container: Mapping[str, Collection[str]] = CONTAINER_ORIGINS) -> list[str]:
     """Whether the origins of the work stock are the closed pair and travel with the claim.
 
     QueueMapper::ORIGINS is exactly event and crawl (the container holds the
@@ -1099,6 +1106,9 @@ def queue_origin_findings(root: Path) -> list[str]:
         findings.append("QueueMapper has no ORIGINS")
     elif sorted(origins) != sorted(EXPECTED_ORIGINS):
         findings.append(f"QueueMapper::ORIGINS is {origins}, expected {list(EXPECTED_ORIGINS)}")
+    for name, values in container.items():
+        if origins is not None and sorted(origins) != sorted(values):
+            findings.append(f"QueueMapper::ORIGINS is {origins}, {name} is {sorted(values)}")
     enqueue = php_method(mapper, "enqueue") or ""
     if "in_array($origin, self::ORIGINS, true)" not in enqueue:
         findings.append("QueueMapper::enqueue does not check the origin against ORIGINS")
@@ -1114,6 +1124,8 @@ def queue_origin_findings(root: Path) -> list[str]:
 def test_rule17_the_origins_of_the_work_stock_are_event_and_crawl() -> None:
     assert queue_origin_findings(REPO_ROOT) == []
     assert php_string_list((REPO_ROOT / QUEUE_MAPPER).read_text(encoding="utf-8"), "ORIGINS") == ["event", "crawl"]
+    # Held apart from the PHP source as well: the two lists of the container are one set.
+    assert nc_queue.ORIGINS == repo.ORIGINS == frozenset({"event", "crawl"})
 
 
 def _origin_tree(root: Path, mapper: tuple[str, str] = ("", ""), service: tuple[str, str] = ("", "")) -> Path:
@@ -1134,12 +1146,26 @@ def test_self_rule17_fires_on_a_changed_copy(tmp_path: Path) -> None:
     one = _origin_tree(
         tmp_path / "one", mapper=("ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL]", "ORIGINS = ['event']")
     )
-    assert queue_origin_findings(one) == ["QueueMapper::ORIGINS is ['event'], expected ['event', 'crawl']"]
+    assert queue_origin_findings(one) == [
+        "QueueMapper::ORIGINS is ['event'], expected ['event', 'crawl']",
+        "QueueMapper::ORIGINS is ['event'], nc_queue.ORIGINS is ['crawl', 'event']",
+        "QueueMapper::ORIGINS is ['event'], repo.ORIGINS is ['crawl', 'event']",
+    ]
     third = _origin_tree(
         tmp_path / "third",
         mapper=("ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL]", "ORIGINS = [self::ORIGIN_EVENT, 'urgent']"),
     )
-    assert queue_origin_findings(third) == ["QueueMapper::ORIGINS is ['event', 'urgent'], expected ['event', 'crawl']"]
+    assert queue_origin_findings(third) == [
+        "QueueMapper::ORIGINS is ['event', 'urgent'], expected ['event', 'crawl']",
+        "QueueMapper::ORIGINS is ['event', 'urgent'], nc_queue.ORIGINS is ['crawl', 'event']",
+        "QueueMapper::ORIGINS is ['event', 'urgent'], repo.ORIGINS is ['crawl', 'event']",
+    ]
+    # A container list that drifted from PHP fires on the unchanged PHP tree.
+    drifted = {"nc_queue.ORIGINS": frozenset({"event", "crawl", "push"}), "repo.ORIGINS": frozenset({"event"})}
+    assert queue_origin_findings(_origin_tree(tmp_path / "drift"), drifted) == [
+        "QueueMapper::ORIGINS is ['event', 'crawl'], nc_queue.ORIGINS is ['crawl', 'event', 'push']",
+        "QueueMapper::ORIGINS is ['event', 'crawl'], repo.ORIGINS is ['event']",
+    ]
     unchecked = _origin_tree(
         tmp_path / "unchecked", mapper=("in_array($origin, self::ORIGINS, true)", "is_string($origin)")
     )

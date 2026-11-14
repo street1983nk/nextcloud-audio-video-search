@@ -71,6 +71,7 @@ def wire(queue_id: int = 1, kind: str = "content", file_id: int | None = 10, **f
         "mtime": 1_700_000_000,
         "prefilterKey": None,
         "readerUid": "ana",
+        "origin": "crawl",
     }
     values.update(fields)
     return values
@@ -228,7 +229,7 @@ def answer(*items: dict[str, Any], **stats: Any) -> dict[str, Any]:
     return {"claimToken": TOKEN, "items": list(items), "stats": {"ok": True, "open": {"content": 0}} | stats}
 
 
-def test_a_claim_answer_with_the_nine_keys_is_accepted() -> None:
+def test_a_claim_answer_with_the_ten_keys_is_accepted() -> None:
     delete = wire(queue_id=2, kind="delete", etag=None, size=None, mtime=None)
     parsed = ClaimAnswer.model_validate(answer(wire(), delete))
 
@@ -243,6 +244,7 @@ def test_a_claim_answer_with_the_nine_keys_is_accepted() -> None:
         "mtime",
         "prefilterKey",
         "readerUid",
+        "origin",
     }
 
 
@@ -258,12 +260,54 @@ def test_a_claim_answer_with_the_nine_keys_is_accepted() -> None:
         wire(etag="e" * 65),
         wire(etag=None),
         {key: value for key, value in wire().items() if key != "readerUid"},
+        wire(origin="push"),
+        wire(origin=None),
+        wire(origin=1),
+        {key: value for key, value in wire().items() if key != "origin"},
     ],
-    ids=["path", "kind", "bool size", "file id 0", "upper hex", "long uid", "long etag", "content no etag", "8 keys"],
+    ids=[
+        "path",
+        "kind",
+        "bool size",
+        "file id 0",
+        "upper hex",
+        "long uid",
+        "long etag",
+        "content no etag",
+        "no reader key",
+        "unknown origin",
+        "null origin",
+        "number origin",
+        "no origin key",
+    ],
 )
 def test_an_answer_outside_the_contract_is_refused(broken: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         ClaimAnswer.model_validate(answer(wire(queue_id=5), broken))
+
+
+@pytest.mark.parametrize("origin", ["event", "crawl"])
+def test_the_origin_of_the_claim_reaches_the_intake_item(origin: str) -> None:
+    parsed = ClaimAnswer.model_validate(answer(wire(origin=origin)))
+
+    assert parsed.items[0].origin == origin
+    assert parsed.items[0].to_intake().origin == origin
+
+
+def test_the_container_knows_the_same_two_origins_as_the_store() -> None:
+    assert nc_queue.ORIGINS == repo.ORIGINS == frozenset({"event", "crawl"})
+
+
+async def test_a_claim_with_an_unknown_origin_is_dropped_whole_and_counted() -> None:
+    """Today's rule for every row outside the contract: the whole band goes, the valid row with it."""
+    seen: list[tuple[str, Any]] = []
+    answers = {"claim": answer(wire(origin="event"), wire(queue_id=2, file_id=11, origin="push"))}
+    async with httpx.AsyncClient(transport=transport(answers, seen)) as client:
+        outcome = await QueueClient(client).claim(10)
+
+    assert outcome.answer is None
+    assert (outcome.reachable, outcome.malformed) == (True, 2)
+    assert [action for action, _ in seen] == ["claim"]
 
 
 def test_an_empty_php_array_of_open_kinds_is_no_error() -> None:
@@ -387,6 +431,18 @@ async def test_every_kind_is_acknowledged_and_none_is_unlocked(store: Store) -> 
     assert queue.unlocks == []
     assert (result.claimed, result.applied, result.acked, result.unlocked) == (7, 7, 7, 0)
     assert store.file_ref(10) is not None
+
+
+@pytest.mark.parametrize("origin", ["event", "crawl"])
+async def test_the_origin_of_the_claim_lands_in_the_reference(store: Store, origin: str) -> None:
+    queue = FakeQueue(answer(wire(origin=origin)))
+
+    result = await Intake(services_of(store), queue).run_once()
+
+    assert queue.acks == [[1]]
+    assert result.applied == 1
+    assert store.file_ref(10) is not None
+    assert store._conn.execute("SELECT origin FROM file_ref WHERE file_id = 10").fetchone()[0] == origin
 
 
 async def test_a_failed_commit_acknowledges_nothing_and_unlocks_the_band(
