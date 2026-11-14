@@ -50,6 +50,8 @@ Nicht in dieser Phase: besseres Transkript (turbo/large-v3, ROVER, Profile), Spr
 - **D-03-19:** TRANS-03 gilt mit der gemessenen Parakeet-Regel aus 03-RESEARCH.md (Schrift unter 50 % lateinisch, Text-Sprache außerhalb DE/EN/FR mit p >= 0,9 und mindestens 3 Wörtern, Wortkonfidenz-Schwellen 0,6 bzw. 0,5) und dem Dateiurteil aus der Research; Anforderungstext angepasst.
 - Die Messskripte liegen unter `scripts/research/phase3/` (ohne Audiodaten); lokale Pfade (ffmpeg) vor jedem Push durch Parameter ersetzen.
 
+- **D-03-20 (Owner 14.11.2026, nach Plan 03-05):** Führt Nextcloud eine Datei als Audio/Video, ffmpeg findet darin aber nichts Lesbares (auch wenn der Demuxer der Temp-Datei, z. B. "bin", von der Positivliste abgelehnt wird), lautet der Grund "damaged" (T6, beschädigt), nicht "format_unsupported". Umsetzung in Plan 03-13; der Worker muss außerdem mit duration_ms None umgehen.
+
 ### Claude's Discretion
 - Fortsetzen nach Neustart: Granularität und Ablage der Stück-Zustände (SQLite-Stufen-Tabelle nach Findling-Muster).
 - Wortgenauer Sprung: Parakeet-Wortzeiten bevorzugt (TRANS-08), Rundung wie bestehende `clock()`-Regel (nie vor dem Wort).
