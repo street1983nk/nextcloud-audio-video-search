@@ -25,21 +25,21 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ### Medien-Eingang (MEDIA)
 
-- [ ] **MEDIA-01**: Gängige Audio- und Videoformate werden dekodiert (u. a. MP3, M4A, WAV, OGG, Opus, FLAC, MP4, MOV, MKV, WebM), auch MP4 mit Index am Dateiende
-- [ ] **MEDIA-02**: Bei mehreren Tonspuren wird eine Spur nach fester Regel gewählt, die Zeitachse stimmt auch bei Edit-Lists
-- [ ] **MEDIA-03**: Dekodierung ist gehärtet: nur lokale Eingänge (Protokoll-Positivliste), Demuxer-Positivliste, Zeit- und Größengrenzen; defekte oder geschützte Dateien werden mit Grund übersprungen
-- [ ] **MEDIA-04**: Dateien ohne Sprache (Musik, Stille, Rauschen) werden als "keine Sprache" erkannt, nicht als Fehler
+- [x] **MEDIA-01**: Gängige Audio- und Videoformate werden dekodiert (u. a. MP3, M4A, WAV, OGG, Opus, FLAC, MP4, MOV, MKV, WebM), auch MP4 mit Index am Dateiende
+- [x] **MEDIA-02**: Bei mehreren Tonspuren wird eine Spur nach fester Regel gewählt, die Zeitachse stimmt auch bei Edit-Lists
+- [x] **MEDIA-03**: Dekodierung ist gehärtet: nur lokale Eingänge (Protokoll-Positivliste), Demuxer-Positivliste, Zeit- und Größengrenzen; defekte oder geschützte Dateien werden mit Grund übersprungen
+- [x] **MEDIA-04**: Dateien ohne Sprache (Musik, Stille, Rauschen) werden als "keine Sprache" erkannt, nicht als Fehler
 
 ### Transkription (TRANS)
 
-- [ ] **TRANS-01**: Jede Datei bekommt zuerst ein Vorschau-Transkript (Parakeet-TDT-0.6B-v3 int8 mit Schluck-Wächter, Einstellungen laut Spike 3), in Minuten durchsuchbar
-- [ ] **TRANS-02**: VAD ist immer an und nicht abschaltbar
-- [ ] **TRANS-03**: Halluzinations-Abfangregel je Segment: Segmente in fremder Schrift und Segmente, deren Sprache sicher außerhalb der Instanz-Sprachen liegt, werden verworfen (für Parakeet gilt die in Phase 3 gemessene Kombinationsregel aus Schrift, Text-Sprachkennung und Wortkonfidenz, 03-RESEARCH.md; "Sicherheit < 0,5" ist die Whisper-Fassung, Owner 14.11.2026); echte Aufnahmen in nicht unterstützter Sprache werden als "Sprache nicht unterstützt" übersprungen, nicht still geleert
+- [x] **TRANS-01**: Jede Datei bekommt zuerst ein Vorschau-Transkript (Parakeet-TDT-0.6B-v3 int8 mit Schluck-Wächter, Einstellungen laut Spike 3), in Minuten durchsuchbar
+- [x] **TRANS-02**: VAD ist immer an und nicht abschaltbar
+- [x] **TRANS-03**: Halluzinations-Abfangregel je Segment: Segmente in fremder Schrift und Segmente, deren Sprache sicher außerhalb der Instanz-Sprachen liegt, werden verworfen (für Parakeet gilt die in Phase 3 gemessene Kombinationsregel aus Schrift, Text-Sprachkennung und Wortkonfidenz, 03-RESEARCH.md; "Sicherheit < 0,5" ist die Whisper-Fassung, Owner 14.11.2026); echte Aufnahmen in nicht unterstützter Sprache werden als "Sprache nicht unterstützt" übersprungen, nicht still geleert
 - [ ] **TRANS-04**: Ein besseres Transkript ersetzt das vorherige atomar; die Suche bleibt dabei durchgehend verfügbar und zeigt nie einen Mischzustand
 - [ ] **TRANS-05**: Ein Ersatz verliert keinen korrekt erkannten Text der Vorschau (Abdeckungs-Wächter je Fenster)
 - [x] **TRANS-06**: Jedes Transkript führt seine Herkunft (Engine, Modell-sha256, Konfigurationsversion, Profilstufe); ein veraltetes Ergebnis überschreibt nie ein neueres
-- [ ] **TRANS-07**: Lange Dateien werden in Stücken (ca. 10 min) gerechnet; nach Neustart oder Absturz geht es am letzten fertigen Stück weiter
-- [ ] **TRANS-08**: Zeitstempel je Wort stimmen auf die Audiozeit (Parakeet-Wortzeiten bevorzugt)
+- [x] **TRANS-07**: Lange Dateien werden in Stücken (ca. 10 min) gerechnet; nach Neustart oder Absturz geht es am letzten fertigen Stück weiter
+- [x] **TRANS-08**: Zeitstempel je Wort stimmen auf die Audiozeit (Parakeet-Wortzeiten bevorzugt)
 
 ### Profile und Veredelung (QUAL)
 
@@ -62,9 +62,9 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ### Suche (SRCH)
 
-- [ ] **SRCH-01**: Nutzer findet gesprochenen Text in der normalen Nextcloud-Suche; Treffer zeigen Dateiname, Zeitmarke und Textausschnitt, mehrere Stellen je Datei
-- [ ] **SRCH-02**: Treffer aus einem Vorschau-Transkript sind als vorläufig gekennzeichnet
-- [ ] **SRCH-03**: Nutzer sieht nur Treffer aus Dateien, die er gerade lesen darf (Prüfung zur Abfragezeit inkl. Gruppenordner-ACL, Freigaben, entzogene Rechte, Papierkorb)
+- [x] **SRCH-01**: Nutzer findet gesprochenen Text in der normalen Nextcloud-Suche; Treffer zeigen Dateiname, Zeitmarke und Textausschnitt, mehrere Stellen je Datei
+- [x] **SRCH-02**: Treffer aus einem Vorschau-Transkript sind als vorläufig gekennzeichnet
+- [x] **SRCH-03**: Nutzer sieht nur Treffer aus Dateien, die er gerade lesen darf (Prüfung zur Abfragezeit inkl. Gruppenordner-ACL, Freigaben, entzogene Rechte, Papierkorb)
 - [ ] **SRCH-04**: Freigaben mit Download-Sperre: Suche ja, Export nein
 - [ ] **SRCH-05**: Suche findet Wortformen und Teilwörter in Komposita (DE/EN/FR) sowie Zahlen als Ziffer und als Wort
 - [ ] **SRCH-06**: Die Ergebnisgruppe bleibt sichtbar, wenn Nutzer Datums- oder Personenfilter setzen (unterstützte Filter gemeldet)
@@ -157,18 +157,18 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | DISC-04 | Phase 2 | Complete |
 | DISC-05 | Phase 2 | Complete |
 | DISC-06 | Phase 2 | Complete |
-| MEDIA-01 | Phase 3 | Pending |
-| MEDIA-02 | Phase 3 | Pending |
-| MEDIA-03 | Phase 3 | Pending |
-| MEDIA-04 | Phase 3 | Pending |
-| TRANS-01 | Phase 3 | Pending |
-| TRANS-02 | Phase 3 | Pending |
-| TRANS-03 | Phase 3 | Pending |
+| MEDIA-01 | Phase 3 | Complete |
+| MEDIA-02 | Phase 3 | Complete |
+| MEDIA-03 | Phase 3 | Complete |
+| MEDIA-04 | Phase 3 | Complete |
+| TRANS-01 | Phase 3 | Complete |
+| TRANS-02 | Phase 3 | Complete |
+| TRANS-03 | Phase 3 | Complete |
 | TRANS-04 | Phase 6 | Pending |
 | TRANS-05 | Phase 6 | Pending |
 | TRANS-06 | Phase 1 | Complete |
-| TRANS-07 | Phase 3 | Pending |
-| TRANS-08 | Phase 3 | Pending |
+| TRANS-07 | Phase 3 | Complete |
+| TRANS-08 | Phase 3 | Complete |
 | QUAL-01 | Phase 6 | Pending |
 | QUAL-02 | Phase 6 | Pending |
 | QUAL-03 | Phase 6 | Pending |
@@ -182,9 +182,9 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | RES-05 | Phase 5 | Pending |
 | RES-06 | Phase 5 | Pending |
 | RES-07 | Phase 5 | Pending |
-| SRCH-01 | Phase 3 | Pending |
-| SRCH-02 | Phase 3 | Pending |
-| SRCH-03 | Phase 3 | Pending |
+| SRCH-01 | Phase 3 | Complete |
+| SRCH-02 | Phase 3 | Complete |
+| SRCH-03 | Phase 3 | Complete |
 | SRCH-04 | Phase 4 | Pending |
 | SRCH-05 | Phase 4 | Pending |
 | SRCH-06 | Phase 4 | Pending |

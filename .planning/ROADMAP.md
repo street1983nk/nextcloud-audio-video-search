@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 2: Erfassung aller Dateien** - Arbeitsvorrat, Ereignisse, Crawl inkl. Gruppenordner und externer Speicher, Ausschlüsse, Inhalts-Dedupe
  (completed 2026-11-14)
-- [ ] **Phase 3: Vorschau-Transkripte in der Suche** - Gehärteter Medien-Eingang, Parakeet-Vorschau mit Wächter und Abfangregel, echte Treffer mit Rechteprüfung zur Abfragezeit
+- [x] **Phase 3: Vorschau-Transkripte in der Suche** - Gehärteter Medien-Eingang, Parakeet-Vorschau mit Wächter und Abfangregel, echte Treffer mit Rechteprüfung zur Abfragezeit
 - [ ] **Phase 4: Suchqualität und Export** - Wortformen/Komposita/Zahlen, Filter-Verträglichkeit, Download-Sperre, SRT/VTT/TXT und Nebendatei als Untertitel-Entwurf
 - [ ] **Phase 5: Ressourcen, Profile und Modellbezug** - cgroup-RAM-Wächter, OOM-Isolation, Profilvorwahl, Reihenfolge, Rechenfenster, Modell-Download mit sha256, Lizenzen
 - [ ] **Phase 6: Veredelung** - Schnell/Ausgewogen/Qualität mit turbo, large-v3 und ROVER, atomarer Ersatz ohne Textverlust, Schnell-Gate je Build
