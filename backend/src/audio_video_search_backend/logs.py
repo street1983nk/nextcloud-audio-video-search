@@ -8,11 +8,15 @@ level or logger without a regular expression. Two rules from Findling:
   they stand on WARNING.
 - Never log a request body, a header or a secret. Pass ids and counts through
   ``extra=`` instead; this formatter copies them into the line.
+- Never log an exception TEXT: the message of an unexpected exception can carry
+  a path or a transcript word. A traceback keeps only its frames (file, line,
+  function, source line); the type goes into ``exc_type``.
 """
 
 import json
 import logging
 import sys
+import traceback
 from datetime import UTC, datetime
 from typing import Final
 
@@ -39,8 +43,9 @@ class JsonFormatter(logging.Formatter):
             if key not in _STANDARD_ATTRIBUTES and not key.startswith("_"):
                 line[key] = value if isinstance(value, str | int | float | bool | None) else repr(value)
         if record.exc_info:
-            line["exc_type"] = record.exc_info[0].__name__ if record.exc_info[0] else None
-            line["exc"] = self.formatException(record.exc_info)
+            exc_type, _value, tb = record.exc_info
+            line["exc_type"] = exc_type.__name__ if exc_type else None
+            line["exc"] = "".join(traceback.format_list(traceback.extract_tb(tb))) or None
         return json.dumps(line, ensure_ascii=False)
 
 

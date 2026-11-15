@@ -38,16 +38,40 @@ def test_a_non_scalar_extra_is_written_as_its_repr() -> None:
     assert _line(record)["items"] == "[1, 2]"
 
 
-def test_an_exception_carries_its_type() -> None:
+def test_an_exception_carries_its_type_and_frames_but_never_its_text() -> None:
+    # The secret arrives at runtime (like a real path in an exception text);
+    # a source line in a frame is static code and may name the variable only.
+    secret = "HIDDEN-exc " + "/very/secret/path/recording.mp4"
     try:
-        raise ValueError("broken")
+        raise ValueError(secret)
     except ValueError:
         record = logging.LogRecord("x", logging.ERROR, __file__, 1, "failed", None, sys.exc_info())
 
-    line = _line(record)
+    rendered = logs.JsonFormatter().format(record)
+    line = json.loads(rendered)
 
     assert line["exc_type"] == "ValueError"
-    assert "broken" in str(line["exc"])
+    assert "test_logs" in str(line["exc"])
+    assert "raise ValueError" in str(line["exc"])
+    assert "HIDDEN-exc" not in rendered
+    assert "/very/secret" not in rendered
+
+
+def test_a_chained_exception_text_stays_out_of_the_line_too() -> None:
+    inner, outer = "HIDDEN-cause " + "/srv/data/geheim.wav", "HIDDEN-outer " + "wrapped"
+    try:
+        try:
+            raise OSError(inner)
+        except OSError as cause:
+            raise RuntimeError(outer) from cause
+    except RuntimeError:
+        record = logging.LogRecord("x", logging.ERROR, __file__, 1, "failed", None, sys.exc_info())
+
+    rendered = logs.JsonFormatter().format(record)
+
+    assert json.loads(rendered)["exc_type"] == "RuntimeError"
+    assert "HIDDEN-cause" not in rendered
+    assert "HIDDEN-outer" not in rendered
 
 
 @pytest.mark.parametrize(("level", "client_level"), [("info", logging.WARNING), ("debug", logging.NOTSET)])
