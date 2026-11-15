@@ -35,8 +35,10 @@ the context keeps only its words from ``start`` on, so nothing is stored twice
 and nothing falls between two chunks. When the decoded range reaches the end of
 the file the chunk takes everything. ``next_start_ms`` becomes the end of the
 last window taken, or ``start + CHUNK_MS`` without one, and is committed with
-the words, the index revision and the counters in one transaction: the words of
-every chunk are findable at once (D-07), and a restart goes on from there.
+the words, the index revision and the counters in one transaction; the outbox
+row of that transaction is published into the index right after it
+(SearchIndex.publish_pending): the words of every chunk are findable at once
+(D-07), and a restart goes on from there.
 
 Two outcomes leave a job before its end on purpose:
 
@@ -413,7 +415,7 @@ class Preview:
 
     async def _commit(self, job: PreviewJob, prov: Provenance, taken: Taken, *, second_pass: bool = False) -> bool:
         store = self._services.store
-        return await run_locked(
+        committed = await run_locked(
             self._services,
             lambda: store.commit_chunk(
                 job,
@@ -424,6 +426,21 @@ class Preview:
                 second_pass=second_pass,
             ),
         )
+        if committed:
+            await self._publish()
+        return committed
+
+    async def _publish(self) -> None:
+        """Work off the outbox the chunk wrote, so its words are findable at once (D-07).
+
+        A failure keeps the outbox row: the next chunk or the reconcile at the
+        next start publishes it. The job goes on, the transcript is in SQLite.
+        """
+        services = self._services
+        try:
+            await run_locked(services, lambda: services.index.publish_pending(services.store))
+        except Exception as exc:
+            LOGGER.warning("index publish failed", extra={"error_type": type(exc).__name__})
 
     async def _end_stale(self, job: PreviewJob, chunks: int) -> PreviewStep:
         """The store refused a chunk: the job ends here and is never tried again (03-09)."""

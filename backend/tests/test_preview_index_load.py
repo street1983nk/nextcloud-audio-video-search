@@ -1,12 +1,12 @@
 """The load of the index per chunk for a file of 12 h (plan 03-13, RESEARCH Pitfall 7 and assumption A8).
 
 Every chunk of the preview appends its words to the same version and raises the
-index revision; the index worker then builds the segments of the whole word
-list again (index.reconcile: publish the current revision, retire the old one).
+index revision; the preview worker then builds the segments of the whole word
+list again (index.publish_pending: publish the current revision, retire the old one).
 The work therefore grows with every chunk. This test measures it on a real
 state.db and a real tantivy index: 72 chunks of 1500 words from a fixed
 vocabulary, word times running on through the file, and the time of one chunk
-(commit_chunk plus the publication path of the index worker) for chunks 1, 36
+(commit_chunk plus the publication path of the preview worker) for chunks 1, 36
 and 72, printed for ``-s``. The border is fixed: chunk 72 under 5 s on the
 development machine. Above it the test fails, and the answer is the
 alternative of the research (publish only the new segments), not a looser border.
@@ -141,7 +141,7 @@ def test_the_index_load_of_chunk_72_of_a_12_hour_file_stays_under_5_s(store: Sto
         words = _chunk_words(chunk)
         started = time.perf_counter()
         assert store.commit_chunk(job, prov=prov, words=words, next_start_ms=(chunk + 1) * CHUNK_MS, counters=counters)
-        assert index.reconcile(store) == 1
+        assert index.publish_pending(store) == 1
         seconds[chunk + 1] = time.perf_counter() - started
         assert store.pending_index_work() == []
 

@@ -332,14 +332,8 @@ class SearchIndex:
         self.retire(media_id, keep_rev=current.index_rev)
         store.mark_indexed(media_id, current.index_rev)
 
-    def reconcile(self, store: Store) -> int:
-        """Bring the index in line with SQLite; returns how many media items were touched.
-
-        Pending outbox rows are published (or retired when the media item has no
-        current version any more). Documents of a media item without a current
-        version, or with a revision other than the current one, are deleted; a
-        current version missing from the index is added.
-        """
+    def _work_off_outbox(self, store: Store) -> set[int]:
+        """Publish every pending outbox row, or retire it without a current version."""
         touched: set[int] = set()
         for media_id, index_rev in store.pending_index_work():
             current = store.current(media_id)
@@ -349,6 +343,26 @@ class SearchIndex:
             else:
                 self._index_current(store, media_id)
             touched.add(media_id)
+        return touched
+
+    def publish_pending(self, store: Store) -> int:
+        """Work off the outbox while the container runs; returns how many media items.
+
+        The path of a running worker after it committed (the preview after every
+        chunk, D-07): only the outbox rows, without the key listing of
+        :meth:`reconcile`, so its cost does not grow with the size of the index.
+        """
+        return len(self._work_off_outbox(store))
+
+    def reconcile(self, store: Store) -> int:
+        """Bring the index in line with SQLite; returns how many media items were touched.
+
+        Pending outbox rows are published (or retired when the media item has no
+        current version any more). Documents of a media item without a current
+        version, or with a revision other than the current one, are deleted; a
+        current version missing from the index is added.
+        """
+        touched = self._work_off_outbox(store)
 
         keys = self._keys()
         for media_id, revs in keys.items():

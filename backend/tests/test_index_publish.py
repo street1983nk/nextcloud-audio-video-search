@@ -129,6 +129,33 @@ def test_reconcile_publishes_pending_work_and_marks_it(search_index: SearchIndex
     assert [(h.media_id, h.index_rev) for h in search_index.search("Audiosuche", 10)] == [(media_id, rev)]
 
 
+def test_publish_pending_works_off_the_outbox_and_nothing_else(search_index: SearchIndex, store: Store) -> None:
+    # A document without a current version is the business of reconcile at the
+    # start; the outbox path of a running worker leaves it alone and stays cheap.
+    search_index.publish(99, 3, [_segment("Audiosuche verwaist")])
+    media_id, rev = _publish(store, SHA_A, "Ein echter Testtreffer", file_id=7, level=Level.PREVIEW)
+
+    assert search_index.publish_pending(store) == 1
+
+    assert store.pending_index_work() == []
+    assert [(h.media_id, h.index_rev) for h in search_index.search("Testtreffer", 10)] == [(media_id, rev)]
+    assert [h.media_id for h in search_index.search("Audiosuche", 10)] == [99]
+    assert search_index.publish_pending(store) == 0
+
+
+def test_publish_pending_retires_the_old_revision(search_index: SearchIndex, store: Store) -> None:
+    media_id, _ = _publish(store, SHA_A, "Dies ist die Audiosuche", file_id=7)
+    search_index.publish_pending(store)
+    store.add_correction(
+        media_id, 1200, 1600, "text", "Videosuche", author_uid="alice", base_version_id=None, base_text=None
+    )
+
+    assert search_index.publish_pending(store) == 1
+
+    assert search_index.search("Audiosuche", 10) == []
+    assert [h.index_rev for h in search_index.search("Videosuche", 10)] == [2]
+
+
 def test_reconcile_publishes_the_effective_words(search_index: SearchIndex, store: Store) -> None:
     media_id, _ = _publish(store, SHA_A, "Dies ist die Audiosuche", file_id=7)
     search_index.reconcile(store)

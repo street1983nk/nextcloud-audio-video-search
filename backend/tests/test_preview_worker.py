@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
@@ -228,8 +228,15 @@ def store(db: Path) -> Iterator[Store]:
 
 
 @pytest.fixture
-def services(store: Store) -> Services:
-    return Services(store=store, index=cast("SearchIndex", None))
+def index(tmp_path: Path) -> Iterator[SearchIndex]:
+    opened = SearchIndex.open(tmp_path / "index")
+    yield opened
+    opened.close()
+
+
+@pytest.fixture
+def services(store: Store, index: SearchIndex) -> Services:
+    return Services(store=store, index=index)
 
 
 @pytest.fixture
@@ -610,23 +617,58 @@ async def test_an_event_job_does_not_yield_to_another_event(
 
 
 async def test_after_the_first_chunk_the_media_is_findable_as_a_preview(
-    worker: Preview, store: Store, gateway: Gateway, media: Media, engine: FakeEngine, db: Path
+    worker: Preview, store: Store, gateway: Gateway, media: Media, engine: FakeEngine, db: Path, index: SearchIndex
 ) -> None:
     media_id = _add(store, gateway, media, 11, duration_ms=25 * MIN)
     engine.first = _long_table()
     seen: list[tuple[Any, ...]] = []
+    hits: dict[str, set[int]] = {}
 
-    def look(index: int) -> None:
-        if index == 1:
-            seen.extend(_sql(db, "SELECT level FROM current WHERE media_id = ?", (media_id,)))
+    def look(call: int) -> None:
+        if call == 1:
+            seen.extend(_sql(db, "SELECT level, index_rev FROM current WHERE media_id = ?", (media_id,)))
             seen.extend(_sql(db, "SELECT 'outbox', index_rev FROM index_outbox WHERE media_id = ?", (media_id,)))
+            # A word of chunk 1 is in the search index before chunk 2 is asked
+            # (D-07); a word of chunk 2 is not there yet.
+            hits["chunk_1"] = {hit.media_id for hit in index.search("b300000", 10)}
+            hits["chunk_2"] = {hit.media_id for hit in index.search("d900000", 10)}
 
     engine.hook = look
 
     await worker.run_once()
 
-    assert seen[0] == (int(Level.PREVIEW),)
-    assert seen[1][0] == "outbox"
+    assert seen[0] == (int(Level.PREVIEW), 1)
+    assert seen[1:] == []
+    assert hits == {"chunk_1": {media_id}, "chunk_2": set()}
+    assert {hit.media_id for hit in index.search("d900000", 10)} == {media_id}
+    assert {hit.media_id for hit in index.search("g1490000", 10)} == {media_id}
+    assert _sql(db, "SELECT media_id FROM index_outbox", ()) == []
+
+
+async def test_a_failed_publication_keeps_the_outbox_row_and_the_job_goes_on(
+    worker: Preview,
+    store: Store,
+    gateway: Gateway,
+    media: Media,
+    engine: FakeEngine,
+    db: Path,
+    index: SearchIndex,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    media_id = _add(store, gateway, media, 11, duration_ms=MIN)
+    engine.first = [spread(1000, 9000, "w")]
+    index.close()  # every publication now raises: the index is closed
+
+    with caplog.at_level(logging.INFO):
+        step = await worker.run_once()
+
+    assert step.outcome == PreviewOutcome.COMPLETE
+    # The row stays for the next publication or the reconcile at the next start.
+    assert _sql(db, "SELECT media_id, index_rev FROM index_outbox", ()) == [(media_id, 1)]
+    failed = [r for r in caplog.records if r.getMessage() == "index publish failed"]
+    assert failed
+    assert all(getattr(r, "error_type", None) == "RuntimeError" for r in failed)
+    assert all("w1000" not in r.getMessage() for r in caplog.records)
     prov = _sql(
         db,
         "SELECT t.engine, t.model_sha256, t.profile, t.level, t.language, t.input_file_sha256, t.config_version "
