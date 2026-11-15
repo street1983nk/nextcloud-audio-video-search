@@ -580,6 +580,8 @@ final class ExclusionServiceTest extends TestCase {
 			'more than the ceiling' => [ExclusionService::LIST_USERS, json_encode($tooMany)],
 			'stored as a number' => [ExclusionService::LIST_FOLDERS, 7],
 			'stored as a map' => [ExclusionService::LIST_USERS, ['uid' => 'eva']],
+			'only a NUL byte' => [ExclusionService::LIST_USERS, "\0"],
+			'only a vertical tab' => [ExclusionService::LIST_GROUPS, "\v"],
 		];
 	}
 

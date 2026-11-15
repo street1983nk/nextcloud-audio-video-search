@@ -658,7 +658,9 @@ class ExclusionService {
 			return null;
 		}
 
-		if (trim($raw) === '') {
+		// An explicit character list: a value of only NUL or vertical tab must
+		// fall through to the JSON parse and read as broken, not as "no rule".
+		if (trim($raw, " \t\n\r") === '') {
 			return [];
 		}
 		try {
