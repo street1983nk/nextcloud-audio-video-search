@@ -294,10 +294,12 @@ final class GatewayControllerTest extends TestCase {
 		$this->fileOpeningAs(static function (): never {
 			throw new StorageNotAvailableException('/alice/files/Sitzung 2026-11-03.mp4');
 		});
+		// Exactly the class, nothing else: the thrown exception carries a user
+		// path in its message, and that message must never reach the log (E-01).
 		$this->logger->expects(self::once())
 			->method('error')
-			->with('Audio & Video Search: unknown error reading a file', self::callback(
-				static fn (array $context): bool => array_keys($context) === ['exception'],
+			->with('Audio & Video Search: unknown error reading a file', self::identicalTo(
+				['class' => StorageNotAvailableException::class],
 			));
 
 		$response = $this->controller($this->backendAppId())->getFileContents(11, 'alice');

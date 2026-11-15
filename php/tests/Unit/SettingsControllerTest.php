@@ -101,9 +101,11 @@ final class SettingsControllerTest extends TestCase {
 		$exApp = $this->createMock(ExAppService::class);
 		$exApp->method('backendState')->willThrowException(new \RuntimeException('/var/www/data/alice'));
 		$logger = $this->createMock(LoggerInterface::class);
+		// Exactly the class, nothing else: the message of the exception holds a
+		// server path, and no part of it may reach the log context (E-01).
 		$logger->expects(self::once())->method('error')->with(
 			self::stringContains('state'),
-			self::callback(static fn (array $context): bool => ($context['exception'] ?? null) instanceof \RuntimeException),
+			self::identicalTo(['class' => \RuntimeException::class]),
 		);
 
 		$response = $this->controller($exApp, $logger)->state();
