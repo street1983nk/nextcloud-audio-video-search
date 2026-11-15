@@ -65,6 +65,7 @@ STATE_REASONS: Final = frozenset(
         "access_control",
         "locked",
         "gateway_failed",
+        "unavailable",
         "not_found",
         "storage_paused",
         "too_large",

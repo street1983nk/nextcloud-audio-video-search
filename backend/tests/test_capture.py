@@ -325,7 +325,12 @@ async def test_more_than_the_cap_is_too_large_without_a_request(tmp_dir: Path) -
         (404, None, nc.NOT_FOUND),
         (404, "excluded", nc.NOT_FOUND),
         (500, None, nc.GATEWAY_FAILED),
-        (503, None, nc.GATEWAY_FAILED),
+        # Maintenance (occ upgrade) and a dead proxy answer for every file
+        # alike, so they carry their own code and never a verdict (E-03-503).
+        (502, None, nc.UNAVAILABLE),
+        (503, None, nc.UNAVAILABLE),
+        (504, None, nc.UNAVAILABLE),
+        (503, "excluded", nc.UNAVAILABLE),
         (401, None, nc.GATEWAY_FAILED),
         (412, None, nc.GATEWAY_FAILED),
         (302, None, nc.GATEWAY_FAILED),
@@ -703,6 +708,7 @@ async def test_reason_77_the_container_never_reads_a_404_as_access_control(
         (404, "access_control", read_proof.ProofOutcome.READ_DENIED),
         (403, "access_control", read_proof.ProofOutcome.ACCESS_CONTROL),
         (403, None, read_proof.ProofOutcome.READ_DENIED),
+        (503, None, read_proof.ProofOutcome.UNAVAILABLE),
     ],
 )
 async def test_reason_77_the_head_route_reads_the_two_answers_the_same_way(
@@ -859,9 +865,9 @@ async def test_excluded_deletes_the_reference(store: Store, tmp_dir: Path) -> No
 
 @pytest.mark.parametrize(
     ("handler", "reason", "wait"),
-    [(_status(423), nc.LOCKED, 120)],
+    [(_status(423), nc.LOCKED, 120), (_status(503), nc.UNAVAILABLE, 120)],
 )
-async def test_locked_is_pending_again_with_the_same_attempts(
+async def test_locked_and_maintenance_are_pending_again_with_the_same_attempts(
     store: Store, tmp_dir: Path, handler: Callable[[httpx.Request], httpx.Response], reason: str, wait: int
 ) -> None:
     fetch = FakeFetch()
@@ -875,20 +881,29 @@ async def test_locked_is_pending_again_with_the_same_attempts(
 
     assert (step.outcome, step.reason) == (CaptureOutcome.DEFERRED, reason)
     ref = _ref(store, 10)
-    # The state of the earlier failure stays; locked is no verdict on the file.
+    # The state of the earlier failure stays; neither answer is a verdict on the file.
     assert (ref.state, ref.stage, ref.reason, ref.attempts) == ("unreadable", "pending", reason, 1)
     assert ref.next_try_at == clock.now + wait
 
 
-async def test_locked_on_a_new_reference_keeps_it_active_and_pending(store: Store, tmp_dir: Path) -> None:
+@pytest.mark.parametrize(
+    ("handler", "wait"),
+    [(_status(423), 120), (_status(502), 120), (_status(503), 120), (_status(504), 120)],
+)
+async def test_a_server_wide_answer_on_a_new_reference_keeps_it_active_and_pending(
+    store: Store, tmp_dir: Path, handler: Callable[[httpx.Request], httpx.Response], wait: int
+) -> None:
+    # The window of occ upgrade: a pending file must not lose its sample
+    # visibility because the whole gateway answered 503 (E-03-503).
     _intake(store, 10, 100)
 
-    step = await _capture(store, _gateway_fetch(_status(423)), tmp_dir, Clock()).run_once()
+    step = await _capture(store, _gateway_fetch(handler), tmp_dir, Clock()).run_once()
 
     assert step.outcome == CaptureOutcome.DEFERRED
     ref = _ref(store, 10)
-    assert (ref.state, ref.stage, ref.attempts, ref.next_try_at) == ("active", "pending", 0, NOW + 120)
-    assert (await _capture(store, FakeFetch(), tmp_dir, Clock(NOW + 119)).run_once()).outcome == CaptureOutcome.IDLE
+    assert (ref.state, ref.stage, ref.attempts, ref.next_try_at) == ("active", "pending", 0, NOW + wait)
+    early = await _capture(store, FakeFetch(), tmp_dir, Clock(NOW + wait - 1)).run_once()
+    assert early.outcome == CaptureOutcome.IDLE
 
 
 async def test_disk_full_waits_without_a_request_and_without_a_verdict(

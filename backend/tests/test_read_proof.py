@@ -400,6 +400,7 @@ def test_the_outcomes_are_the_closed_list_of_the_plan() -> None:
         "read_timeout",
         "access_control",
         "locked",
+        "unavailable",
         "gateway_failed",
         "head_mismatch",
     }
@@ -1327,6 +1328,38 @@ async def test_a_renewed_proof_that_fails_takes_the_hits_away_at_once(
     )
     assert stage.hits(media_id) == [10]
     assert stage.fetch.calls == [10]
+
+
+async def test_a_renewed_proof_in_a_maintenance_window_keeps_the_hits(stage: Stage) -> None:
+    # occ upgrade answers 503 for every file alike: no verdict on this copy,
+    # the standing proof keeps its hits, the proof is asked again later.
+    data = _bytes(200 * KIB)
+    media_id = await stage.keyed_sibling(data)
+    stage.put(12, data)
+    stage.renew(12, media_id, len(data))
+    stage.head.failing(12, nc.UNAVAILABLE)
+
+    step = await stage.step()
+
+    assert (step.outcome, step.reason) == (CaptureOutcome.DEFERRED, nc.UNAVAILABLE)
+    ref = stage.ref(12)
+    assert (ref.state, ref.stage, ref.media_id, ref.reason, ref.attempts, ref.next_try_at) == (
+        "active",
+        "pending",
+        media_id,
+        nc.UNAVAILABLE,
+        0,
+        NOW + 120,
+    )
+    assert stage.hits(media_id) == [10, 12]
+
+    # The window closes: the next try proves again, without a download.
+    stage.clock.now += 120
+    step = await stage.step()
+
+    assert step.outcome == CaptureOutcome.KEYED
+    assert stage.fetch.calls == [10]
+    assert stage.hits(media_id) == [10, 12]
 
 
 async def test_a_renewed_proof_that_fails_on_the_last_reference_orphans_the_content_until_it_succeeds(

@@ -43,7 +43,10 @@ The state machine of a reference:
   gives a hit. After five attempts it stays failed without a next try until
   etag, size or mtime change or the reconcile asks again.
 - locked (423): stage pending again, next try in 120 s, state and attempts
-  unchanged; disk_full the same with 300 s. Neither is a verdict on the file.
+  unchanged; disk_full the same with 300 s; unavailable (502, 503, 504: the
+  maintenance of occ upgrade or a dead proxy answers for every file alike)
+  the same with 120 s, and a renewed proof that runs into it keeps its
+  standing proof. None of the three is a verdict on the file.
 - excluded (403 with that reason): the reference is deleted, the sample of the
   file with it, and a content that loses its last reference this way is
   forgotten at once, index documents included (D-02-04, D-02-15a).
@@ -86,6 +89,9 @@ ACCESS_CONTROL_RETRY_SECONDS: Final = 300
 READ_TIMEOUT_RETRY_SECONDS: Final = read_proof.OPEN_SECONDS
 LOCKED_RETRY_SECONDS: Final = 120
 DISK_FULL_RETRY_SECONDS: Final = 300
+# Maintenance windows are short; asked again well before the first retry of a
+# real failure would be due.
+UNAVAILABLE_RETRY_SECONDS: Final = 120
 # Larger files are not read at all; far above any recording, below a runaway.
 MAX_CAPTURE_BYTES: Final = 64 * 1024**3
 TMP_DIRNAME: Final = "tmp"
@@ -301,6 +307,15 @@ class Capture:
         """A renewed proof failed: unreadable at once; the content stays, the next try proves again."""
         store = self._services.store
         now = self._now()
+        if reason == nc.UNAVAILABLE:
+            # The gateway answered 502/503/504 for everyone alike (maintenance,
+            # dead proxy): no verdict on this copy. The standing proof keeps its
+            # hits, and the proof is simply asked again later.
+            deferred = await run_locked(
+                self._services,
+                lambda: store.defer_capture(ref, reason, retry_at=now + UNAVAILABLE_RETRY_SECONDS, now=now),
+            )
+            return CaptureStep(CaptureOutcome.DEFERRED if deferred else CaptureOutcome.STALE, ref.file_id, reason)
         if reason == nc.LOCKED:
             # No verdict on the right to read, so no attempt is used up; but no hit without a proof either.
             next_try, bump = now + LOCKED_RETRY_SECONDS, False
@@ -347,8 +362,11 @@ class Capture:
         if reason == nc.EXCLUDED:
             done = await run_locked(self._services, lambda: self._delete_excluded(ref, now))
             outcome = CaptureOutcome.DELETED
-        elif reason in (nc.LOCKED, nc.DISK_FULL):
-            wait = LOCKED_RETRY_SECONDS if reason == nc.LOCKED else DISK_FULL_RETRY_SECONDS
+        elif reason in (nc.LOCKED, nc.DISK_FULL, nc.UNAVAILABLE):
+            if reason == nc.DISK_FULL:
+                wait = DISK_FULL_RETRY_SECONDS
+            else:
+                wait = LOCKED_RETRY_SECONDS if reason == nc.LOCKED else UNAVAILABLE_RETRY_SECONDS
             done = await run_locked(
                 self._services, lambda: store.defer_capture(ref, reason, retry_at=now + wait, now=now)
             )

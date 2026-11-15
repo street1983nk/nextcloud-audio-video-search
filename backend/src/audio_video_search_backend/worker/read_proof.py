@@ -58,6 +58,7 @@ class ProofOutcome(enum.StrEnum):
     READ_TIMEOUT = "read_timeout"
     ACCESS_CONTROL = "access_control"
     LOCKED = "locked"
+    UNAVAILABLE = "unavailable"
     GATEWAY_FAILED = "gateway_failed"
     HEAD_MISMATCH = "head_mismatch"
 
@@ -71,6 +72,7 @@ _REFUSALS: Final = {
     nc.EXCLUDED: ProofOutcome.READ_DENIED,
     nc.ACCESS_CONTROL: ProofOutcome.ACCESS_CONTROL,
     nc.LOCKED: ProofOutcome.LOCKED,
+    nc.UNAVAILABLE: ProofOutcome.UNAVAILABLE,
     nc.READ_TIMEOUT: ProofOutcome.READ_TIMEOUT,
 }
 

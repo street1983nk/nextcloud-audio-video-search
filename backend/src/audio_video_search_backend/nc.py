@@ -376,6 +376,10 @@ READ_TIMEOUT: Final = "read_timeout"
 SIZE_MISMATCH: Final = "size_mismatch"
 DISK_FULL: Final = "disk_full"
 TOO_LARGE: Final = "too_large"
+# The whole gateway is away for everyone alike (maintenance answers 503
+# instance wide, a proxy 502/504): no verdict on the file or the right to
+# read it, so a reference keeps its state and is asked again later.
+UNAVAILABLE: Final = "unavailable"
 FETCH_ERRORS: Final = frozenset(
     {
         READ_DENIED,
@@ -388,6 +392,7 @@ FETCH_ERRORS: Final = frozenset(
         SIZE_MISMATCH,
         DISK_FULL,
         TOO_LARGE,
+        UNAVAILABLE,
     }
 )
 
@@ -404,6 +409,9 @@ _STATUS_FORBIDDEN: Final = 403
 _STATUS_NOT_FOUND: Final = 404
 _STATUS_UNPROCESSABLE: Final = 422
 _STATUS_LOCKED: Final = 423
+# occ upgrade and occ maintenance:mode answer 503 for every route; a proxy in
+# front of the instance says 502 or 504 when the instance is down.
+_STATUS_UNAVAILABLE: Final = frozenset({502, 503, 504})
 # Connect fast or fail, and at most 30 s of silence between two blocks.
 CAPTURE_TIMEOUT: Final = httpx.Timeout(30.0, connect=10.0)
 # A whole download has a deadline too, so an answer that trickles one byte
@@ -452,7 +460,11 @@ def refusal_code(status: int, reason_header: str) -> str:
         return READ_DENIED
     if status == _STATUS_NOT_FOUND:
         return NOT_FOUND
-    # 5xx, 401, 412, a redirect or any other answer: never content.
+    if status in _STATUS_UNAVAILABLE:
+        # The instance is in maintenance or behind a dead proxy: the same
+        # answer for every file, so it never counts against this one.
+        return UNAVAILABLE
+    # Any other 5xx, 401, 412, a redirect or any other answer: never content.
     return GATEWAY_FAILED
 
 
