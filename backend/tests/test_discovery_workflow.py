@@ -1164,6 +1164,18 @@ PARITY_SHIFTS = (
     ("duplicate", "unique"),
     ("subline", "preliminary"),
 )
+# The Samba way of the truth and its self test: yes for ben, no for ana, nothing
+# for a missing file, and the clip on the disk of the share as the independent way.
+PARITY_SMB_LINES = (
+    'timeout 60 smbclient "${SMB_URL}"',
+    "SMB-Teil/*) printf 'ana|gemeinsam/%s'",
+    'smb_get ben "${SMB_DENIED_CLIP}" "${tmp}"',
+    'smb_get ana "${SMB_DENIED_CLIP}" "${tmp}"',
+    'smb_get ben "no-such-file-${NO_SUCH_ID}.wav" "${tmp}"',
+    'sha256sum "${SHARE_DIR}/${SMB_DENIED_CLIP}"',
+    'echo "SMB SELF-TEST FAILED"',
+    'echo "SMB SELF-TEST PASSED"',
+)
 PARITY_FORBIDDEN = ("audio_video_search_backend", "state.db", "docker exec", "docker cp", "php -r", "sqlite3")
 PARITY_STEP = (
     'bash "${d}/parity.sh" baseline',
@@ -1189,10 +1201,25 @@ def parity_findings(script: str, workflow: str) -> list[str]:
             findings.append(f"the self test of parity.sh does not expect {check} to fail on {shift}")
     body = re.search(r"^cmd_check\(\) \{\n(.*?)^\}", script, re.MULTILINE | re.DOTALL)
     check = body.group(1) if body else ""
-    test_at = check.find("self_test || exit 1")
+    # The tab keeps smb_self_test from counting as the self test of the comparison.
+    test_at = check.find("\tself_test || exit 1")
     judge_at = check.find('judge "${person}"')
     if test_at < 0 or judge_at < 0 or test_at > judge_at:
         findings.append("parity.sh check does not run its self test before the verdict")
+    # D-03-25: a GET of a file Samba refuses hangs a PHP worker for good; the
+    # truth reads the share with smbclient, and that way tests itself first.
+    smb_at = check.find("\tsmb_self_test || exit 1\n")
+    collect_at = check.find("\tcollect\n")
+    if smb_at < 0 or collect_at < 0 or smb_at > collect_at:
+        findings.append("parity.sh check does not test the Samba way before the truth")
+    findings += [f"parity.sh lacks {part}" for part in PARITY_SMB_LINES if part not in code]
+    truth = re.search(r"^truth_of\(\) \{\n(.*?)^\}", script, re.MULTILINE | re.DOTALL)
+    truth_body = truth.group(1) if truth else ""
+    place_at = truth_body.find('place=$(smb_place "${user}" "${rel}")')
+    get_at = truth_body.find('smb_get "${place%%|*}"')
+    curl_at = truth_body.find("elif curl -sf -m 60")
+    if place_at < 0 or get_at < 0 or curl_at < 0 or not place_at < get_at < curl_at:
+        findings.append("the truth of parity.sh reads the Samba share through WebDAV")
 
     discovery = job_text(workflow, "discovery")
     places = [discovery.find(part) for part in PARITY_STEP]
@@ -1238,6 +1265,26 @@ def test_the_parity_rule_fires_on_a_missing_shift_and_a_late_self_test() -> None
     assert parity_findings(broken, source()) == [
         "the self test of parity.sh does not expect set to fail on missing-id",
         "parity.sh check does not run its self test before the verdict",
+    ]
+
+
+def test_the_parity_rule_fires_on_a_samba_truth_through_webdav_and_a_missing_smb_self_test() -> None:
+    # D-03-25: the broken copy reads the share through WebDAV again, never asks
+    # ana (the denial) and runs the truth without testing the Samba way first.
+    script = PARITY.read_text(encoding="utf-8")
+    assert script.count("\tsmb_self_test || exit 1\n") == 1
+    assert script.count('place=$(smb_place "${user}" "${rel}")') == 1
+    assert script.count('if smb_get ana "${SMB_DENIED_CLIP}" "${tmp}"; then') == 1
+    broken = (
+        script.replace("\tsmb_self_test || exit 1\n", "")
+        .replace('place=$(smb_place "${user}" "${rel}")', "place=''")
+        .replace('if smb_get ana "${SMB_DENIED_CLIP}" "${tmp}"; then', "if false; then")
+    )
+
+    assert parity_findings(broken, source()) == [
+        "parity.sh check does not test the Samba way before the truth",
+        'parity.sh lacks smb_get ana "${SMB_DENIED_CLIP}" "${tmp}"',
+        "the truth of parity.sh reads the Samba share through WebDAV",
     ]
 
 

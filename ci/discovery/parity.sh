@@ -5,8 +5,9 @@
 #
 # Truth per person: every file the person reaches through WebDAV (PROPFIND,
 # one folder after the other, oc:fileid and oc:owner-id), every .wav fetched
-# with GET as that person and compared by sha256sum with the speech clip
-# (AVS_SPEECH_DE). Readable and the same bytes is an expected hit, unless the
+# with GET as that person, on the Samba share with smbclient as the login of
+# its mount instead (D-03-25, smb_self_test), and compared by sha256sum with
+# the speech clip (AVS_SPEECH_DE). Readable and the same bytes is an expected hit, unless the
 # rules of this test exclude it: a person excluded by the test (eva and fritz
 # before the first run, ben in exclude-user-after), a copy owned by such a
 # person, a folder or a storage the test excluded. Those rules are the ledger
@@ -139,12 +140,95 @@ excluded_place() {
 	return 1
 }
 
+# -- the truth on the Samba share: smbclient, never a GET through WebDAV -----------
+#
+# A GET through WebDAV of a file Samba refuses hangs a PHP worker for good: in
+# run 43633120030 two such GETs of this truth and the reads of the container
+# held every worker, and Nextcloud stopped answering (D-03-25). A copy on the
+# Samba share is therefore read the way truth.sh reads it: smbclient as the
+# Unix user whose login the mount uses, within 60 s. The mounts are the ledger
+# of topology.sh: SMB and SMB-Sitzung log in as the person, SMB-Teil as ana
+# with the root gemeinsam. Every other path keeps the GET through WebDAV.
+
+# The clip topology.sh parity_place puts on the share with a DENY READ for ana.
+SMB_DENIED_CLIP=rede-gesperrt.wav
+
+url_decode() {
+	printf '%b' "${1//%/\\x}"
+}
+
+# smb_place USER REL: "login|path in the share" of a copy on the Samba share,
+# nothing for any other place.
+smb_place() {
+	local rel
+	rel=$(url_decode "$2")
+	case "${rel}" in
+		SMB/*) printf '%s|%s' "$1" "${rel#SMB/}" ;;
+		SMB-Sitzung/*) printf '%s|%s' "$1" "${rel#SMB-Sitzung/}" ;;
+		SMB-Teil/*) printf 'ana|gemeinsam/%s' "${rel#SMB-Teil/}" ;;
+	esac
+}
+
+# smb_get LOGIN PATH OUT: the bytes of PATH into OUT as LOGIN, within 60 s;
+# 1 and no OUT when Samba refuses them, the file is missing or empty.
+smb_get() {
+	local answer
+	rm -f "$3"
+	answer=$(timeout 60 smbclient "${SMB_URL}" -A "$(smb_auth "$1")" -c "get \"$2\" \"$3\"" 2>&1) || true
+	if grep -q 'NT_STATUS_' <<< "${answer}" || [ ! -s "$3" ]; then
+		rm -f "$3"
+		return 1
+	fi
+	return 0
+}
+
+# The Samba way has to be able to say yes and no, on the clip with the DENY
+# READ for ana. The bytes on the disk of the share are the clip (read without
+# Samba, an independent way); ben, without a DENY, gets them through Samba;
+# ana does not; a path that does not exist gives nothing.
+smb_self_test() {
+	local clip disk tmp="${PARITY_DIR}/smb-self.bin" result=0
+	clip=$(sha256sum "${AVS_SPEECH_DE:?AVS_SPEECH_DE is required}" | cut -d ' ' -f 1)
+	disk=$(sha256sum "${SHARE_DIR}/${SMB_DENIED_CLIP}" 2> /dev/null | cut -d ' ' -f 1)
+	if [ "${disk}" = "${clip}" ]; then
+		echo "smb self-test disk: the clip lies on the share"
+	else
+		echo "smb self-test disk: the clip is not on the share"
+		result=1
+	fi
+	if smb_get ben "${SMB_DENIED_CLIP}" "${tmp}" && [ "$(sha256sum "${tmp}" | cut -d ' ' -f 1)" = "${clip}" ]; then
+		echo "smb self-test readable: ben gets the clip"
+	else
+		echo "smb self-test readable: ben does not get the clip"
+		result=1
+	fi
+	if smb_get ana "${SMB_DENIED_CLIP}" "${tmp}"; then
+		echo "smb self-test denied: ana gets the clip despite the DENY"
+		result=1
+	else
+		echo "smb self-test denied: Samba refuses the clip to ana"
+	fi
+	if smb_get ben "no-such-file-${NO_SUCH_ID}.wav" "${tmp}"; then
+		echo "smb self-test missing: a missing file gave bytes"
+		result=1
+	else
+		echo "smb self-test missing: a missing file gives nothing"
+	fi
+	rm -f "${tmp}"
+	if [ "${result}" != 0 ]; then
+		echo "SMB SELF-TEST FAILED"
+		return 1
+	fi
+	echo "SMB SELF-TEST PASSED"
+}
+
 # truth_of USER: one line per .wav the person reaches: id, owner, readable
-# (GET answered with bytes), same (sha256 of the clip), expected; into
-# PARITY_DIR/truth-USER.tsv. The relative paths stay in that file.
+# (GET answered with bytes, smbclient on the Samba share), same (sha256 of the
+# clip), expected; into PARITY_DIR/truth-USER.tsv. The relative paths stay in
+# that file.
 truth_of() {
 	local user="$1" out="${PARITY_DIR}/truth-$1.tsv" base clip queue=('') folders=0 dir kind id owner href rel
-	local tmp="${PARITY_DIR}/get.bin" readable same expected
+	local tmp="${PARITY_DIR}/get.bin" readable same expected place
 	base=$(dav_base "${user}")
 	clip=$(sha256sum "${AVS_SPEECH_DE:?AVS_SPEECH_DE is required}" | cut -d ' ' -f 1)
 	: > "${out}"
@@ -169,10 +253,19 @@ truth_of() {
 			rm -f "${tmp}"
 			readable=0
 			same=0
-			if curl -sf -m 60 -o "${tmp}" -u "${user}:$(password_of "${user}")" "${NC_URL}${href}" 2> /dev/null \
+			place=$(smb_place "${user}" "${rel}")
+			if [ -n "${place}" ]; then
+				if [ ! -r "$(smb_auth "${place%%|*}")" ]; then
+					echo "truth ${user}: no Samba login ${place%%|*}"
+					return 1
+				fi
+				smb_get "${place%%|*}" "${place#*|}" "${tmp}" && readable=1
+			elif curl -sf -m 60 -o "${tmp}" -u "${user}:$(password_of "${user}")" "${NC_URL}${href}" 2> /dev/null \
 				&& [ -s "${tmp}" ]; then
 				readable=1
-				[ "$(sha256sum "${tmp}" | cut -d ' ' -f 1)" = "${clip}" ] && same=1
+			fi
+			if [ "${readable}" = 1 ] && [ "$(sha256sum "${tmp}" | cut -d ' ' -f 1)" = "${clip}" ]; then
+				same=1
 			fi
 			expected=0
 			if [ "${same}" = 1 ] && ! in_list "${user}" "${EXCLUDED_PERSONS[@]}" \
@@ -335,6 +428,7 @@ truth_control() {
 
 cmd_check() {
 	local person expected
+	smb_self_test || exit 1
 	collect
 	self_test || exit 1
 	truth_control
@@ -359,6 +453,7 @@ cmd_check() {
 }
 
 cmd_self_test() {
+	smb_self_test || return 1
 	collect
 	self_test
 }
