@@ -97,11 +97,14 @@ jobs:
             echo "this workflow signs with the release keys of street1983nk/nextcloud-audio-video-search only"
             exit 1
           fi
-          case "${GITHUB_EVENT_NAME}:${GITHUB_REF}" in
-            push:refs/tags/v*) echo "a release tag, signing is in scope" ;;
-            workflow_dispatch:*) echo "a manual run, which needs write access and cannot come from a fork" ;;
-            *) echo "unexpected event ${GITHUB_EVENT_NAME} on ${GITHUB_REF}"; exit 1 ;;
+          case "${GITHUB_EVENT_NAME}" in
+            push|workflow_dispatch) ;;
+            *) echo "unexpected event ${GITHUB_EVENT_NAME}"; exit 1 ;;
           esac
+          # The signing keys answer only for a release tag: a manual run from a
+          # branch ref must not sign (pick the tag in the run dialog instead).
+          [[ "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ref '${GITHUB_REF}' is not a vMAJOR.MINOR.PATCH tag; signing is out of scope"; exit 1; }
+          echo "a release tag, signing is in scope"
 
       - name: No skeleton placeholder may ship
         run: |
