@@ -70,7 +70,7 @@ The command removes the test result and its index entries; the file itself stays
 - Read access on SMB and SFTP is checked again at least every 7 days.
 - Deleted files leave the search at once. Their transcript is kept for 7 days in case a copy turns up again.
 - Every file is read in full once.
-- With php-fpm, set `request_terminate_timeout` so a hanging SMB access does not hold a worker for good.
+- A Samba file that a user can see but not read can block a PHP process as long as PHP has no time limit for requests. The app therefore reads such a file at most once an hour and pauses a storage for an hour after three timeouts within an hour. With php-fpm, set `request_terminate_timeout` so a hanging access does not hold a worker for good; the value has to be longer than the longest download of a large file.
 
 ## Transcription (preview)
 

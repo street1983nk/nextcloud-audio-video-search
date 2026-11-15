@@ -70,7 +70,7 @@ La commande supprime le résultat de test et ses entrées d'index ; le fichier 
 - Les droits de lecture sur SMB et SFTP sont vérifiés à nouveau au moins tous les 7 jours.
 - Les fichiers supprimés disparaissent aussitôt de la recherche. Leur transcription est conservée 7 jours au cas où une copie réapparaît.
 - Chaque fichier est lu une fois en entier.
-- Avec php-fpm, définir `request_terminate_timeout` pour qu'un accès SMB bloqué n'occupe pas un worker indéfiniment.
+- Un fichier Samba qu'un utilisateur voit sans pouvoir le lire peut bloquer un processus PHP tant que PHP n'a pas de limite de temps pour les requêtes. L'application ne lit donc un tel fichier qu'une fois par heure au plus et met un stockage en pause pendant une heure après trois dépassements de délai en une heure. Avec php-fpm, définir `request_terminate_timeout` pour qu'un accès bloqué n'occupe pas un worker indéfiniment ; la valeur doit dépasser la durée du plus long téléchargement d'un gros fichier.
 
 ## Transcription (aperçu)
 

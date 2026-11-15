@@ -70,7 +70,7 @@ Der Befehl entfernt den Testtreffer und seine Indexeinträge; die Datei selbst b
 - Leserechte auf SMB und SFTP werden mindestens alle 7 Tage neu geprüft.
 - Gelöschte Dateien verschwinden sofort aus der Suche. Ihr Transkript bleibt 7 Tage für eine Kopie, die wieder auftaucht.
 - Jede Datei wird einmal komplett gelesen.
-- Bei php-fpm `request_terminate_timeout` setzen, damit ein hängender SMB-Zugriff keinen Worker dauerhaft belegt.
+- Eine Samba-Datei, die ein Nutzer sieht, aber nicht lesen darf, kann einen PHP-Prozess blockieren, solange PHP keine Zeitgrenze für Anfragen hat. Die App liest eine solche Datei deshalb höchstens einmal pro Stunde und pausiert einen Speicher nach drei Zeitüberschreitungen innerhalb einer Stunde für eine Stunde. Bei php-fpm `request_terminate_timeout` setzen, damit ein hängender Zugriff keinen Worker dauerhaft belegt; der Wert muss über der Dauer des längsten Downloads einer großen Datei liegen.
 
 ## Transkription (Vorschau)
 
