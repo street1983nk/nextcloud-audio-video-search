@@ -226,7 +226,7 @@ async def test_a_passed_proof_brings_the_hits_back_without_a_download(scene: Sce
     ("error", "reason", "wait", "attempts"),
     [
         (nc.READ_DENIED, nc.READ_DENIED, 60, 1),
-        (nc.READ_TIMEOUT, nc.READ_TIMEOUT, 60, 1),
+        (nc.READ_TIMEOUT, nc.READ_TIMEOUT, 3600, 1),  # D-03-25
         (nc.ACCESS_CONTROL, nc.ACCESS_CONTROL, 300, 1),
         (nc.GATEWAY_FAILED, nc.GATEWAY_FAILED, 60, 1),
         (nc.LOCKED, nc.LOCKED, 120, 0),

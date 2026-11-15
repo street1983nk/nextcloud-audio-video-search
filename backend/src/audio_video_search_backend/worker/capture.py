@@ -22,8 +22,9 @@ Three ways lead through a step (plan 02-13):
   own reader. Afterwards the waiting copies with its prefilter key are due at
   once.
 
-The circuit per storage (read_proof.StorageBreaker): after three timeouts in a
-row, every due reference of that storage is set unreadable, failed,
+The circuit per storage (read_proof.StorageBreaker): after three timeouts
+within an hour, answers of the storage in between notwithstanding (D-03-25),
+every due reference of that storage is set unreadable, failed,
 storage_paused with the closing time as its next try, without a request, and
 checked again after that hour.
 
@@ -36,7 +37,9 @@ The state machine of a reference:
   access_control, not_found, read_timeout, gateway_failed, size_mismatch, and
   not_found for a reference without a reader) is AT ONCE state unreadable,
   stage failed, attempts + 1, next try after min(2^attempts * 60 s, 6 h), or
-  300 s for access_control. An unreadable reference never counts and never
+  300 s for access_control, or one hour for read_timeout (D-03-25: a hanging
+  read may hold a PHP worker for good; a change of the file resets the
+  reference earlier). An unreadable reference never counts and never
   gives a hit. After five attempts it stays failed without a next try until
   etag, size or mtime change or the reconcile asks again.
 - locked (423): stage pending again, next try in 120 s, state and attempts
@@ -79,6 +82,8 @@ MAX_ATTEMPTS: Final = 5
 RETRY_BASE_SECONDS: Final = 60
 RETRY_CAP_SECONDS: Final = 6 * 3600
 ACCESS_CONTROL_RETRY_SECONDS: Final = 300
+# A timed out read waits as long as an open circuit (D-03-25).
+READ_TIMEOUT_RETRY_SECONDS: Final = read_proof.OPEN_SECONDS
 LOCKED_RETRY_SECONDS: Final = 120
 DISK_FULL_RETRY_SECONDS: Final = 300
 # Larger files are not read at all; far above any recording, below a runaway.
@@ -120,9 +125,17 @@ _IDLE: Final = CaptureStep(CaptureOutcome.IDLE)
 
 
 def retry_at(now: int, attempts_before: int, reason: str) -> int | None:
-    """The time of the next try after a read failure, None after the last attempt."""
+    """The time of the next try after a read failure, None after the last attempt.
+
+    A read that timed out may have left a PHP worker hanging for good (a
+    Samba DENY READ, Findling A6): it is read again only after the circuit
+    time, or earlier when the file changes, because a change resets the
+    reference in the intake (D-03-25).
+    """
     if attempts_before + 1 >= MAX_ATTEMPTS:
         return None
+    if reason == nc.READ_TIMEOUT:
+        return now + READ_TIMEOUT_RETRY_SECONDS
     if reason == nc.ACCESS_CONTROL:
         return now + ACCESS_CONTROL_RETRY_SECONDS
     return now + min(2**attempts_before * RETRY_BASE_SECONDS, RETRY_CAP_SECONDS)

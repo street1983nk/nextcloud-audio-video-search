@@ -427,20 +427,44 @@ def test_three_timeouts_in_a_row_open_a_storage_for_an_hour() -> None:
     assert breaker.closes_at(STORAGE_BEN, NOW + 4001) is None
 
 
-def test_an_answer_between_two_timeouts_starts_the_count_again() -> None:
+def test_answers_between_the_timeouts_do_not_start_the_count_again() -> None:
+    # D-03-25, positive control of the old rule: timeout, answer, timeout,
+    # answer, timeout kept the circuit closed for good before (run 43633120030,
+    # file 55 on storage 6 timed out three times, every one held a PHP worker).
+    breaker = StorageBreaker()
+
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW)
+    breaker.record(STORAGE_BEN, timed_out=False, now=NOW + 1)
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW + 2)
+    breaker.record(STORAGE_BEN, timed_out=False, now=NOW + 3)
+    assert breaker.closes_at(STORAGE_BEN, NOW + 3) is None
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW + 4)
+
+    assert breaker.closes_at(STORAGE_BEN, NOW + 4) == NOW + 4 + 3600
+
+
+def test_timeouts_of_two_storages_are_counted_apart() -> None:
     breaker = StorageBreaker()
 
     breaker.record(STORAGE_BEN, timed_out=True, now=NOW)
     breaker.record(STORAGE_BEN, timed_out=True, now=NOW)
-    breaker.record(STORAGE_BEN, timed_out=False, now=NOW)
-    breaker.record(STORAGE_BEN, timed_out=True, now=NOW)
-    breaker.record(STORAGE_BEN, timed_out=True, now=NOW)
+    breaker.record(STORAGE_CEM, timed_out=True, now=NOW)
 
     assert breaker.closes_at(STORAGE_BEN, NOW) is None
-    # Timeouts of two storages are counted apart.
-    breaker.record(STORAGE_CEM, timed_out=True, now=NOW)
-    assert breaker.closes_at(STORAGE_BEN, NOW) is None
     assert breaker.closes_at(STORAGE_CEM, NOW) is None
+
+
+def test_a_timeout_older_than_the_window_no_longer_counts() -> None:
+    breaker = StorageBreaker()
+
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW)
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW + 1800)
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW + 3600)
+    # The first one lies a full hour back: two count, the circuit stays closed.
+    assert breaker.closes_at(STORAGE_BEN, NOW + 3600) is None
+    breaker.record(STORAGE_BEN, timed_out=True, now=NOW + 3601)
+
+    assert breaker.closes_at(STORAGE_BEN, NOW + 3601) == NOW + 3601 + 3600
 
 
 # Part 4: the stage, against a real state.db.
@@ -650,7 +674,7 @@ def _one_byte_short(_request: httpx.Request) -> httpx.Response:
         (_forbidden("access_control"), nc.ACCESS_CONTROL, 300),
         (_status(500), nc.GATEWAY_FAILED, 60),
         (_status(302), nc.GATEWAY_FAILED, 60),
-        (_timeout, nc.READ_TIMEOUT, 60),
+        (_timeout, nc.READ_TIMEOUT, 3600),  # D-03-25
         (_too_long, nc.GATEWAY_FAILED, 60),
         (_one_byte_short, nc.GATEWAY_FAILED, 60),
     ],
@@ -878,7 +902,8 @@ async def test_a_failed_proof_is_tried_again_and_then_attaches(stage: Stage) -> 
     stage.intake(11, len(data), reader="ben", storage=STORAGE_BEN)
     assert (await stage.step()).outcome == CaptureOutcome.UNREADABLE
 
-    stage.clock.now += 59
+    # A timeout waits an hour (D-03-25), before 60 s.
+    stage.clock.now += 3599
     assert (await stage.step()).outcome == CaptureOutcome.IDLE
     stage.clock.now += 1
     step = await stage.step()
@@ -1119,18 +1144,21 @@ async def test_three_timeouts_pause_every_due_reference_of_the_storage_without_a
     # The hits of the paused renewed proof are gone at once.
     assert stage.hits(media_id) == [10]
 
-    # The three that timed out come due after their 60 s and are paused as well.
+    # The three that timed out wait their hour (D-03-25; before: 60 s, then
+    # paused here as well): nothing of them is due within it.
     stage.clock.now = opened + 120
-    for _ in range(3):
-        step = await stage.step()
-        assert (step.outcome, step.reason) == (CaptureOutcome.UNREADABLE, read_proof.STORAGE_PAUSED)
     assert (await stage.step()).outcome == CaptureOutcome.IDLE
     assert stage.head.calls == head_calls
     assert [stage.ref(file_id).attempts for file_id in (11, 12, 13)] == [1, 1, 1]
 
-    # One second before the closing time nothing on S is due.
+    # The hours of 11 and 12 end just before the closing time: they are
+    # paused up to it without a request; 13 comes due at the closing time.
     stage.clock.now = closes - 1
+    for _ in range(2):
+        step = await stage.step()
+        assert (step.outcome, step.reason) == (CaptureOutcome.UNREADABLE, read_proof.STORAGE_PAUSED)
     assert (await stage.step()).outcome == CaptureOutcome.IDLE
+    assert stage.head.calls == head_calls
 
     # At the closing time every one of them is checked again.
     stage.clock.now = closes
@@ -1158,7 +1186,9 @@ async def test_timeouts_of_a_download_count_for_the_circuit_too(stage: Stage) ->
     assert stage.fetch.calls == [11, 12, 13]
 
 
-async def test_an_answer_of_the_storage_keeps_the_circuit_closed(stage: Stage) -> None:
+async def test_an_answer_of_the_storage_does_not_keep_the_circuit_closed(stage: Stage) -> None:
+    # D-03-25: before, the answer of 13 started the count again, 15 was read
+    # and the storage was never paused. Now the third timeout opens it.
     data = _bytes(100)
     for file_id in (11, 12):
         stage.fetch.failing(file_id, nc.READ_TIMEOUT)
@@ -1170,10 +1200,51 @@ async def test_an_answer_of_the_storage_keeps_the_circuit_closed(stage: Stage) -
     stage.put(15, data)
     stage.intake(15, 100, reader="ben", storage=STORAGE_BEN, prefilter=None)
 
-    outcomes = [(await stage.step()).outcome for _ in range(5)]
+    steps = [await stage.step() for _ in range(5)]
 
-    assert outcomes[-1] == CaptureOutcome.KEYED
+    assert (steps[-1].outcome, steps[-1].reason) == (CaptureOutcome.UNREADABLE, read_proof.STORAGE_PAUSED)
+    assert stage.fetch.calls == [11, 12, 13, 14]
+
+
+async def test_a_timed_out_reference_is_not_read_again_within_the_hour(stage: Stage) -> None:
+    # D-03-25: run 43633120030 read file 55 again after 94 s and 150 s, every
+    # try held one more PHP worker. Now one try per hour, the storage answers
+    # to other files in between.
+    data = _bytes(100)
+    stage.fetch.failing(11, nc.READ_TIMEOUT, times=2)
+    stage.intake(11, 100, reader="ben", storage=STORAGE_BEN, prefilter=None)
+    assert (await stage.step()).reason == nc.READ_TIMEOUT
+    assert stage.ref(11).next_try_at == NOW + 3600
+
+    for file_id, at in ((12, 60), (13, 120), (14, 240), (15, 3599)):
+        stage.clock.now = NOW + at
+        stage.put(file_id, data)
+        stage.intake(file_id, 100, reader="ben", storage=STORAGE_BEN, prefilter=None)
+        assert (await stage.step()).file_id == file_id
+    stage.clock.now = NOW + 3599
+    assert (await stage.step()).outcome == CaptureOutcome.IDLE
     assert stage.fetch.calls == [11, 12, 13, 14, 15]
+
+    stage.clock.now = NOW + 3600
+    step = await stage.step()
+
+    assert (step.file_id, step.reason) == (11, nc.READ_TIMEOUT)
+    assert stage.fetch.calls == [11, 12, 13, 14, 15, 11]
+
+
+async def test_a_change_of_the_timed_out_file_makes_it_due_at_once(stage: Stage) -> None:
+    data = _bytes(100)
+    stage.fetch.failing(11, nc.READ_TIMEOUT)
+    stage.intake(11, 100, reader="ben", storage=STORAGE_BEN, prefilter=None)
+    assert (await stage.step()).reason == nc.READ_TIMEOUT
+    stage.clock.now += 10
+    assert (await stage.step()).outcome == CaptureOutcome.IDLE
+
+    stage.put(11, data)
+    stage.intake(11, 100, reader="ben", storage=STORAGE_BEN, prefilter=None, etag="etag-changed")
+    step = await stage.step()
+
+    assert (step.file_id, step.outcome) == (11, CaptureOutcome.KEYED)
 
 
 async def test_no_space_on_the_volume_says_nothing_about_the_storage(stage: Stage) -> None:
@@ -1225,7 +1296,7 @@ async def test_a_renewed_proof_that_succeeds_confirms_the_reference(stage: Stage
     [
         (nc.READ_DENIED, nc.READ_DENIED, 60, 1),
         (nc.NOT_FOUND, nc.READ_DENIED, 60, 1),
-        (nc.READ_TIMEOUT, nc.READ_TIMEOUT, 60, 1),
+        (nc.READ_TIMEOUT, nc.READ_TIMEOUT, 3600, 1),  # D-03-25
         (nc.ACCESS_CONTROL, nc.ACCESS_CONTROL, 300, 1),
         (nc.GATEWAY_FAILED, nc.GATEWAY_FAILED, 60, 1),
         (nc.HEAD_TOO_LONG, nc.GATEWAY_FAILED, 60, 1),

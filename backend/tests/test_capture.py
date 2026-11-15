@@ -617,7 +617,7 @@ def _long(_request: httpx.Request) -> httpx.Response:
         (_forbidden(), nc.READ_DENIED, 60),
         (_status(422), nc.READ_DENIED, 60),
         (_status(404), nc.NOT_FOUND, 60),
-        (_timeout, nc.READ_TIMEOUT, 60),
+        (_timeout, nc.READ_TIMEOUT, 3600),  # D-03-25
         (_status(500), nc.GATEWAY_FAILED, 60),
         (_status(302), nc.GATEWAY_FAILED, 60),
         (_forbidden("access_control"), nc.ACCESS_CONTROL, 300),
@@ -783,7 +783,8 @@ async def test_a_due_retry_that_succeeds_becomes_active_and_keyed(store: Store, 
     capture = _capture(store, fetch, tmp_dir, clock)
     assert (await capture.run_once()).outcome == CaptureOutcome.UNREADABLE
 
-    clock.now += 59
+    # A timeout waits an hour (D-03-25), every other read failure 60 s first.
+    clock.now += 3599
     assert (await capture.run_once()).outcome == CaptureOutcome.IDLE
     clock.now += 1
     step = await capture.run_once()
@@ -839,6 +840,8 @@ def test_the_backoff_doubles_and_stops_at_six_hours() -> None:
     assert retry_at(0, 0, nc.ACCESS_CONTROL) == 300
     assert retry_at(0, 3, nc.ACCESS_CONTROL) == 300
     assert retry_at(0, 4, nc.ACCESS_CONTROL) is None
+    # A timeout waits as long as an open circuit, every time (D-03-25).
+    assert [retry_at(0, n, nc.READ_TIMEOUT) for n in range(5)] == [3600, 3600, 3600, 3600, None]
     # The cap holds for a larger attempt limit as well.
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(capture_module, "MAX_ATTEMPTS", 20)

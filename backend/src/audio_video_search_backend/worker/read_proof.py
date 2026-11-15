@@ -21,7 +21,10 @@ runs an image built in CI out of a patched copy and never published.
 
 :class:`StorageBreaker` keeps the container from asking a storage that hangs:
 PHP cannot interrupt a hanging smbclient, every try holds a PHP worker until
-its own time limit.
+its own time limit, and without one (php-fpm ``request_terminate_timeout`` 0,
+the PHP built-in server) for good. For the same reason a single reference that
+timed out is asked again only after an hour or after its file changed
+(D-03-25, capture.retry_at).
 """
 
 import enum
@@ -38,9 +41,10 @@ LOGGER = logging.getLogger(__name__)
 
 # The reason of a reference that is not asked because its storage hangs.
 STORAGE_PAUSED: Final = "storage_paused"
-# Timeouts in a row on one storage before it is left alone, and for how long.
+# Timeouts on one storage within the window before it is left alone, and for how long.
 TIMEOUTS_TO_OPEN: Final = 3
 OPEN_SECONDS: Final = 3600
+TIMEOUT_WINDOW_SECONDS: Final = 3600
 _HEX64: Final = re.compile(r"[0-9a-f]{64}")
 
 type HeadFetch = Callable[[int, str], Awaitable[nc.HeadResult]]
@@ -113,17 +117,30 @@ async def prove_read(ref: FileRef, media_head_sha256: str, expected_length: int,
 
 
 class StorageBreaker:
-    """The circuit per storage: three timeouts in a row leave a storage alone for an hour.
+    """The circuit per storage: three timeouts within an hour leave a storage alone for an hour.
+
+    Every timeout on a storage counts, no matter what other requests to the
+    same storage answer in between (D-03-25): a share with a few files that
+    hang and many that answer still opens the circuit, because every hanging
+    read holds a PHP worker. Only the window ends a count: a timeout older than
+    ``window_seconds`` no longer counts. Opening the circuit starts the count
+    again.
 
     Kept in memory: after a restart the count starts again, which costs at most
-    three more timeouts. Any answer of the storage, also a refusal, starts the
-    count again; only silence counts.
+    three more timeouts.
     """
 
-    def __init__(self, *, threshold: int = TIMEOUTS_TO_OPEN, open_seconds: int = OPEN_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        threshold: int = TIMEOUTS_TO_OPEN,
+        open_seconds: int = OPEN_SECONDS,
+        window_seconds: int = TIMEOUT_WINDOW_SECONDS,
+    ) -> None:
         self._threshold = threshold
         self._open_seconds = open_seconds
-        self._timeouts: dict[int, int] = {}
+        self._window_seconds = window_seconds
+        self._timeouts: dict[int, list[int]] = {}
         self._open_until: dict[int, int] = {}
 
     def closes_at(self, storage_id: int, now: int) -> int | None:
@@ -137,17 +154,17 @@ class StorageBreaker:
         return until
 
     def record(self, storage_id: int, *, timed_out: bool, now: int) -> None:
-        """Note the outcome of one request to a storage."""
+        """Note the outcome of one request to a storage; an answer changes nothing."""
         if not timed_out:
-            self._timeouts.pop(storage_id, None)
             return
-        count = self._timeouts.get(storage_id, 0) + 1
-        if count < self._threshold:
-            self._timeouts[storage_id] = count
+        recent = [at for at in self._timeouts.get(storage_id, []) if at > now - self._window_seconds]
+        recent.append(now)
+        if len(recent) < self._threshold:
+            self._timeouts[storage_id] = recent
             return
         self._timeouts.pop(storage_id, None)
         self._open_until[storage_id] = now + self._open_seconds
         LOGGER.warning(
             "storage paused after timeouts",
-            extra={"storage_id": storage_id, "timeouts": count, "seconds": self._open_seconds},
+            extra={"storage_id": storage_id, "timeouts": len(recent), "seconds": self._open_seconds},
         )
