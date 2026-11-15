@@ -3,6 +3,7 @@
 import asyncio
 import dataclasses
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -190,7 +191,7 @@ async def test_a_matching_download_is_installed(tmp_path: Path, small_model: cat
     directory = procure.model_dir(tmp_path, "parakeet")
     assert outcome == procure.PROCURED
     assert (directory / "a.onnx").read_bytes() == GOOD
-    assert _files(directory) == ["a.onnx", "a.onnx.verified.json"]
+    assert _files(directory) == ["a.onnx"]
     assert fetch.calls == [small_model.url]
     assert fetch.hosts == [catalog.ASSET_HOSTS]
     assert seen[-1] == len(GOOD)
@@ -326,13 +327,30 @@ async def test_the_verdict_is_cached_by_size_and_mtime(tmp_path: Path, small_mod
     assert procure.hash_count() == before + 2
 
 
+async def test_a_verdict_file_on_the_volume_is_never_trusted(tmp_path: Path, small_model: catalog.ModelFile) -> None:
+    # A stored verdict could be forged by anything that can write the volume;
+    # since 03-SECURITY E-2 only this process's own hashing counts.
+    directory = procure.model_dir(tmp_path, "parakeet")
+    directory.mkdir(parents=True)
+    target = directory / small_model.name
+    target.write_bytes(OTHER)
+    status = target.stat()
+    forged = {"sha256": small_model.sha256, "size": status.st_size, "mtime_ns": status.st_mtime_ns}
+    (directory / (small_model.name + ".verified.json")).write_text(json.dumps(forged), encoding="utf-8")
+
+    before = procure.hash_count()
+
+    assert await procure.procure(tmp_path, "parakeet", fetch=None) == procure.WRONG_DIGEST
+    assert procure.hash_count() == before + 1
+
+
 async def test_a_stale_part_is_replaced_by_a_fresh_download(tmp_path: Path, small_model: catalog.ModelFile) -> None:
     directory = procure.model_dir(tmp_path, "parakeet")
     directory.mkdir(parents=True)
     (directory / (small_model.name + procure.PART_SUFFIX)).write_bytes(b"left over")
 
     assert await procure.procure(tmp_path, "parakeet", fetch=FakeFetch(GOOD)) == procure.PROCURED
-    assert _files(directory) == ["a.onnx", "a.onnx.verified.json"]
+    assert _files(directory) == ["a.onnx"]
 
 
 async def test_a_write_error_is_an_outcome(tmp_path: Path, small_model: catalog.ModelFile) -> None:

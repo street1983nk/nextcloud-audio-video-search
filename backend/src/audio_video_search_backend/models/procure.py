@@ -28,7 +28,6 @@ import argparse
 import asyncio
 import errno
 import hashlib
-import json
 import logging
 import os
 import sys
@@ -50,7 +49,6 @@ PROCURE_OUTCOMES: Final = frozenset({PROCURED, PRESENT, UNAVAILABLE, WRONG_DIGES
 READY_OUTCOMES: Final = frozenset({PROCURED, PRESENT})
 
 PART_SUFFIX: Final = ".part"
-VERDICT_SUFFIX: Final = ".verified.json"
 # The order of the command line and of /init: the small model first.
 MODEL_ORDER: Final = ("silero", "parakeet")
 
@@ -96,30 +94,14 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _verdict_path(target: Path) -> Path:
-    return target.with_name(target.name + VERDICT_SUFFIX)
+# Verdicts live only in this process: anything that can write the volume could
+# also forge a stored verdict file, so every process start hashes anew.
+_VERIFIED: dict[Path, tuple[str, int, int]] = {}
 
 
 def _remember(target: Path, entry: catalog.ModelFile) -> None:
-    """Write the verdict for a file that matched, keyed on its size and mtime."""
     status = target.stat()
-    record = {"sha256": entry.sha256, "size": status.st_size, "mtime_ns": status.st_mtime_ns}
-    verdict = _verdict_path(target)
-    temporary = verdict.with_name(verdict.name + ".tmp")
-    temporary.write_text(json.dumps(record), encoding="utf-8")
-    os.replace(temporary, verdict)
-
-
-def _remembered(target: Path, entry: catalog.ModelFile, status: os.stat_result) -> bool:
-    try:
-        record = json.loads(_verdict_path(target).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(record, dict) and record == {
-        "sha256": entry.sha256,
-        "size": status.st_size,
-        "mtime_ns": status.st_mtime_ns,
-    }
+    _VERIFIED[target] = (entry.sha256, status.st_size, status.st_mtime_ns)
 
 
 def verify_file(target: Path, entry: catalog.ModelFile) -> bool | None:
@@ -127,7 +109,7 @@ def verify_file(target: Path, entry: catalog.ModelFile) -> bool | None:
 
     Synchronous on purpose (the first look hashes up to 650 MB); an async
     caller runs it in a thread. A file of the wrong length is False without a
-    hash; an unchanged file with a remembered verdict costs one stat.
+    hash; a file this process already hashed costs one stat.
     """
     try:
         status = target.stat()
@@ -135,15 +117,11 @@ def verify_file(target: Path, entry: catalog.ModelFile) -> bool | None:
         return None
     if status.st_size != entry.size:
         return False
-    if _remembered(target, entry, status):
+    if _VERIFIED.get(target) == (entry.sha256, status.st_size, status.st_mtime_ns):
         return True
     if _file_digest(target) != entry.sha256:
         return False
-    try:
-        _remember(target, entry)
-    except OSError as error:
-        # Only the cache is lost; the file itself matched.
-        LOGGER.warning("model verdict not stored", extra={"error_type": type(error).__name__})
+    _remember(target, entry)
     return True
 
 
@@ -200,8 +178,9 @@ async def _download(entry: catalog.ModelFile, directory: Path, fetch: FetchModel
         # Every way out but the rename leaves no .part, a cancellation included.
         _unlink(part)
     try:
-        await asyncio.to_thread(_remember, target, entry)
+        _remember(target, entry)
     except OSError as error:
+        # Only the in-process cache is lost; the file itself matched.
         LOGGER.warning("model verdict not stored", extra={"error_type": type(error).__name__})
     return PROCURED
 
