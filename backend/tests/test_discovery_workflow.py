@@ -25,6 +25,7 @@ does not stay green.
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -1285,6 +1286,107 @@ def test_the_parity_rule_fires_on_a_samba_truth_through_webdav_and_a_missing_smb
         "parity.sh check does not test the Samba way before the truth",
         'parity.sh lacks smb_get ana "${SMB_DENIED_CLIP}" "${tmp}"',
         "the truth of parity.sh reads the Samba share through WebDAV",
+    ]
+
+
+# The wait of search-parity names the step that failed as parity.sh names it
+# (run 43633120030 said wait_preview where wait_index failed).
+PARITY_WAIT_START = 'if ! bash "${d}/parity.sh" wait > "wait-${phase}.txt"; then'
+PARITY_WAIT_END = 'cat "wait-${phase}.txt"'
+PARITY_WAIT_LINES = (
+    PARITY_WAIT_START,
+    "grep '^FAIL ' \"wait-${phase}.txt\" >> results.txt",
+    '|| echo "FAIL ${phase}:wait_without_reason" >> results.txt',
+    PARITY_WAIT_END,
+)
+
+
+def parity_wait_findings(workflow: str) -> list[str]:
+    """The FAIL line of a failed parity.sh wait comes from parity.sh, never a fixed label."""
+    discovery = job_text(workflow, "discovery")
+    findings = [f"the wait of search-parity lacks {line}" for line in PARITY_WAIT_LINES if line not in discovery]
+    if re.search(r"FAIL \$\{phase\}:wait_(preview|index)", discovery):
+        findings.append("the wait of search-parity names a fixed step")
+    return findings
+
+
+def _parity_wait_block(workflow: str) -> str:
+    discovery = job_text(workflow, "discovery")
+    start = discovery.index(PARITY_WAIT_START)
+    end = discovery.index(PARITY_WAIT_END, start) + len(PARITY_WAIT_END)
+    return "\n".join(line.strip() for line in discovery[start:end].splitlines())
+
+
+def _run_parity_wait(tmp_path: Path, printed: str, code: int) -> tuple[str, str]:
+    """The block of the workflow against a parity.sh that prints PRINTED and exits CODE: (results, ok)."""
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash on this machine")
+    fake = tmp_path / "fake"
+    fake.mkdir(exist_ok=True)
+    (fake / "parity.sh").write_text(f"printf '%s\\n' '{printed}'\nexit {code}\n", encoding="utf-8", newline="\n")
+    script = tmp_path / "block.sh"
+    script.write_text(
+        "set -e\nd=fake\nphase=search-parity\nok=1\n: > results.txt\n"
+        + _parity_wait_block(source())
+        + '\necho "ok=${ok}"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    run = subprocess.run(  # noqa: S603 - bash of this machine and a file of this test
+        [bash, "block.sh"], cwd=tmp_path, capture_output=True, text=True, check=True
+    )
+    return (tmp_path / "results.txt").read_text(encoding="utf-8"), run.stdout.strip().splitlines()[-1]
+
+
+def test_the_wait_of_search_parity_reports_what_parity_sh_reports() -> None:
+    assert parity_wait_findings(source()) == []
+
+
+@pytest.mark.parametrize(
+    ("printed", "code", "results", "ok"),
+    [
+        (
+            "FAIL search-parity:wait_preview not done after 900 s {}",
+            1,
+            "FAIL search-parity:wait_preview not done after 900 s {}\n",
+            "ok=0",
+        ),
+        (
+            "FAIL search-parity:wait_index ana has no hit after 900 s",
+            1,
+            "FAIL search-parity:wait_index ana has no hit after 900 s\n",
+            "ok=0",
+        ),
+        ("something went wrong", 1, "FAIL search-parity:wait_without_reason\n", "ok=0"),
+        ("first hit for ana after 30 s", 0, "", "ok=1"),
+    ],
+    ids=["wait_preview", "wait_index", "no-line", "pass"],
+)
+def test_the_wait_block_names_the_failed_step(tmp_path: Path, printed: str, code: int, results: str, ok: str) -> None:
+    assert _run_parity_wait(tmp_path, printed, code) == (results, ok)
+
+
+def test_the_parity_wait_rule_fires_on_a_fixed_label() -> None:
+    text = source()
+    old = (
+        '              if ! bash "${d}/parity.sh" wait > "wait-${phase}.txt"; then\n'
+        "                grep '^FAIL ' \"wait-${phase}.txt\" >> results.txt \\\n"
+        '                  || echo "FAIL ${phase}:wait_without_reason" >> results.txt\n'
+        "                ok=0\n"
+        "              fi\n"
+        '              cat "wait-${phase}.txt"\n'
+    )
+    assert text.count(old) == 1
+    broken = text.replace(
+        old, '              bash "${d}/parity.sh" wait || { echo "FAIL ${phase}:wait_preview" >> results.txt; ok=0; }\n'
+    )
+
+    assert parity_wait_findings(broken) == [f"the wait of search-parity lacks {line}" for line in PARITY_WAIT_LINES] + [
+        "the wait of search-parity names a fixed step"
     ]
 
 
