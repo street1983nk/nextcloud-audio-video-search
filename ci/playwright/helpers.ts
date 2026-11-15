@@ -350,6 +350,25 @@ export async function searchInDialog(page: Page, term: string) {
 	return group;
 }
 
+/**
+ * Open the Unified Search, type the term and answer once the last search came
+ * back: the group of this provider is not there. A term without a hit never
+ * renders the group, which no visibility wait could tell apart from a slow
+ * search; the resource timing of the provider says when the search is over.
+ */
+export async function searchInDialogEmpty(page: Page, term: string): Promise<void> {
+	await watchProviderSearches(page);
+	await openUnifiedSearch(page);
+
+	const input = searchField(page);
+	await expect(input).toBeVisible();
+	await input.fill(term);
+	await expectFinalSearchDone(page);
+
+	const group = page.getByRole('list', { name: GROUP_NAME }).or(page.getByRole('listbox', { name: GROUP_NAME }));
+	await expect(group).toHaveCount(0);
+}
+
 // -- phase 3 (plan 03-18) ----------------------------------------------------------
 
 /**

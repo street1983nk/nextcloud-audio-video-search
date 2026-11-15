@@ -29,6 +29,7 @@ import {
 	excerptNoteContrast,
 	expectMediaSettled,
 	fileIds,
+	GROUP_NAME,
 	login,
 	occ,
 	position,
@@ -36,6 +37,7 @@ import {
 	SAMPLE_MARK,
 	screenshot,
 	searchInDialog,
+	searchInDialogEmpty,
 	users,
 	type User,
 } from './helpers';
@@ -406,13 +408,26 @@ test('S2 Mehr laden: die vierte Stelle kommt, keine Dublette, Seite 1 bleibt gle
 	expect(new Set(paged).size).toBe(paged.length);
 	expect([...five.entries, ...second.entries].filter((entry) => idOf(entry) === fileIds.viele())).toHaveLength(4);
 
-	// The web dialog: "Load more" shows the fourth place of the first file.
+	// The web dialog: the fourth place of the first file is reachable through
+	// the dialog itself. NC 33 and 34 ask with limit 5 and offer "Load more
+	// results" inside the group (D-03-02). The modal of NC 35 asks with limit
+	// 10, so the six places of bob arrive complete at once; it shows three
+	// entries and leads to the full set through the button "More from Audio
+	// and video" (UnifiedSearchModal.vue, RESULTS_PER_CATEGORY 3, run
+	// 43669266835). Its detail list carries no own name, so the places are
+	// counted as options of the one open listbox.
 	await login(page, bob);
 	const group = await searchInDialog(page, word);
-	const more = page.getByRole('button', { name: /load more/i }).or(page.getByRole('link', { name: /load more/i })).first();
-	await expect(more).toBeVisible();
-	await more.click();
-	await expect(group.locator('a[href]').filter({ hasText: 'viele-stellen.ogg' })).toHaveCount(4);
+	const loadMore = page.getByRole('button', { name: /load more/i }).or(page.getByRole('link', { name: /load more/i }));
+	const moreFrom = page.getByRole('button', { name: GROUP_NAME });
+	await expect(loadMore.or(moreFrom).first()).toBeVisible();
+	if ((await moreFrom.count()) > 0) {
+		await moreFrom.first().click();
+		await expect(page.getByRole('option').filter({ hasText: 'viele-stellen.ogg' })).toHaveCount(4);
+	} else {
+		await loadMore.first().click();
+		await expect(group.locator('a[href]').filter({ hasText: 'viele-stellen.ogg' })).toHaveCount(4);
+	}
 	await screenshot(page, 'search-s2', testInfo);
 });
 
@@ -496,8 +511,16 @@ test('S5 Datei mit Grund no_speech erscheint nie in der Suche @preview', async (
 	for (const term of [required('AVS_SPEECH_WORD'), 'Audiosuche', 'stille']) {
 		expect((await searchAs(alice, term)).map(idOf)).not.toContain(fileIds.stille());
 	}
+	// The control that the search of alice finds anything at all: her test
+	// results answer "Audiosuche", and stille-60s.ogg is not among them.
+	expect((await searchAs(alice, 'Audiosuche')).length).toBeGreaterThanOrEqual(1);
 	await page.goto('/index.php/apps/files');
-	await searchInDialog(page, required('AVS_SPEECH_WORD'));
+	const group = await searchInDialog(page, 'Audiosuche');
+	await expect(group.locator('a[href]').filter({ hasText: 'stille-60s.ogg' })).toHaveCount(0);
+	// The speech word finds nothing alice reads (bob owns the speech files and
+	// shares none with her, ci/seed.sh), so the group itself never appears.
+	await page.goto('/index.php/apps/files');
+	await searchInDialogEmpty(page, required('AVS_SPEECH_WORD'));
 	await screenshot(page, 'search-s5', testInfo);
 });
 
@@ -766,6 +789,22 @@ test.describe.serial('phase 3 partial transcript and leak probes @preview', () =
 // (only a higher limit does, plan 03-15), and the page names the limit of now:
 // the same file then reads 1 hour (singular). The limit goes back to 12 at the end.
 
+/**
+ * One config value of the backend over occ. app_api:app:config:set creates a
+ * missing key but refuses an existing one with "already exists" and exit 1
+ * unless --update-only is given (AppAPI lib/Command/ExAppConfig/SetConfig.php),
+ * and the backend writes no defaults: the first write of a key in P9 creates
+ * it, every later one has to update. So the update comes first, and creating
+ * is the fallback of a key that is not there yet (run 43669266835).
+ */
+function setBackendConfig(key: string, value: string): void {
+	try {
+		occ('app_api:app:config:set', BACKEND_APP_ID, key, `--value=${value}`, '--update-only');
+	} catch {
+		occ('app_api:app:config:set', BACKEND_APP_ID, key, `--value=${value}`);
+	}
+}
+
 test.describe.serial('phase 3 too long with the limit of the instance @preview', () => {
 	test.beforeEach(({}, testInfo) => {
 		only(testInfo, [ONCE]);
@@ -792,7 +831,7 @@ test.describe.serial('phase 3 too long with the limit of the instance @preview',
 		await page.setViewportSize({ width: 1280, height: 900 });
 
 		try {
-			occ('app_api:app:config:set', BACKEND_APP_ID, 'max_duration_hours', '--value=1');
+			setBackendConfig('max_duration_hours', '1');
 			await switchUser(page, users.alice());
 			await expectState(page, playAt(lang, 0), tooLong('en', 1), LIMIT_WITHIN_MS);
 			await expectMediaQuiet(page);
@@ -804,7 +843,7 @@ test.describe.serial('phase 3 too long with the limit of the instance @preview',
 			await page.goto(playAt(lang, 0));
 			await expect(excerptHint(page)).toHaveText(tooLong('fr', 1));
 		} finally {
-			occ('app_api:app:config:set', BACKEND_APP_ID, 'max_duration_hours', `--value=${DEFAULT_LIMIT_HOURS}`);
+			setBackendConfig('max_duration_hours', String(DEFAULT_LIMIT_HOURS));
 		}
 	});
 });
