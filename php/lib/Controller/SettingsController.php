@@ -55,7 +55,7 @@ final class SettingsController extends Controller {
 		try {
 			return new DataResponse($this->exAppService->backendState($this->userId()));
 		} catch (\Throwable $e) {
-			$this->logger->error('Audio & Video Search: could not check the backend state', ['exception' => $e]);
+			$this->logger->error('Audio & Video Search: could not check the backend state', ['class' => $e::class]);
 
 			return new DataResponse(
 				['error' => 'The state could not be checked.'],
@@ -96,7 +96,7 @@ final class SettingsController extends Controller {
 		try {
 			$this->appConfig->setValueBool(Application::APP_ID, Provider::KEY_SAMPLE_VISIBLE, $wish);
 		} catch (\Throwable $e) {
-			$this->logger->error('Audio & Video Search: could not store the test result switch', ['exception' => $e]);
+			$this->logger->error('Audio & Video Search: could not store the test result switch', ['class' => $e::class]);
 
 			return new DataResponse(
 				['error' => 'The switch could not be saved.'],

@@ -302,7 +302,7 @@ final class GatewayController extends OCSController {
 		// The exception travels in the exception field, which Nextcloud
 		// renders itself; the message of this app is a static sentence,
 		// because a library message is where an absolute path shows up.
-		$this->logger->error('Audio & Video Search: unknown error reading a file', ['exception' => $e]);
+		$this->logger->error('Audio & Video Search: unknown error reading a file', ['class' => $e::class]);
 		return new DataResponse(['error' => 'Unknown error occurred.'], Http::STATUS_INTERNAL_SERVER_ERROR);
 	}
 

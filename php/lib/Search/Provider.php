@@ -244,7 +244,7 @@ final class Provider implements IFilteringProvider {
 				try {
 					$userFolder = $this->readerContext->actAs($uid, fn (): Folder => $this->rootFolder->getUserFolder($uid));
 				} catch (\Throwable $e) {
-					$this->logger->debug('Audio & Video Search: no user folder for the search', ['exception' => $e]);
+					$this->logger->debug('Audio & Video Search: no user folder for the search', ['class' => $e::class]);
 					break;
 				}
 			}
@@ -269,7 +269,7 @@ final class Provider implements IFilteringProvider {
 						try {
 							$checked[$fileId] = $this->readerContext->actAs($uid, static fn (): ?File => FileAccess::readableFile($userFolder, $fileId));
 						} catch (\Throwable $e) {
-							$this->logger->debug('Audio & Video Search: a recheck failed', ['fileId' => $fileId, 'exception' => $e]);
+							$this->logger->debug('Audio & Video Search: a recheck failed', ['fileId' => $fileId, 'class' => $e::class]);
 						}
 					}
 				}

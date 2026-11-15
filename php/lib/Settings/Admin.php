@@ -78,7 +78,7 @@ final class Admin implements ISettings {
 		try {
 			return $this->exAppService->backendState($this->userSession->getUser()?->getUID() ?? '');
 		} catch (\Throwable $e) {
-			$this->logger->error('Audio & Video Search: could not check the backend state for the admin page', ['exception' => $e]);
+			$this->logger->error('Audio & Video Search: could not check the backend state for the admin page', ['class' => $e::class]);
 
 			return [
 				'state' => ExAppService::STATE_BACKEND_UNREACHABLE,

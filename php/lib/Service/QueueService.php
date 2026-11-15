@@ -296,7 +296,7 @@ class QueueService {
 					fn (): ?File => FileAccess::readableFile($this->rootFolder->getUserFolder($uid), $fileId),
 				);
 			} catch (\Throwable $e) {
-				$this->logger->debug('Audio & Video Search: a member could not be asked as reader', ['exception' => $e]);
+				$this->logger->debug('Audio & Video Search: a member could not be asked as reader', ['class' => $e::class]);
 				continue;
 			}
 			if ($file !== null) {
@@ -317,7 +317,7 @@ class QueueService {
 		try {
 			return ['ok' => true, 'open' => $this->queueMapper->openByKind()];
 		} catch (\Throwable $e) {
-			$this->logger->error('Audio & Video Search: the work stock could not be counted', ['exception' => $e]);
+			$this->logger->error('Audio & Video Search: the work stock could not be counted', ['class' => $e::class]);
 
 			return ['ok' => false, 'open' => array_fill_keys(QueueMapper::KINDS, 0)];
 		}

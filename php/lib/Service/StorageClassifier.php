@@ -236,7 +236,7 @@ class StorageClassifier {
 		try {
 			$rows = $this->storageStates->skipped();
 		} catch (\Throwable $e) {
-			$this->logger->error('Audio & Video Search: the storage classification could not be read', ['exception' => $e]);
+			$this->logger->error('Audio & Video Search: the storage classification could not be read', ['class' => $e::class]);
 			$rows = [];
 		}
 
