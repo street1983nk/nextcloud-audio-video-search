@@ -1070,6 +1070,28 @@ jobs:
             -c 'cp -R /avs-models "$1/models" && find "$1/models" -name "*.verified.json" -delete && echo "model files: $(find "$1/models" -type f | wc -l)"' \
             sh "/nc_app_${BACKEND_APP_ID}_data"
 
+      # The old container must never run into the maintenance window of occ
+      # upgrade: a 0.2.0 capture that reads the 503 of the maintenance judges
+      # it with the old code (the code unavailable exists only from 0.3.0 on)
+      # and hides the file at once; exactly that turned the run of e6c0de9
+      # red. docker stop instead of app_api:app:disable, so the enable flow of
+      # app_api:app:update stays the one of every run. The work stock is
+      # emptied while nobody can claim it: these snapshots compare the
+      # standing hits across the update and nothing else; the pipeline itself
+      # is covered by the main legs.
+      - name: Stop the old container before the maintenance window
+        run: |
+          docker stop "${EXAPP_CONTAINER}"
+          python3 - data/owncloud.db <<'PY'
+          import sqlite3
+          import sys
+
+          db = sqlite3.connect(sys.argv[1])
+          gone = db.execute("DELETE FROM oc_avs_queue").rowcount
+          db.commit()
+          print(f"emptied oc_avs_queue, {gone} rows")
+          PY
+
       # The PHP half: the directory goes and the new one takes its place, the
       # way Installer::updateAppstoreApp does it. occ upgrade then runs the app
       # update, because OC_Util::needUpgrade answers true for an enabled app
