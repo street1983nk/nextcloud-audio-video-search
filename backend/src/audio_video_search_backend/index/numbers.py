@@ -7,8 +7,12 @@ D-04-11, D-04-12, 04-RESEARCH Pattern 1). Nothing changes in the index, so
 ANALYZER_VERSION stays and no rebuild runs: every spelling goes through the
 same chains as before, through ``Index.parse_query``.
 
-The range of this plan is 0 to 100 with the ordinals; hundreds, thousands and
-years follow in plan 04-06.
+The range is 0 to 100 with the ordinals (plan 04-01), plus the round hundreds
+(200 to 900), the round thousands up to 100000 with their digit grouping
+(30000, "30.000", "30,000" and "30 000" are one number) and the years 1100 to
+2099 as spoken in the three languages (plan 04-06, D-04-11). There is no full
+number parser: a digit outside these values and a number word outside the
+tables stay plain words.
 
 Two limits, measured in 04-RESEARCH:
 
@@ -32,8 +36,14 @@ from dataclasses import dataclass
 from typing import Final
 
 MAX_VALUE: Final = 100
-# A number spells with at most five words ("soixante et onze", "quatre vingt dix neuf").
-MAX_SPAN_WORDS: Final = 5
+# A number spells with at most seven words: plan 04-01 needed five ("soixante
+# et onze"), the years of plan 04-06 need seven ("mille neuf cent
+# quatre-vingt-dix-neuf" folds to seven words).
+MAX_SPAN_WORDS: Final = 7
+# The year window of D-04-11: the century part 11 to 20, the rest 0 to 99.
+YEAR_RANGE: Final = (1100, 2099)
+# Grouped thousands reach to here; beyond is no number of this module.
+MAX_GROUPED: Final = 100_000
 
 # German: 0 to 19, the tens, the unit prefixes of the compounds (einundzwanzig).
 _DE_UNITS: Final = (
@@ -61,6 +71,22 @@ _DE_UNITS: Final = (
 _DE_TENS: Final = ("", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig")
 _DE_COMPOUND_UNITS: Final = ("", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun")
 _DE_HUNDRED: Final = ("hundert", "einhundert")
+# Round hundreds 200 to 900 as one German word; the index is the hundreds digit.
+_DE_HUNDREDS: Final = (
+    "",
+    "",
+    "zweihundert",
+    "dreihundert",
+    "vierhundert",
+    "fünfhundert",
+    "sechshundert",
+    "siebenhundert",
+    "achthundert",
+    "neunhundert",
+)
+# The scale words of English and French; German compounds its own forms.
+_EN_SCALE: Final = ("hundred", "thousand")
+_FR_SCALE: Final = ("cent", "cents", "mille")
 # Ordinal stems that do not follow "cardinal + t" (below 20) or "cardinal + st".
 _DE_ORDINAL_STEMS: Final = {1: "erst", 3: "dritt", 7: "siebt", 8: "acht"}
 # All endings are recognized; the variants carry three, the German stemmer
@@ -134,8 +160,9 @@ _FR_SECOND: Final = ("second", "seconde")
 _ARTICLES: Final = frozenset({"ein", "eine", "un", "une"})
 
 # A digit, optionally with an ordinal mark: "12." (German), 1st/2nd/3rd/12th,
-# 12e/12ème/1er/1re/1ère (French). Matched against the folded word.
-_DIGITS: Final = re.compile(r"(\d{1,3})(\.|st|nd|rd|th|e|eme|er|re|ere)?")
+# 12e/12ème/1er/1re/1ère (French). Matched against the folded word. Six digits
+# reach the top of the grouped thousands (100000, plan 04-06).
+_DIGITS: Final = re.compile(r"(\d{1,6})(\.|st|nd|rd|th|e|eme|er|re|ere)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +266,92 @@ def _fr_ordinals(value: int) -> tuple[str, ...]:
     return ("deuxième", *_FR_SECOND) if value == 2 else (word,)
 
 
+def _hundreds_words(value: int) -> tuple[str, ...]:
+    """The spellings of a round hundred from 200 to 900 (D-04-11)."""
+    unit = value // 100
+    return (
+        _DE_HUNDREDS[unit],
+        f"{_EN_UNITS[unit]} {_EN_SCALE[0]}",
+        f"{_FR_UNITS[unit]} {_FR_SCALE[1]}",
+        f"{_FR_UNITS[unit]} {_FR_SCALE[0]}",
+    )
+
+
+def _thousands_words(value: int) -> tuple[str, ...]:
+    """The spellings of a round thousand: 1000 to 9000, the ten thousands, 100000."""
+    count = value // 1000
+    if count == 1:
+        return ("tausend", "eintausend", f"one {_EN_SCALE[1]}", _FR_SCALE[2])
+    de_counts = (_DE_COMPOUND_UNITS[count],) if count < 10 else _de_cardinals(count)
+    german = tuple(f"{word}tausend" for word in de_counts)
+    english = tuple(f"{word} {_EN_SCALE[1]}" for word in _en_cardinals(count))
+    return (*german, *english, f"{_fr_cardinal(count)} {_FR_SCALE[2]}")
+
+
+def _year_words(year: int) -> tuple[str, ...]:
+    """The spoken forms of a year from 1100 to 2099 in the three languages.
+
+    German builds century times hundred plus rest (neunzehnhundertneunzig),
+    for 2000 to 2099 the thousand form (zweitausendvierundzwanzig) and the two
+    part form (zwanzigvierundzwanzig). English pairs the century with the rest
+    (nineteen ninety, nineteen oh five, twenty twenty four) and spells 20xx as
+    two thousand (and) rest. French says mille neuf cent ... and dix-neuf cent
+    ..., for 20xx deux mille ... (D-04-11).
+    """
+    century, rest = divmod(year, 100)
+    rest_de = "" if rest == 0 else _de_cardinals(rest)[0]
+    rest_en = "" if rest == 0 else _en_cardinals(rest)[0]
+    if century == 20:
+        forms = [f"zweitausend{rest_de}", f"deux {_FR_SCALE[2]}"]
+        if rest == 0:
+            forms += [f"two {_EN_SCALE[1]}"]
+        else:
+            forms += [f"two {_EN_SCALE[1]} {rest_en}", f"two {_EN_SCALE[1]} and {rest_en}"]
+            forms[1] = f"deux {_FR_SCALE[2]} {_fr_cardinal(rest)}"
+            if rest >= 10:
+                forms += [f"zwanzig{rest_de}", f"twenty {rest_en}"]
+            else:
+                forms += [f"twenty oh {_EN_UNITS[rest]}"]
+        return tuple(forms)
+    century_de = _DE_UNITS[century]
+    century_en = _EN_UNITS[century]
+    hundreds_digit = century - 10
+    mille_mid = "" if hundreds_digit == 1 else f" {_FR_UNITS[hundreds_digit]}"
+    tail_fr = "" if rest == 0 else f" {_fr_cardinal(rest)}"
+    forms = [
+        f"{century_de}hundert{rest_de}",
+        f"mille{mille_mid} {_FR_SCALE[0]}{tail_fr}",
+        f"{_fr_cardinal(century)} {_FR_SCALE[0]}{tail_fr}",
+    ]
+    if rest == 0:
+        forms += [f"{century_en} {_EN_SCALE[0]}"]
+    elif rest < 10:
+        forms += [f"{century_en} oh {_EN_UNITS[rest]}"]
+    else:
+        forms += [f"{century_en} {rest_en}"]
+    return tuple(forms)
+
+
+def _digit_equated(value: int) -> bool:
+    """Equated beyond 0 to 100: round hundreds, round thousands, the year window."""
+    if YEAR_RANGE[0] <= value <= YEAR_RANGE[1]:
+        return True
+    if value % 100 == 0 and 200 <= value <= 900:
+        return True
+    return value % 1000 == 0 and 1000 <= value <= MAX_GROUPED
+
+
+def _large_words(value: int) -> tuple[str, ...]:
+    words: tuple[str, ...] = ()
+    if value % 100 == 0 and 200 <= value <= 900:
+        words += _hundreds_words(value)
+    if value % 1000 == 0 and 1000 <= value <= MAX_GROUPED and (value < 10_000 or value % 10_000 == 0):
+        words += _thousands_words(value)
+    if YEAR_RANGE[0] <= value <= YEAR_RANGE[1]:
+        words += _year_words(value)
+    return words
+
+
 def _digit_ordinals(value: int) -> tuple[str, ...]:
     english = "th" if value % 100 in (11, 12, 13) else {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
     french = (f"{value}er", f"{value}re") if value == 1 else (f"{value}e", f"{value}ème")
@@ -279,6 +392,16 @@ def _build_surface() -> dict[str, tuple[int, bool]]:
     for tens in range(2, 7):
         put(f"{_FR_TENS[tens]} et une", tens * 10 + 1, False)
     put("quatre vingt", 80, False)
+    # Plan 04-06 (D-04-11): round hundreds and thousands, the year window.
+    for value in range(200, 1000, 100):
+        for word in _hundreds_words(value):
+            put(word, value, False)
+    for value in (*range(1000, 10_000, 1000), *range(10_000, MAX_GROUPED + 1, 10_000)):
+        for word in _thousands_words(value):
+            put(word, value, False)
+    for year in range(YEAR_RANGE[0], YEAR_RANGE[1] + 1):
+        for word in _year_words(year):
+            put(word, year, False)
     return surface
 
 
@@ -293,9 +416,24 @@ def _digit_value(word: str) -> tuple[int, bool] | None:
     if len(digits) > 1 and digits.startswith("0"):
         return None
     value = int(digits)
-    if value > MAX_VALUE:
+    if value > MAX_VALUE and not _digit_equated(value):
         return None
     return value, match.group(2) is not None
+
+
+def _grouped_value(keys: Sequence[str]) -> tuple[int, bool] | None:
+    """Two words "d" and "000" are one grouped thousand: 30.000, 30,000, 30 000.
+
+    The tokenizer of the query splits at the point, the comma and the space, so
+    every written grouping arrives as this word pair (04-RESEARCH Pattern 1).
+    """
+    head, tail = keys
+    if tail != "000" or not head.isdigit() or head.startswith("0") or len(head) > 3:
+        return None
+    value = int(head) * 1000
+    if value > MAX_GROUPED:
+        return None
+    return value, False
 
 
 def _lookup(words: Sequence[str]) -> tuple[int, bool] | None:
@@ -306,6 +444,10 @@ def _lookup(words: Sequence[str]) -> tuple[int, bool] | None:
         digit = _digit_value(keys[0])
         if digit is not None:
             return digit
+    if len(keys) == 2:
+        grouped = _grouped_value(keys)
+        if grouped is not None:
+            return grouped
     return _SURFACE.get(" ".join(keys))
 
 
@@ -329,6 +471,20 @@ def _quoted(spelling: str) -> str:
     return f'"{spelling}"' if " " in spelling else spelling
 
 
+def _large_variants(value: int) -> tuple[str, ...]:
+    """The spellings above 100: digits, the grouped phrase, the word tables.
+
+    The grouped phrase ``"30 000"`` covers 30.000, 30,000 and 30 000 in the
+    index, because the tokenizer splits at the point, the comma and the space.
+    Above 100 there are no ordinal forms (D-04-12 covers 0 to 100).
+    """
+    if not _digit_equated(value):
+        return (str(value),)
+    grouped = (f"{value // 1000} {value % 1000:03d}",) if value % 1000 == 0 and value >= 1000 else ()
+    ordered = (str(value), *grouped, *_large_words(value))
+    return tuple(dict.fromkeys(_quoted(spelling) for spelling in ordered))
+
+
 def variants(value: int, ordinal: bool) -> tuple[str, ...]:
     """Every spelling of a number as input for ``parse_query``, without duplicates.
 
@@ -337,7 +493,7 @@ def variants(value: int, ordinal: bool) -> tuple[str, ...]:
     ordinal flag only decides which come first.
     """
     if not 0 <= value <= MAX_VALUE:
-        return (str(value),)
+        return _large_variants(value)
     cardinal = _cardinal_words(value)
     ordinal_forms = (*_ordinal_words(value), *_digit_ordinals(value))
     ordered = (str(value), *ordinal_forms, *cardinal) if ordinal else (str(value), *cardinal, *ordinal_forms)

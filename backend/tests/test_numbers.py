@@ -232,8 +232,8 @@ def test_words_that_are_no_number_stay_unrecognized(words: list[str]) -> None:
 
 @pytest.mark.parametrize(
     "words",
-    [["234"], ["2345"], ["150"], ["12500"], ["123456"], ["neunhundertneunzig"], ["twelve", "thousand"]],
-    ids=["234", "2345", "150", "12500", "123456", "neunhundertneunzig", "twelve thousand"],
+    [["234"], ["2345"], ["150"], ["12500"], ["123456"], ["neunhundertneunzig"], ["zwölftausend"]],
+    ids=["234", "2345", "150", "12500", "123456", "neunhundertneunzig", "zwölftausend"],
 )
 def test_no_full_parser_numbers_outside_the_patterns_stay_digits_only(words: list[str]) -> None:
     # D-04-11: no full number parser. A digit outside the round values and the
