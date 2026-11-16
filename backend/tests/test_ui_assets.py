@@ -258,6 +258,21 @@ def test_the_export_section_follows_the_ui_spec() -> None:
     assert ".avs-export__save" in coarse.group(1)
 
 
+def test_the_sidecar_button_posts_with_the_token_and_shows_one_banner() -> None:
+    script = (SCRIPTS / "play.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in script
+    assert "requesttoken: document.head.dataset.requesttoken" in script
+    assert "method: 'POST'" in script
+    assert "aria-busy" in script
+    # The name pattern of the 04-UI-SPEC and the only way a name reaches the page.
+    assert r"/^[^\/\\]{1,255}$/" in script
+    assert "slot.textContent = result.name" in script
+    for banner in SIDECAR_BANNERS:
+        assert f"'{banner}'" in script, banner
+    # The sidecar runs before the early return of a page without a medium.
+    assert script.index("getElementById('avs-sidecar')") < script.index("getElementById('avs-media')")
+
+
 def test_self_export_rules_find_the_accent() -> None:
     style = ".avs-export__download {\n\tcolor: var(--color-primary-element);\n}\n.other { color: x; }\n"
     rules = export_rules(style)

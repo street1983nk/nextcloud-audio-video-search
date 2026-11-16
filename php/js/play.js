@@ -9,12 +9,109 @@
  *   2. the jump button, which sets the position and focuses the medium but
  *      never starts playback,
  *   3. the mapping of a playback error to one of the banners the template
- *      rendered hidden, with one HEAD request to the same origin.
+ *      rendered hidden, with one HEAD request to the same origin,
+ *   4. the button that saves the subtitle draft next to the file (04-UI-SPEC,
+ *      E1 to E7): one POST with the request token, then exactly one of the
+ *      seven result banners the template rendered hidden.
  *
- * It only flips hidden attributes and moves the focus. It never builds markup
- * and never writes markup from a string.
+ * It only flips hidden, disabled and aria-busy, moves the focus and sets a
+ * file name through textContent. It never builds markup and never writes
+ * markup from a string.
  */
 'use strict'
+
+;(function () {
+  const button = document.getElementById('avs-sidecar')
+  const results = document.getElementById('avs-sidecar-result')
+  if (button === null || results === null) {
+    return
+  }
+
+  // The only value of an answer that reaches the page, and only in this shape.
+  const NAME = /^[^\/\\]{1,255}$/
+
+  // One banner per answer of POST /sidecar/{fileId}; anything else is E7.
+  function verdict (status, body) {
+    const name = body !== null && typeof body.name === 'string' && NAME.test(body.name) ? body.name : null
+    const reason = body !== null && typeof body.reason === 'string' ? body.reason : null
+    if (status === 201 && name !== null) {
+      return { id: 'avs-sidecar-e1', name }
+    }
+    if (status === 409 && name !== null) {
+      return { id: 'avs-sidecar-e2', name }
+    }
+    if (status === 403 && reason === 'not_writable') {
+      return { id: 'avs-sidecar-e3', name: null }
+    }
+    if (status === 403 && reason === 'blocked') {
+      return { id: 'avs-sidecar-e4', name: null }
+    }
+    if (status === 400 && reason === 'name_too_long') {
+      return { id: 'avs-sidecar-e5', name: null }
+    }
+    if (status === 429) {
+      return { id: 'avs-sidecar-e6', name: null }
+    }
+    return { id: 'avs-sidecar-e7', name: null }
+  }
+
+  // The success is a status: the focus stays on the button. Every other
+  // banner is an alert and takes the focus, like show() below.
+  function present (result) {
+    const banner = document.getElementById(result.id) ||
+      document.getElementById('avs-sidecar-e7')
+    if (banner === null) {
+      return
+    }
+    if (result.name !== null) {
+      const slot = banner.querySelector('.avs-export__name')
+      if (slot !== null) {
+        slot.textContent = result.name
+      }
+    }
+    banner.hidden = false
+    if (banner.id === 'avs-sidecar-e1') {
+      button.focus()
+    } else {
+      banner.focus()
+    }
+  }
+
+  button.hidden = false
+  button.addEventListener('click', function () {
+    if (button.disabled) {
+      return
+    }
+    for (const banner of results.querySelectorAll('.avs-banner')) {
+      banner.hidden = true
+    }
+    button.disabled = true
+    button.setAttribute('aria-busy', 'true')
+
+    fetch(button.dataset.url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        requesttoken: document.head.dataset.requesttoken,
+        Accept: 'application/json',
+      },
+    })
+      .then(function (response) {
+        return response.json().then(function (body) {
+          return verdict(response.status, body !== null && typeof body === 'object' ? body : null)
+        }, function () {
+          return verdict(response.status, null)
+        })
+      }, function () {
+        return verdict(0, null)
+      })
+      .then(function (result) {
+        button.disabled = false
+        button.removeAttribute('aria-busy')
+        present(result)
+      })
+  })
+})()
 
 ;(function () {
   const media = document.getElementById('avs-media')
