@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 04-10-PLAN.md
-last_updated: "2026-11-16T09:01:10.256Z"
+last_updated: "2026-11-16T13:55:08.272Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 81
-  completed_plans: 72
+  completed_plans: 73
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 9 of 17
+Plan: 10 of 17
 Status: Ready to execute
 Last activity: 2026-11-16
 
-Progress: [█████████░] 89%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -75,6 +75,7 @@ Progress: [█████████░] 89%
 | Phase 02 P12 | 75 min | 2 tasks | 14 files |
 | Phase 04 P07 | 35min | 1 tasks | 3 files |
 | Phase 04 P10 | 45 min | 3 tasks | 10 files |
+| Phase 04 P08 | 45 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -136,6 +137,8 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-07: FAST-cps-Gate 0,98 statt 5-%-Schritt 1,00 (gemessen 0,9762), damit die Schwelle als Gate wirken kann
 - [Phase 04]: 04-10: UNKNOWN-Freigabe-Attribut sperrt den Export fail-closed mit derselben 403-T24-Seite wie BLOCKED; Wiedergabe bleibt fail-open
 - [Phase 04]: 04-10: Spur-Route entfernt den von DataDisplayResponse gesetzten Content-Disposition-Header per addHeader(null), die Spur traegt keinen
+- [Phase 04]: 04-08: ffmpeg-Erwartungswert = len(cues) + Pfeil-Textzeilen (check_ffmpeg zaehlt Pfeilzeilen der zurueckcodierten Ausgabe, ffmpeg schreibt Textzeilen woertlich zurueck); negativer Wortstart wird in build_cues auf 0 geklemmt
+- [Phase 04]: 04-08: Messung 100k Woerter (12,6 h): Timeout 30 s bestaetigt; EXPORT_MAX_BODY_BYTES nach Formel 8 MiB statt 16 MiB aus 04-10, Entscheidung im Abgleichtest 04-09
 
 ### Pending Todos
 
@@ -161,6 +164,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T09:01:10.237Z
+Last session: 2026-11-16T13:53:52.032Z
 Stopped at: Completed 04-10-PLAN.md
 Resume file: None
