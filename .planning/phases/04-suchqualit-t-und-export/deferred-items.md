@@ -7,3 +7,7 @@
 ## Aus Plan 04-03 (16.11.2026)
 
 - `backend/tests/test_trilingual.py::test_every_user_document_exists_in_three_languages` ist rot: `docs/security-guidelines-abgleich.md` (Commit 09c3297) hat keine Fassungen `.en.md` und `.fr.md`. Schon vor 04-03 vorhanden, nicht von 04-03 verursacht. Lösung: EN/FR-Fassung nachziehen oder das Dokument aus `docs/` (Nutzerdokumente) in `.planning/` verschieben. ERLEDIGT 16.11.2026: EN- und FR-Fassung nachgezogen (Commit 80f9a48), Gate wieder gruen (25 passed).
+
+## Aus Plan 04-14 (16.11.2026)
+
+- Wortform-Lücke, gemessen bei der S7-Vorabmessung (Wegwerf-Index mit echter ngerman-Liste, `scripts/research/phase4/measure_s7_sentences.py`): "Fischart" findet ein Transkript mit "Fischarten" nicht, "Fischarten" und der Kopf "Fisch" schon. Vermutlich zerlegt der Splitter "fischarten" anders als "fischart" (fisch|arten gegen fisch|art) oder der Stamm der Zerlegungsteile weicht ab. Nicht von 04-14 verursacht (Analyzer und Präfix-Klausel unverändert); der Kandidat wurde deshalb nicht gewählt. Vor Phase-Abschluss bewerten: als bekannte Grenze benennen oder im Analyzer (Stemming der Zerlegungsteile) nachziehen, mit Messung.
