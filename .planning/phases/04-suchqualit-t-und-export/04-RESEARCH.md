@@ -423,20 +423,26 @@ new RegExp(`^${escapeRegExp(name)}(?:\\.([A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*)
 | A5 | Regex-Präfixabfrage bleibt auf großen Indexen schnell genug | Komposita | Suchzeit über Budget 2,5 s; nur relevant bei F1 Option B |
 | A6 | Pausenschwelle ca. 700 ms als Cue-Schnitt, Absatz bei 2 s im TXT | Pattern 5 | nur Lesbarkeit; am Korpus prüfen |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **F1 (Owner, blockiert SRCH-05/Kriterium 1): Wie soll "Haushalt" "Haushaltsplanberatung" finden?**
    - What we know: Rezept A (D-04-13) liefert `haushaltsplan|berat`; gemessen findet "Haushalt" nichts. Prune-Rezept gemessen schlechter. Kopf-Präfix gemessen wirksam mit Beifang.
    - Optionen: (A) Kriterium-Beispiel als bekannte Grenze dokumentieren (z. B. auf "Haushaltssatzung" ändern), D-04-13 unverändert; (B) zusätzliche abfrageseitige Kopf-Präfix-Gruppe auf `body_de` (kein Neuindex, Beifang wie "Haushälterin", nur Kopfteile); (C) Rezept ändern (widerspricht D-04-13, gemessene Variante schlechter, Neuindex).
    - Recommendation: (B), mit Messung von Beifang und Zeit an einem großen Index; Findling-Tabellen als Regressionsschutz.
+   - RESOLVED: D-04-14 (Option B, Präfix-Klausel zur Abfragezeit, kein Neuindex, Wortliste unverändert; umgesetzt in Plan 04-06, Container-Beleg in Plan 04-14)
 2. **F2 (Owner, blockiert EXP-03/D-04-04): Woher kommt die Sprache im Dateinamen?**
    - What we know: alle Vorschau-Versionen tragen `und`; py3langid läuft je Fenster im Kindprozess, das Ergebnis wird nicht gespeichert.
    - Optionen: (a) Worker speichert die Dateisprache (Wortgewichtete Mehrheit der behaltenen Fenster mit Sprache de/en/fr) in `transcript.language`, Altbestand wird beim Export einmal nachbestimmt; (b) Export-Route bestimmt sie jedes Mal per py3langid (auf de/en/fr beschränkt) über den Text; (c) Nutzer wählt die Sprache auf der Abspielseite. Unentscheidbar oder gemischt: ohne Sprachteil (`sitzung.vtt`, vom NC-36-Viewer akzeptiert) oder Mehrheitssprache.
    - Recommendation: (a) plus Rückfall (b) für Altbestand; bei Mischsprache die Mehrheitssprache; nie `und`.
+   - RESOLVED: D-04-15 (Option a plus Rückfall b, nie `und`; Plan 04-05 und 04-09)
 3. **F3 (Owner): 20 Zeichen/s hart oder gezählt?** Wortgetreue Untertitel schneller Rede können die Grenze ohne Kürzen oder Zeitversatz nicht immer halten. Recommendation: Grenze halten, wo Pausen es erlauben; Rest zählen, im NOTE-Block nennen, Anteil am Korpus messen und im Plan belegen. Dazu: Wörter > 42 Zeichen hart trennen?
+   - RESOLVED: D-04-16 (Best-Effort plus Zählung mit Schwelle als Gate, überlange Wörter ungetrennt auf eigener Zeile, Text nie verändert; Plan 04-07)
 4. **F4 (Owner): Export während die Datei noch transkribiert wird?** Recommendation: erlauben mit Hinweis "Teiltranskript" in TXT-Kopf und VTT-NOTE, oder Buttons erst nach fertigem Transkript; Owner wählt.
+   - RESOLVED: D-04-17 (Export erlaubt mit Hinweis T15 "Transkript bis mm:ss"; Plan 04-09, 04-10, 04-11)
 5. **F5 (Owner, Info zu D-04-07): Viewer zeigt die Nebendatei erst ab NC 36.** Schema passt; soll die eigene Abspielseite auf 33 bis 35 die erzeugte VTT als `<track>` zeigen? Recommendation: nicht in Phase 4 (kein Requirement), README ehrlich formulieren.
+   - RESOLVED: D-04-18 (Owner abweichend von der Empfehlung: Spur am Player IN Phase 4, README nennt NC 36; Plan 04-10, 04-11, 04-13)
 6. **Neue Texte (UI-Abnahme-Regel):** Button-Beschriftungen, "Neben das Medium legen", Kollisionsfehler mit Dateiname, Sperr-Hinweis, fehlendes Schreibrecht, Kopfzeile TXT/NOTE. Entwurf DE/EN/FR vor dem Bau zeigen (UI-Phase empfohlen, `workflow.ui_phase: true`).
+   - RESOLVED: Plan 04-03 (Owner-Freigabe der Texte T13 bis T35 und Kataloge vor dem Bau)
 
 ## Environment Availability
 

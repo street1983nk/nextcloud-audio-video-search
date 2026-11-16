@@ -20,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 2: Erfassung aller Dateien** - Arbeitsvorrat, Ereignisse, Crawl inkl. Gruppenordner und externer Speicher, Ausschlüsse, Inhalts-Dedupe
  (completed 2026-11-14)
+
 - [x] **Phase 3: Vorschau-Transkripte in der Suche** - Gehärteter Medien-Eingang, Parakeet-Vorschau mit Wächter und Abfangregel, echte Treffer mit Rechteprüfung zur Abfragezeit
 - [ ] **Phase 4: Suchqualität und Export** - Wortformen/Komposita/Zahlen, Filter-Verträglichkeit, Download-Sperre, SRT/VTT/TXT und Nebendatei als Untertitel-Entwurf
 - [ ] **Phase 5: Ressourcen, Profile und Modellbezug** - cgroup-RAM-Wächter, OOM-Isolation, Profilvorwahl, Reihenfolge, Rechenfenster, Modell-Download mit sha256, Lizenzen
@@ -166,7 +167,50 @@ Plans:
   4. Ein Nutzer legt `<Name>.<Sprache>.vtt` neben das Medium; eine vorhandene Datei gleichen Namens wird nie überschrieben.
   5. Über eine Freigabe mit Download-Sperre findet der Empfänger Treffer, bekommt aber keinen Export und keine Nebendatei.
 
-**Plans**: TBD
+**Plans:** 17 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md: Zahlen als Ziffer und Wort finden (0 bis 100, Ordinalia), 12:30 ohne Fehler
+- [ ] 04-02-PLAN.md: Datums- und Personenfilter mit Files-Semantik, Gruppe bleibt sichtbar
+- [ ] 04-03-PLAN.md: Owner-Freigabe Texte T13 bis T35, Kataloge, Gate gegen BITV-Behauptung
+- [ ] 04-04-PLAN.md: Unabhängige Untertitel-Prüfer nach Legitimitäts-Checkpoint
+- [ ] 04-05-PLAN.md: Mehrheitssprache je Datei, Store v4, Nachbestimmung für Altbestand
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-06-PLAN.md: Komposita-Präfix (Haushalt), Zahlenraum Hunderter/Tausender/Jahre, Messung
+- [ ] 04-07-PLAN.md: Cue-Bildung unter den EXP-02-Grenzen (TDD)
+- [ ] 04-10-PLAN.md: Download-Sperre als Dienst, Export- und Spur-Routen, Fehlerseite
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-08-PLAN.md: SRT/VTT/TXT-Writer mit drei unabhängigen Prüfern, Export-Messung
+- [ ] 04-12-PLAN.md: Nebendatei ablegen, nie überschreiben
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 04-09-PLAN.md: Container-Routen /export und /export/meta unter Leck-Regel
+- [ ] 04-11-PLAN.md: Abspielseite: Abschnitt Untertitel-Entwurf, Spur, Ablage-Knopf
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 04-13-PLAN.md: READMEs DE/EN/FR (Viewer erst ab NC 36), SECURITY, Changelog
+- [ ] 04-14-PLAN.md: S7-Testsätze vorab gemessen, E2E Suche und Filter, Workflow-Schritte, Download-Beweis
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 04-17-PLAN.md: E2E Export-Zustände, Fehlerseite, Ablage, Spur, Kontrast und axe
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 04-15-PLAN.md: Push nach Owner-Freigabe, CI-Beweis
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 04-16-PLAN.md: Gemeinsame UI-Abnahme mit dem Owner
+
 **UI hint**: yes
 **Research flag**: Standardmuster (Findling-Muster für Tantivy-Normalisierung). Viewer-Untertitel-Schema für NC 33 bis 35 unbelegt, Nebendatei vor dem Plan gegen den Viewer prüfen.
 
