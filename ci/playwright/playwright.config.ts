@@ -16,6 +16,9 @@
 // the extra CI time at a fraction of a full second grid. The language is in
 // the project name and so in every file name (play-de-w375-light.png).
 //
+// One more project, Firefox at 1280 px light, takes only the tests tagged
+// @firefox: the subtitle track of plan 04-17.
+//
 // One worker: several tests switch state of the one instance (the test result
 // switch in the admin section), so nothing may run beside them.
 import { defineConfig, devices } from '@playwright/test';
@@ -80,5 +83,18 @@ export default defineConfig({
 			metadata: { highContrast: true },
 		},
 		...languages,
+		// The subtitle track of plan 04-17 in a second engine (04-UI-SPEC T1:
+		// Chromium and Firefox). Only tests tagged @firefox run here; the
+		// export specs carry the tag on the track test alone.
+		{
+			name: 'firefox-w1280-light',
+			grep: /@firefox/,
+			use: {
+				...devices['Desktop Firefox'],
+				viewport: { width: 1280, height: 900 },
+				colorScheme: 'light',
+			},
+			metadata: { highContrast: false },
+		},
 	],
 });

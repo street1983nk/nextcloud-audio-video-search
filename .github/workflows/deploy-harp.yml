@@ -478,7 +478,7 @@ jobs:
         working-directory: app-src/ci/playwright
         run: |
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium firefox
 
       - name: Playwright on the running instance
         working-directory: app-src/ci/playwright
