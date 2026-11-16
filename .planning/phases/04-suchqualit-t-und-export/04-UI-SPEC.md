@@ -33,7 +33,10 @@ Nicht in Phase 4: Files-Kontextmenü (D-04-01), Menü statt Knöpfen (D-04-02), 
 | Tool | none (PHP-Template plus reines Browser-JS ohne Bundler; shadcn-Gate nicht anwendbar, kein React/Vite) |
 | Preset | not applicable |
 | Component library | none: Nextcloud-Server-CSS. Native `<button>` und `<a class="button">` erhalten die Server-Knopfgestalt (gleiche Gestalt wie der bestehende Knopf "Zu %s springen") |
-| Icon library | Material Design Icons (Pictogrammers, Apache-2.0) als Pfaddaten in Inline-SVG, 20 px, `aria-hidden="true" focusable="false"`, `fill="currentColor"`. Neu: `download` (Pfad `M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z`) auf den drei Download-Knöpfen, `file-plus` (Pfad vor dem Bau gegen pictogrammers.com prüfen) auf dem Ablage-Knopf. Erfolg/Fehler nutzen die vorhandenen Icons `info`/`error` aus `play.php`; für Erfolg zusätzlich MDI `check-circle-outline` |
+| Icon library | Material Design Icons (Pictogrammers, Apache-2.0) als Pfaddaten in Inline-SVG, 20 px, `aria-hidden="true" focusable="false"`, `fill="currentColor"`, `viewBox="0 0 24 24"`. Neu: `download` auf den drei Download-Knöpfen, `file-plus` auf dem Ablage-Knopf, `check-circle-outline` im Erfolgs-Banner E1. Fehler nutzen das vorhandene Icon `error` aus `play.php`. Pfaddaten unten, geprüft am 2026-11-16 gegen Templarian/MaterialDesign-SVG (`master/svg/<name>.svg`, Apache-2.0) |
+| Icon `download` | `M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z` (stimmt mit dem bisherigen Eintrag überein) |
+| Icon `file-plus` | `M14 2H6C4.89 2 4 2.89 4 4V20C4 21.11 4.89 22 6 22H13.81C13.28 21.09 13 20.05 13 19C13 15.69 15.69 13 19 13C19.34 13 19.67 13.03 20 13.08V8L14 2M13 9V3.5L18.5 9H13M23 20H20V23H18V20H15V18H18V15H20V18H23V20Z` |
+| Icon `check-circle-outline` | `M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M12 20C7.59 20 4 16.41 4 12S7.59 4 12 4 20 7.59 20 12 16.41 20 12 20M16.59 7.58L10 14.17L7.41 11.59L6 13L10 17L18 9L16.59 7.58Z` |
 | Font | Server-Schrift über `var(--font-face)` |
 
 Verbindliche Regeln aus 01-UI-SPEC.md gelten weiter: nur Nextcloud-CSS-Variablen, kein Hex/RGB, kein `!important`, kein `outline: none`, kein `style`-Attribut, keine Inline-Skripte (CSP), flach (keine Schatten, keine Verläufe, keine Karte in Karte), jeder Text über `$l->t()`/`$l->n()`, jede Fremdangabe mit `p()`, Klassen-Präfix `avs-`. `play.js` baut weiterhin **kein Markup aus Strings**: Es schaltet `hidden`, setzt `disabled`/`aria-busy`, verschiebt den Fokus und setzt Dateinamen nur über `textContent`.
@@ -148,6 +151,16 @@ Zustand X4 (kein Transkript) rendert den **ganzen Abschnitt nicht** (siehe Zusta
 
 Prüfpunkt vor dem Bau: `<a class="button">` muss im Server-CSS von NC 33, 34 und 35 dieselbe Gestalt wie ein `<button>` bekommen. Fällt das in einer Version weg, bekommt `.avs-export__download` eigene Regeln nach dem Muster `.avs-banner__action` (Rand `2px solid var(--color-border-maxcontrast)`, Radius `var(--border-radius-element)`, Grund `var(--color-main-background)`, Hover `var(--color-background-hover)`), nie eine Akzentfarbe.
 
+**Befund Prüfpunkt (2026-11-16, Quelle `nextcloud/server`, Datei `core/css/inputs.scss` per raw.githubusercontent.com):**
+
+| Version | Fundstelle "Default global values" | Fundstelle "'Click' inputs" | Ergebnis |
+|---------|-----------------------------------|-----------------------------|----------|
+| NC 33 (`stable33`) | Zeile 72: `.button` in derselben Selektorliste wie `button:not(.button-vue, [class^="vs__"])` (ab Zeile 64) | Zeile 213: `.button` in derselben Liste wie `button:not(...)` (Liste ab Zeile 208) | gleiche Gestalt |
+| NC 34 (`stable34`) | Zeile 63, Liste ab Zeile 56 | Zeile 204, Liste ab Zeile 198 | gleiche Gestalt |
+| NC 35 (`stable35`) | Zeile 63 (Datei byte-gleich mit stable34) | Zeile 204 | gleiche Gestalt |
+
+Die Regel ist klassenbasiert (`.button`), gilt also für `<a class="button">` genauso wie für `<button>`: Innenabstand `calc((var(--default-clickable-area) - 1lh) / 2) calc(3 * var(--default-grid-baseline))`, `min-height: var(--default-clickable-area)`, Grund `var(--color-primary-element-light)`, Text `var(--color-primary-element-light-text)`, Hover `var(--color-primary-element-light-hover)`, Fokusring `:focus-visible` (2px `--color-main-text`). Der Ersatz nach `.avs-banner__action` wird deshalb **nicht** gebraucht. Hinweis: Der Server-Standardknopf hat den hellen Primär-Ton (`--color-primary-element-light`), denselben wie der Bestandsknopf "Zu %s springen"; das ist die neutrale Server-Gestalt, nicht der Akzent `--color-primary-element` aus der Farbregel. Die Abnahme X1 prüft, dass beide Knöpfe gleich aussehen. Unterschied `<a>`: Die globale Link-Regel `a { text-decoration: none; color: var(--color-main-text); cursor: pointer; }` aus `core/css/styles.scss` ist in stable33, 34 und 35 gleich; der Link-Knopf bekommt also keine Unterstreichung, `.avs-export__download` braucht dafür keine eigene Regel.
+
 ### Zustände des Export-Abschnitts
 
 Der Abschnitt erscheint nur im Seitenzustand "Bereit" (Medium sichtbar). In allen anderen Seitenzuständen (nicht verfügbar, keine Audio-/Videodatei, Wiedergabe gesperrt) fehlt er, genau wie der Ausschnitt-Block.
@@ -158,6 +171,12 @@ Der Abschnitt erscheint nur im Seitenzustand "Bereit" (Medium sichtbar). In alle
 | X4 | `none` | Ausgeschlossen (Nutzer/Datei/Ausschlussfrage gescheitert), Container kennt die Datei nicht, kein fertiges Stück, Grund vorhanden (A6 bis A13), Container still | Abschnitt fehlt ganz. Der Ausschnitt-Block erklärt bereits, warum es keinen Text gibt |
 | X2 | `partial` | Transkript vorhanden, Datei wird noch verarbeitet (`partial: true`), Endzeit des letzten fertigen Stücks bekannt | wie X1 plus Teil-Hinweis T15 mit Zeit `<time class="avs-play__time" datetime="PT…S">h:mm:ss / m:ss</time>` (gleiche Uhrformatierung wie "Startet bei") |
 | X1 | `available` | Transkript vorhanden, nicht in Arbeit | T13, T14, drei Knöpfe, Ablage-Block |
+
+**Verhältnis zu Phase 3 (geklärt 2026-11-16):** Es gibt **zwei** verschiedene Sperr-Zustände, die nicht verwechselt werden dürfen.
+
+1. **Seitenzustand `download_blocked` (Phase 3, unverändert, 03-UI-SPEC "Zustände des Ausschnitt-Blocks"):** Die Freigabe sperrt den Download **und** der Server erlaubt Ansehen ohne Download nicht (`shareapi_allow_view_without_download` aus). Die Seite zeigt kein Medium, keinen Ausschnitt-Block und **keinen Export-Abschnitt**, auch keinen Titel T13 und keinen Satz T24.
+2. **X3 (Phase 4, nur im Seitenzustand "Bereit"):** Der Server erlaubt Ansehen ohne Download, die Freigabe sperrt den Download. Das Medium spielt, der Ausschnitt-Block steht wie gewohnt, der Export-Abschnitt zeigt nur Titel T13 und Satz T24, ohne Knöpfe, Ablage, Spur oder Export-URL.
+3. **Unentscheidbares Freigabe-Attribut:** Lässt sich beim Export nicht sicher bestimmen, ob Download erlaubt ist (Attribut fehlt, Fehler beim Lesen), gilt X4: Der Abschnitt fehlt ganz. Nie erscheint dann ein Sperrsatz T24, der eine Sperre behauptet, die nicht feststeht, und nie erscheinen Knöpfe.
 
 Leck-Regel (aus 03-UI-SPEC.md, erweitert): X4 ist für "ausgeschlossen", "nicht active" und "unbekannt" **byte-gleich** (kein Abschnitt). X3 hängt nur am Freigabe-Attribut, nicht am Container; der Sperr-Hinweis verrät daher nichts über Transkript oder Ausschluss. Der Controller fragt den Container für X1/X2 über denselben Weg und unter denselben Bedingungen wie für den Ausschnitt.
 
@@ -396,3 +415,73 @@ Keine neuen Frontend-Pakete, kein npm, keine Vue-Komponenten. (webvtt-py und srt
 - [ ] Dimension 6 Registry Safety: PASS
 
 **Approval:** pending
+
+---
+
+## Owner-Freigabe Phase 4
+
+**Stand: vorgelegt 2026-11-16, Antwort offen.** Owner-Änderungen werden wörtlich in die Copywriting-Tabelle und hier übernommen. Vor der Antwort werden keine Kataloge geschrieben.
+
+### 1. Texte T13 bis T35 (T28 frei)
+
+| Nr. | DE | EN | FR |
+|-----|----|----|----|
+| T13 | Untertitel-Entwurf | Subtitle draft | Brouillon de sous-titres |
+| T14 | Automatisch erstellt und nicht geprüft. SRT und VTT enthalten Zeitmarken, TXT nur den Text. | Created automatically and not reviewed. SRT and VTT contain time marks, TXT only the text. | Créé automatiquement et non vérifié. SRT et VTT contiennent des repères temporels, TXT uniquement le texte. |
+| T15 | Transkript bis %s, Datei wird noch verarbeitet. | Transcript up to %s, the file is still being processed. | Transcription jusqu'à %s, le fichier est encore en cours de traitement. |
+| T16 | SRT herunterladen | Download SRT | Télécharger le SRT |
+| T17 | VTT herunterladen | Download VTT | Télécharger le VTT |
+| T18 | TXT herunterladen | Download TXT | Télécharger le TXT |
+| T19 | Neben die Datei legen | Save next to the file | Enregistrer à côté du fichier |
+| T20 | Legt %s in denselben Ordner wie die Aufnahme. Eine vorhandene Datei wird nie überschrieben. | Saves %s in the same folder as the recording. An existing file is never overwritten. | Enregistre %s dans le même dossier que l'enregistrement. Un fichier existant n'est jamais remplacé. |
+| T20b | Legt die Untertitel als VTT-Datei in denselben Ordner wie die Aufnahme. Eine vorhandene Datei wird nie überschrieben. | Saves the subtitles as a VTT file in the same folder as the recording. An existing file is never overwritten. | Enregistre les sous-titres en fichier VTT dans le même dossier que l'enregistrement. Un fichier existant n'est jamais remplacé. |
+| T21 | %s liegt jetzt im selben Ordner wie die Aufnahme. | %s is now in the same folder as the recording. | %s se trouve maintenant dans le même dossier que l'enregistrement. |
+| T22a | Datei existiert bereits | File already exists | Le fichier existe déjà |
+| T22b | Im Ordner liegt schon eine Datei namens %s. Sie wird nicht überschrieben. Für eine neue Ablage die vorhandene Datei zuerst löschen oder umbenennen. | The folder already contains a file named %s. It is not overwritten. To save again, delete or rename the existing file first. | Le dossier contient déjà un fichier nommé %s. Il n'est pas remplacé. Pour enregistrer à nouveau, supprimez ou renommez d'abord le fichier existant. |
+| T23 | In diesem Ordner dürfen keine Dateien angelegt werden. Herunterladen geht trotzdem. | Files cannot be created in this folder. Downloading still works. | Il n'est pas possible de créer des fichiers dans ce dossier. Le téléchargement reste possible. |
+| T24 | Diese Freigabe erlaubt keine Downloads. Untertitel und Transkript lassen sich deshalb weder herunterladen noch ablegen. | This share does not allow downloads. Subtitles and transcript can therefore neither be downloaded nor saved. | Ce partage n'autorise pas les téléchargements. Les sous-titres et la transcription ne peuvent donc être ni téléchargés ni enregistrés. |
+| T25 | Der Untertitel-Entwurf lässt sich gerade nicht erstellen. Die Wiedergabe funktioniert trotzdem. Später erneut versuchen. | The subtitle draft cannot be created right now. Playback works regardless. Try again later. | Le brouillon de sous-titres ne peut pas être créé pour le moment. La lecture fonctionne quand même. Réessayez plus tard. |
+| T26 | Der Name der Untertiteldatei wäre zu lang. Nach einer Umbenennung der Aufnahme in einen kürzeren Namen erneut versuchen. | The name of the subtitle file would be too long. Rename the recording to a shorter name and try again. | Le nom du fichier de sous-titres serait trop long. Renommez l'enregistrement avec un nom plus court et réessayez. |
+| T27 | Zu viele Versuche in kurzer Zeit. Etwas später erneut versuchen. | Too many attempts in a short time. Try again a little later. | Trop de tentatives en peu de temps. Réessayez un peu plus tard. |
+| T29 | Der Untertitel-Entwurf konnte nicht erstellt werden | The subtitle draft could not be created | Le brouillon de sous-titres n'a pas pu être créé |
+| T29b | Die Untertitel wurden nicht abgelegt | The subtitles were not saved | Les sous-titres n'ont pas été enregistrés |
+| T30 | Zurück zur Wiedergabe | Back to playback | Retour à la lecture |
+| T31 | %s, Untertitel-Entwurf | %s, subtitle draft | %s, brouillon de sous-titres |
+| T32 | Deutsch | German | Allemand |
+| T33 | Englisch | English | Anglais |
+| T34 | Französisch | French | Français |
+| T35 | Untertitel-Entwurf, automatisch erstellt und nicht geprüft. | Subtitle draft, created automatically and not reviewed. | Brouillon de sous-titres, créé automatiquement et non vérifié. |
+
+Bestandsschlüssel "Show in Files" (E1-Aktion) bleibt mit Katalogwortlaut "In Dateien anzeigen" / "Afficher dans Fichiers".
+
+### 2. T15 (D-04-17, Wortlaut vor dem Bau zeigen)
+
+DE "Transkript bis %s, Datei wird noch verarbeitet." übernimmt den Owner-Wortlaut aus D-04-17 wörtlich (`%s` = Uhrzeit des letzten fertigen Stücks, z. B. "12:34" oder "1:02:03"). Steht an drei Stellen: Abspielseite (X2), TXT-Kopf Zeile 3, VTT-NOTE. Kein `-->`, kein Zeilenumbruch. Alternative nur auf Zuruf: "Transkript bis %s, die Datei wird noch verarbeitet."
+
+### 3. Gestaltungsfragen O1 bis O10 (Empfehlung)
+
+- O1 Texte wie oben freigeben: Empfehlung ja.
+- O2 Knopftext mit Verb ("SRT herunterladen" statt "SRT"): Empfehlung ja (Screenreader, WCAG 2.5.3).
+- O3 Ablage-Knopf "Neben die Datei legen" statt "Als Nebendatei ablegen": Empfehlung "Neben die Datei legen".
+- O4 SRT ohne Entwurf-Kennzeichen im Dateiinhalt: Empfehlung ja (SRT hat keinen Kommentar; Kennzeichnung über Titel, Spurname, VTT-NOTE, TXT-Kopf, README).
+- O5 Untertitel-Spur standardmäßig aus: Empfehlung ja (ungeprüfter Entwurf, CC-Schalter reicht).
+- O6 Bei Download-Sperre Satz T24 statt kommentarlosem Fehlen: Empfehlung ja, Knöpfe trotzdem nicht im DOM.
+- O7 Ohne Schreibrecht Satz T23 statt grauem Knopf: Empfehlung Satz.
+- O8 Ablage nur mit JS (Downloads auch ohne JS): Empfehlung ja.
+- O9 Download-Fehler als Fehlerseite im App-Rahmen (T29, Text, Aktion T30): Empfehlung ja.
+- O10 Hinweis "Viewer zeigt Nebendatei ab NC 36" nur im README, nicht in der UI: Empfehlung ja.
+
+### 4. X3-Lesart (siehe "Verhältnis zu Phase 3")
+
+- Seite `download_blocked` (Ansehen ohne Download aus): kein Medium, kein Export-Abschnitt (wie Phase 3).
+- X3 (Ansehen erlaubt, Freigabe sperrt Download): Medium spielt, Export-Abschnitt nur mit T13 und T24.
+- Freigabe-Attribut unentscheidbar: Abschnitt fehlt (X4), nie ein falscher Sperrsatz.
+
+### 5. Technische Befunde
+
+- Icon-Pfade `download`, `file-plus`, `check-circle-outline` gegen Templarian/MaterialDesign-SVG geprüft (Design-System-Tabelle); `download` stimmt mit dem Entwurf überein.
+- `<a class="button">` hat in NC 33, 34, 35 dieselbe Server-Gestalt wie `<button>` (`core/css/inputs.scss`, Befund unter CSS); kein Ersatzstil nötig. Die Knöpfe tragen den hellen Server-Standardton wie "Zu %s springen", keinen kräftigen Akzent.
+
+### Owner-Antwort
+
+(offen)
