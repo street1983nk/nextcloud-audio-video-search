@@ -268,6 +268,77 @@ export async function screenshot(page: Page, name: string, testInfo: TestInfo, v
 	});
 }
 
+// The tallest picture wholePage takes; the playback page needs about 2000 px at 375 px.
+const WHOLE_PAGE_MAX_HEIGHT = 8000;
+
+/**
+ * The height the viewport needs so that no inner scroller of the page hides
+ * content: the viewport plus the largest overflow of an element that scrolls
+ * vertically (#app-content of Nextcloud, the result list of the search).
+ */
+async function heightWithoutInnerScroll(page: Page): Promise<number> {
+	return page.evaluate(() => {
+		let overflow = 0;
+		for (const element of Array.from(document.querySelectorAll('*'))) {
+			const style = getComputedStyle(element);
+			if (!['auto', 'scroll', 'overlay'].includes(style.overflowY)) {
+				continue;
+			}
+			overflow = Math.max(overflow, element.scrollHeight - element.clientHeight);
+		}
+		return Math.ceil(window.innerHeight + overflow);
+	});
+}
+
+/**
+ * A picture of the whole page for the review of phase 4 (owner 16.11.2026).
+ * fullPage alone stops at the viewport on Nextcloud: the document never grows,
+ * #app-content scrolls inside it, so screenshot() of a playback page is 900 px
+ * high whatever lies below. This grows the viewport until no inner scroller
+ * overflows (a few rounds, a layout may grow with it), takes the picture with
+ * fullPage as well and puts the viewport back.
+ */
+export async function wholePage(page: Page, name: string, testInfo: TestInfo, variant?: string): Promise<void> {
+	const original = page.viewportSize();
+	if (original === null) {
+		throw new Error('wholePage needs a page with a fixed viewport');
+	}
+	try {
+		let height = original.height;
+		for (let round = 0; round < 4; round += 1) {
+			const needed = Math.min(WHOLE_PAGE_MAX_HEIGHT, await heightWithoutInnerScroll(page));
+			if (needed <= height) {
+				break;
+			}
+			height = needed;
+			await page.setViewportSize({ width: original.width, height });
+		}
+		await screenshot(page, name, testInfo, variant);
+	} finally {
+		await page.setViewportSize(original);
+	}
+}
+
+/** A picture of one part of the page (the export section, a banner) under the same naming as screenshot(). */
+export async function screenshotPart(locator: Locator, name: string, testInfo: TestInfo, variant?: string): Promise<void> {
+	await expect(locator).toBeVisible();
+	await locator.screenshot({
+		path: `${process.env.AVS_SCREENSHOT_DIR ?? 'screenshots'}/${name}-${variant ?? testInfo.project.name}.png`,
+		animations: 'disabled',
+		caret: 'hide',
+	});
+}
+
+/**
+ * The pointer leaves the content and nothing keeps the focus: a picture after
+ * a click shows the page at rest, not the hover or focus colour of the button
+ * clicked last (X5, X6: the TXT button looked darker than SRT and VTT).
+ */
+export async function restPointerAndFocus(page: Page): Promise<void> {
+	await page.mouse.move(0, 0);
+	await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+}
+
 // -- the Unified Search dialog (moved here from play.spec.ts for plan 03-18) --
 
 // The provider name in the three catalogue languages (php/l10n). The result
@@ -740,17 +811,71 @@ export function fill(text: string, value: string): string {
 /**
  * The user and display language of a project for the specs of plan 04-17:
  * the basic matrix of 04-UI-SPEC is German (elke, de_DE), the French project
- * reads as fleur, high contrast as dora (English). All three are in the group
- * "review", which receives S7-Übung.webm and s7-zahlwort.wav.
+ * reads as fleur, high contrast as dora. dora reads English in the seed (her
+ * theme is the point of her), so a test of the high contrast project runs
+ * inside withLanguage(): 04-UI-SPEC wants the high contrast pictures in German
+ * too (owner 16.11.2026). All three are in the group "review", which receives
+ * S7-Übung.webm and s7-zahlwort.wav.
  */
 export function phase4User(testInfo: TestInfo): { user: User; language: Language } {
 	if (isHighContrast(testInfo)) {
-		return { user: users.dora(), language: 'en' };
+		return { user: users.dora(), language: 'de' };
 	}
 	if (testInfo.project.metadata?.language === 'fr') {
 		return { user: users.fleur(), language: 'fr' };
 	}
 	return { user: users.elke(), language: 'de' };
+}
+
+// The settings ci/seed.sh gives elke and fleur, for every language a test can ask for.
+const USER_LANGUAGE: Record<Language, { lang: string; locale: string }> = {
+	de: { lang: 'de_DE', locale: 'de_DE' },
+	en: { lang: 'en', locale: 'en_US' },
+	fr: { lang: 'fr', locale: 'fr_FR' },
+};
+
+/** One core setting of a user by occ, or null when the user has none (occ answers 1 then). */
+function coreSetting(uid: string, key: string): string | null {
+	try {
+		return occ('user:setting', uid, 'core', key).trim();
+	} catch (error) {
+		if ((error as { status?: number }).status === 1) {
+			return null;
+		}
+		throw error;
+	}
+}
+
+function restoreCoreSetting(uid: string, key: string, value: string | null): void {
+	if (value === null) {
+		occ('user:setting', '--delete', uid, 'core', key);
+	} else {
+		occ('user:setting', uid, 'core', key, value);
+	}
+}
+
+/**
+ * Run body with the user reading the given language (core lang and locale by
+ * occ, the way ci/seed.sh sets elke and fleur) and put both settings back in
+ * finally (T-04-52). The review pictures of phase 4 are German (04-UI-SPEC,
+ * owner 16.11.2026), also where the state needs alice, carol or dora, who read
+ * English everywhere else. One worker runs the specs, so no other test meets
+ * the user in the meantime. Set it before the login of the user.
+ */
+export async function withLanguage<T>(user: User, language: Language, body: () => Promise<T>): Promise<T> {
+	const wanted = USER_LANGUAGE[language];
+	const before = { lang: coreSetting(user.name, 'lang'), locale: coreSetting(user.name, 'locale') };
+	if (before.lang === wanted.lang && before.locale === wanted.locale) {
+		return body();
+	}
+	occ('user:setting', user.name, 'core', 'lang', wanted.lang);
+	occ('user:setting', user.name, 'core', 'locale', wanted.locale);
+	try {
+		return await body();
+	} finally {
+		restoreCoreSetting(user.name, 'lang', before.lang);
+		restoreCoreSetting(user.name, 'locale', before.locale);
+	}
 }
 
 /** The name of the export of a file: last extension cut, then language and format (D-04-04). */
@@ -807,16 +932,27 @@ export const ALL_VARIANTS: readonly Variant[] = [
 ];
 
 /**
- * Pictures of the page as it stands in the given widths and schemes (the
- * pattern of preview.spec.ts shots()), waiting for the anchor before each; the
- * page goes back to 1280 px light afterwards.
+ * Pictures of the whole page as it stands in the given widths and schemes (the
+ * pattern of preview.spec.ts shots()), waiting for the anchor before each, and
+ * when a part is given a picture of that part as well (<partName>-w<width>-<scheme>);
+ * the page goes back to 1280 px light afterwards.
  */
-export async function screenshotVariants(page: Page, name: string, testInfo: TestInfo, variants: readonly Variant[], anchor: Locator): Promise<void> {
+export async function screenshotVariants(
+	page: Page,
+	name: string,
+	testInfo: TestInfo,
+	variants: readonly Variant[],
+	anchor: Locator,
+	part?: readonly [string, Locator],
+): Promise<void> {
 	for (const [width, colorScheme] of variants) {
 		await page.setViewportSize({ width, height: 900 });
 		await page.emulateMedia({ colorScheme });
 		await expect(anchor).toBeVisible();
-		await screenshot(page, name, testInfo, `w${width}-${colorScheme}`);
+		await wholePage(page, name, testInfo, `w${width}-${colorScheme}`);
+		if (part !== undefined) {
+			await screenshotPart(part[1], part[0], testInfo, `w${width}-${colorScheme}`);
+		}
 	}
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.emulateMedia({ colorScheme: 'light' });

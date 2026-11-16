@@ -43,13 +43,16 @@ import {
 	requestToken,
 	S7_VIDEO_NAME,
 	screenshot,
+	screenshotPart,
 	screenshotVariants,
 	sha256OfFile,
 	textContrast,
 	TRANSCRIPT_WITHIN_MS,
 	updateShare,
 	users,
+	wholePage,
 	withContainerStopped,
+	withLanguage,
 	type User,
 } from './helpers';
 
@@ -141,6 +144,117 @@ async function expectFrameShown(page: Page): Promise<void> {
 		.toBe(true);
 }
 
+/** A node of the DevTools protocol DOM tree, as far as the captions menu reads it. */
+type UaNode = {
+	backendNodeId: number;
+	nodeType?: number;
+	nodeValue?: string;
+	attributes?: string[];
+	children?: UaNode[];
+	shadowRoots?: UaNode[];
+};
+
+function uaChildren(node: UaNode): UaNode[] {
+	return [...(node.children ?? []), ...(node.shadowRoots ?? [])];
+}
+
+/** Every node of the tree with the pseudo element name, in document order. */
+function findPseudo(node: UaNode, pseudo: string, found: UaNode[] = []): UaNode[] {
+	const attributes = node.attributes ?? [];
+	const at = attributes.indexOf('pseudo');
+	if (at !== -1 && attributes[at + 1] === pseudo) {
+		found.push(node);
+	}
+	for (const child of uaChildren(node)) {
+		findPseudo(child, pseudo, found);
+	}
+	return found;
+}
+
+function uaText(node: UaNode): string {
+	return (node.nodeType === 3 ? (node.nodeValue ?? '') : '') + uaChildren(node).map(uaText).join(' ');
+}
+
+/**
+ * Open the captions menu of the native controls of Chromium the way a user
+ * does, with the mouse, and answer 'open' once the menu shows the label, else
+ * why not. The controls live in the closed user agent shadow tree (as the
+ * loading ring of expectMediaSettled); the DevTools protocol finds the
+ * captions button by its pseudo element and its box, the click is a real one.
+ * Narrow players put the button into the overflow menu, so that one opens first.
+ */
+async function openCaptionsMenu(page: Page, label: string): Promise<string> {
+	const media = page.locator('video#avs-media');
+	await media.hover();
+	const cdp = await page.context().newCDPSession(page);
+	try {
+		const tree = async (): Promise<UaNode> => {
+			const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.getElementById("avs-media")', objectGroup: 'avs-captions' });
+			if (result.objectId === undefined) {
+				throw new Error('no medium');
+			}
+			const { node } = await cdp.send('DOM.describeNode', { objectId: result.objectId, depth: -1, pierce: true });
+			return node as UaNode;
+		};
+		/** The centre of the first node with the pseudo element that has a box on screen, or null. */
+		const visible = async (pseudo: string): Promise<{ node: UaNode; x: number; y: number } | null> => {
+			for (const node of findPseudo(await tree(), pseudo)) {
+				try {
+					const { model } = await cdp.send('DOM.getBoxModel', { backendNodeId: node.backendNodeId });
+					if (model.width >= 1 && model.height >= 1) {
+						const quad = model.border;
+						return { node, x: (quad[0] + quad[4]) / 2, y: (quad[1] + quad[5]) / 2 };
+					}
+				} catch {
+					// No box: the node is not rendered (display: none), try the next one.
+				}
+			}
+			return null;
+		};
+		const CAPTIONS = '-internal-media-controls-toggle-closed-captions-button';
+		let button = await visible(CAPTIONS);
+		if (button === null) {
+			const overflow = await visible('-internal-media-controls-overflow-button');
+			if (overflow === null) {
+				return 'neither the captions button nor the overflow menu of the controls is on screen';
+			}
+			await page.mouse.click(overflow.x, overflow.y);
+			button = await visible(CAPTIONS);
+			if (button === null) {
+				return 'the overflow menu holds no captions entry on screen';
+			}
+		}
+		await page.mouse.click(button.x, button.y);
+		let state = 'the captions menu did not open';
+		try {
+			await expect
+				.poll(
+					async () => {
+						const list = await visible('-internal-media-controls-text-track-list');
+						if (list === null) {
+							state = 'the captions menu did not open';
+						} else if (!uaText(list.node).includes(label)) {
+							state = `the captions menu does not show "${label}": ${uaText(list.node).replace(/\s+/g, ' ').trim()}`;
+						} else {
+							state = 'open';
+						}
+						return state;
+					},
+					{ timeout: 5_000 },
+				)
+				.toBe('open');
+		} catch {
+			// state says why; the caller notes the gap.
+		}
+		return state;
+	} catch (error) {
+		return `the controls could not be read: ${String(error)}`;
+	} finally {
+		await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'avs-captions' }).catch(() => undefined);
+		await cdp.detach();
+	}
+}
+
 // ---------------------------------------------------------------------------
 // E1 and E2: the sidecar is laid down once, the second click never touches it.
 
@@ -171,7 +285,9 @@ test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und
 	const content = await davText(user, name);
 	expect(content.startsWith(`WEBVTT\n\nNOTE\n${T.T35[language]}\n`), 'the sidecar is the VTT with T35 in its NOTE').toBe(true);
 	const before = await sha256OfFile(user, name);
-	await screenshotVariants(page, 'e1', testInfo, ALL_VARIANTS, created);
+	// The pointer leaves the button it clicked; the focus stays where the contract wants it.
+	await page.mouse.move(0, 0);
+	await screenshotVariants(page, 'e1', testInfo, ALL_VARIANTS, created, ['e1-banner', created]);
 	await expectAxeClean(page, 'e1', testInfo);
 
 	// E2: the same click again is a collision, nothing is written.
@@ -179,7 +295,8 @@ test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und
 	const collision = await expectErrorBanner(page, 2, fill(T.T22b[language], name), T.T22a[language]);
 	await expect(created).toBeHidden();
 	expect(await sha256OfFile(user, name), 'the second click left the sidecar byte for byte as it was').toBe(before);
-	await screenshotVariants(page, 'e2', testInfo, ALL_VARIANTS, collision);
+	await page.mouse.move(0, 0);
+	await screenshotVariants(page, 'e2', testInfo, ALL_VARIANTS, collision, ['e2-banner', collision]);
 	await expectAxeClean(page, 'e2', testInfo);
 });
 
@@ -190,17 +307,22 @@ test('E2 Kollision in Hochkontrast und Französisch @phase4 @axe @screenshot', a
 	const video = fileIds.s7Video();
 	const name = exportName(S7_VIDEO_NAME, 'vtt');
 	await expectTranscript(user, video);
-	await login(page, user);
-	await page.goto(playAt(video, START_SECONDS));
-	await expect(sidecarButton(page)).toBeVisible();
-	// The first click lays the sidecar down, unless an earlier attempt already did.
-	expect([201, 409]).toContain((await clickSidecar(page, video)).status());
-	const before = await sha256OfFile(user, name);
-	expect((await clickSidecar(page, video)).status()).toBe(409);
-	await expectErrorBanner(page, 2, fill(T.T22b[language], name), T.T22a[language]);
-	expect(await sha256OfFile(user, name)).toBe(before);
-	await screenshot(page, 'e2', testInfo);
-	await expectAxeClean(page, 'e2', testInfo);
+	// dora (high contrast) reads English in the seed; her picture is German as well (04-UI-SPEC).
+	await withLanguage(user, language, async () => {
+		await login(page, user);
+		await page.goto(playAt(video, START_SECONDS));
+		await expect(sidecarButton(page)).toBeVisible();
+		// The first click lays the sidecar down, unless an earlier attempt already did.
+		expect([201, 409]).toContain((await clickSidecar(page, video)).status());
+		const before = await sha256OfFile(user, name);
+		expect((await clickSidecar(page, video)).status()).toBe(409);
+		const collision = await expectErrorBanner(page, 2, fill(T.T22b[language], name), T.T22a[language]);
+		expect(await sha256OfFile(user, name)).toBe(before);
+		await page.mouse.move(0, 0);
+		await wholePage(page, 'e2', testInfo);
+		await screenshotPart(collision, 'e2-banner', testInfo);
+		await expectAxeClean(page, 'e2', testInfo);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -215,21 +337,26 @@ test('E3 Schreibrecht nach dem Seitenaufbau entzogen: T29b und T23, nichts angel
 	const shareId = await ablageShare();
 	const target = `${ABLAGE_FOLDER}/${exportName(ABLAGE_FILE, 'vtt')}`;
 	await expectTranscript(carol, ablage);
-	await login(page, carol);
-	await page.goto(playAt(ablage, START_SECONDS));
-	await expect(sidecarButton(page)).toBeVisible();
+	// carol holds the share of the folder and reads English elsewhere; the picture is German (04-UI-SPEC).
+	await withLanguage(carol, 'de', async () => {
+		await login(page, carol);
+		await page.goto(playAt(ablage, START_SECONDS));
+		await expect(sidecarButton(page)).toBeVisible();
 
-	await updateShare(alice, shareId, { permissions: READ_ONLY });
-	try {
-		const answer = await clickSidecar(page, ablage);
-		expect(answer.status()).toBe(403);
-		await expectErrorBanner(page, 3, T.T23.en, T.T29b.en);
-		expect(await davStatus(alice, target), 'no sidecar was written into the folder').toBe(404);
-		await screenshot(page, 'e3', testInfo);
-		await expectAxeClean(page, 'e3', testInfo);
-	} finally {
-		await updateShare(alice, shareId, { permissions: ABLAGE_PERMISSIONS });
-	}
+		await updateShare(alice, shareId, { permissions: READ_ONLY });
+		try {
+			const answer = await clickSidecar(page, ablage);
+			expect(answer.status()).toBe(403);
+			await expectErrorBanner(page, 3, T.T23.de, T.T29b.de);
+			expect(await davStatus(alice, target), 'no sidecar was written into the folder').toBe(404);
+			await page.mouse.move(0, 0);
+			await wholePage(page, 'e3', testInfo);
+			await screenshotPart(resultBanner(page, 3), 'e3-banner', testInfo);
+			await expectAxeClean(page, 'e3', testInfo);
+		} finally {
+			await updateShare(alice, shareId, { permissions: ABLAGE_PERMISSIONS });
+		}
+	});
 });
 
 test('E4 Download-Sperre nach dem Seitenaufbau gesetzt: T29b und T24, nichts angelegt @phase4 @axe', async ({ page }, testInfo) => {
@@ -241,21 +368,26 @@ test('E4 Download-Sperre nach dem Seitenaufbau gesetzt: T29b und T24, nichts ang
 	const shareId = await ablageShare();
 	const target = `${ABLAGE_FOLDER}/${exportName(ABLAGE_FILE, 'vtt')}`;
 	await expectTranscript(carol, ablage);
-	await login(page, carol);
-	await page.goto(playAt(ablage, START_SECONDS));
-	await expect(sidecarButton(page)).toBeVisible();
+	// carol holds the share of the folder and reads English elsewhere; the picture is German (04-UI-SPEC).
+	await withLanguage(carol, 'de', async () => {
+		await login(page, carol);
+		await page.goto(playAt(ablage, START_SECONDS));
+		await expect(sidecarButton(page)).toBeVisible();
 
-	await updateShare(alice, shareId, { download: false });
-	try {
-		const answer = await clickSidecar(page, ablage);
-		expect(answer.status()).toBe(403);
-		await expectErrorBanner(page, 4, T.T24.en, T.T29b.en);
-		expect(await davStatus(alice, target), 'no sidecar was written into the folder').toBe(404);
-		await screenshot(page, 'e4', testInfo);
-		await expectAxeClean(page, 'e4', testInfo);
-	} finally {
-		await updateShare(alice, shareId, { download: true });
-	}
+		await updateShare(alice, shareId, { download: false });
+		try {
+			const answer = await clickSidecar(page, ablage);
+			expect(answer.status()).toBe(403);
+			await expectErrorBanner(page, 4, T.T24.de, T.T29b.de);
+			expect(await davStatus(alice, target), 'no sidecar was written into the folder').toBe(404);
+			await page.mouse.move(0, 0);
+			await wholePage(page, 'e4', testInfo);
+			await screenshotPart(resultBanner(page, 4), 'e4-banner', testInfo);
+			await expectAxeClean(page, 'e4', testInfo);
+		} finally {
+			await updateShare(alice, shareId, { download: true });
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -289,7 +421,9 @@ test(
 		try {
 			expect((await clickSidecar(page, video)).status()).toBe(400);
 			await expectErrorBanner(page, 5, T.T26[language], T.T29b[language]);
-			await screenshot(page, 'e5', testInfo);
+			await page.mouse.move(0, 0);
+			await wholePage(page, 'e5', testInfo);
+			await screenshotPart(resultBanner(page, 5), 'e5-banner', testInfo);
 			await expectAxeClean(page, 'e5', testInfo);
 		} finally {
 			await page.unroute(route);
@@ -313,7 +447,9 @@ test('E7 Container nach dem Seitenaufbau gestoppt: T29b und T25 @phase4 @axe', a
 		async () => {
 			expect((await clickSidecar(page, video)).status()).toBe(503);
 			await expectErrorBanner(page, 7, T.T25[language], T.T29b[language]);
-			await screenshot(page, 'e7', testInfo);
+			await page.mouse.move(0, 0);
+			await wholePage(page, 'e7', testInfo);
+			await screenshotPart(resultBanner(page, 7), 'e7-banner', testInfo);
 			await expectAxeClean(page, 'e7', testInfo);
 		},
 		user,
@@ -346,6 +482,27 @@ test('Spur im Player: Label "Deutsch, Untertitel-Entwurf", standardmäßig aus, 
 	const label = await media.evaluate((element: HTMLMediaElement) => element.textTracks[0]?.label ?? '');
 	expect(label, 'the menu of the player names the track').toBe(fill(T.T31.de, T.T32.de));
 
+	// The pictures before the track is switched on (owner 16.11.2026): the
+	// player with the track off, and in Chromium its captions menu with the label.
+	await expectFrameShown(page);
+	await page.mouse.move(0, 0);
+	await wholePage(page, 'track-off', testInfo);
+	if (testInfo.project.name.startsWith('firefox')) {
+		testInfo.annotations.push({ type: 'gap', description: 'track-menu: the captions menu of Firefox is not reachable from the page, only Chromium pictures it' });
+	} else {
+		const menu = await openCaptionsMenu(page, label);
+		if (menu === 'open') {
+			await screenshot(page, 'track-menu', testInfo);
+			await screenshotPart(media, 'track-menu-player', testInfo);
+		} else {
+			// A picture only: the label itself is checked above through textTracks.
+			testInfo.annotations.push({ type: 'gap', description: `track-menu: ${menu}` });
+			console.log(`GAP track-menu ${testInfo.project.name}: ${menu}`);
+		}
+		await page.keyboard.press('Escape');
+		await page.mouse.move(0, 0);
+	}
+
 	// What the user does in the menu of the native controls: switch it on.
 	await media.evaluate((element: HTMLMediaElement) => {
 		element.textTracks[0].mode = 'showing';
@@ -376,7 +533,8 @@ test('Spur im Player: Label "Deutsch, Untertitel-Entwurf", standardmäßig aus, 
 	const position = await media.evaluate((element: HTMLMediaElement) => element.currentTime);
 	expect(Math.abs(position - at)).toBeLessThanOrEqual(CUE_TOLERANCE_SECONDS);
 	await expectFrameShown(page);
-	await screenshot(page, 'track', testInfo);
+	await page.mouse.move(0, 0);
+	await wholePage(page, 'track', testInfo);
 });
 
 // ---------------------------------------------------------------------------
@@ -386,27 +544,33 @@ test('Kontrast: Erklärsatz, Ablage-Satz und Knöpfe mindestens 4,5:1 in hell, d
 	only(testInfo, CONTRAST_PROJECTS);
 	test.setTimeout(PREPARED_MS);
 	expectContrastSelfTest();
-	const { user } = phase4User(testInfo);
+	const { user, language } = phase4User(testInfo);
 	const video = fileIds.s7Video();
 	await expectTranscript(user, video);
-	await login(page, user);
-	await page.goto(playAt(video, START_SECONDS));
-	await expect(sidecarButton(page)).toBeVisible();
-	const parts: Array<[string, Locator]> = [
-		['.avs-export__note', page.locator('section.avs-export p.avs-export__note')],
-		['.avs-export__hint', page.locator('section.avs-export .avs-export__sidecar > p.avs-export__hint')],
-		['download button', page.locator('section.avs-export a.avs-export__download').first()],
-		['sidecar button', sidecarButton(page)],
-	];
-	for (const [label, locator] of parts) {
-		await expect(locator).toBeVisible();
-		const measured = await textContrast(locator);
-		testInfo.annotations.push({
-			type: 'contrast',
-			description: `${testInfo.project.name} ${label}: ${measured.ratio.toFixed(2)}:1, text ${measured.fg}, backgrounds ${measured.backgrounds.join(' | ')}`,
-		});
-		expect(measured.ratio, `${label} below 4.5:1: use --color-main-text (04-UI-SPEC)`).toBeGreaterThanOrEqual(4.5);
-	}
+	await withLanguage(user, language, async () => {
+		await login(page, user);
+		await page.goto(playAt(video, START_SECONDS));
+		await expect(sidecarButton(page)).toBeVisible();
+		// The second name is the one of the CONTRAST line in the log: one word, no blank.
+		const parts: Array<[string, string, Locator]> = [
+			['.avs-export__note', 'export-note', page.locator('section.avs-export p.avs-export__note')],
+			['.avs-export__hint', 'export-hint', page.locator('section.avs-export .avs-export__sidecar > p.avs-export__hint')],
+			['download button', 'download-button', page.locator('section.avs-export a.avs-export__download').first()],
+			['sidecar button', 'sidecar-button', sidecarButton(page)],
+		];
+		for (const [label, part, locator] of parts) {
+			await expect(locator).toBeVisible();
+			const measured = await textContrast(locator);
+			testInfo.annotations.push({
+				type: 'contrast',
+				description: `${testInfo.project.name} ${label}: ${measured.ratio.toFixed(2)}:1, text ${measured.fg}, backgrounds ${measured.backgrounds.join(' | ')}`,
+			});
+			// One line per value in the job log (the list reporter prints the output
+			// of a test), so the CI proof carries the numbers and not only the pass.
+			console.log(`CONTRAST kontrast-${testInfo.project.name} ${part} ${measured.ratio.toFixed(2)}:1 text ${measured.fg}`);
+			expect(measured.ratio, `${label} below 4.5:1: use --color-main-text (04-UI-SPEC)`).toBeGreaterThanOrEqual(4.5);
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -453,6 +617,8 @@ test('E6 Rate-Limit nach schnellen POSTs: T29b und T27 @phase4 @axe', async ({ p
 	expect(statuses.filter((status) => status !== 429 && status !== 409)).toEqual([]);
 	expect((await clickSidecar(page, video)).status()).toBe(429);
 	await expectErrorBanner(page, 6, T.T27[language], T.T29b[language]);
-	await screenshot(page, 'e6', testInfo);
+	await page.mouse.move(0, 0);
+	await wholePage(page, 'e6', testInfo);
+	await screenshotPart(resultBanner(page, 6), 'e6-banner', testInfo);
 	await expectAxeClean(page, 'e6', testInfo);
 });

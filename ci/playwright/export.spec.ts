@@ -46,7 +46,8 @@ import {
 	READ_ONLY,
 	requestToken,
 	S7_VIDEO_NAME,
-	screenshot,
+	restPointerAndFocus,
+	screenshotPart,
 	screenshotVariants,
 	switchUser,
 	toggleViewWithoutDownload,
@@ -54,7 +55,9 @@ import {
 	updateShare,
 	uploadTo,
 	users,
+	wholePage,
 	withContainerStopped,
+	withLanguage,
 	type ExportFormat,
 	type Language,
 } from './helpers';
@@ -157,6 +160,19 @@ async function expectNoAccent(buttons: Locator): Promise<void> {
 	}
 }
 
+/**
+ * The download buttons at rest look alike: one computed background for all
+ * three once nothing hovers or focuses one of them (X5, X6 pictures).
+ */
+async function expectButtonsAtRest(links: Locator): Promise<void> {
+	await expect
+		.poll(async () => new Set(await links.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).backgroundColor))).size, {
+			message: 'the download buttons differ in colour although none is hovered or focused',
+			timeout: 5_000,
+		})
+		.toBe(1);
+}
+
 /** The rendered heights of the buttons. */
 async function heights(buttons: Locator): Promise<number[]> {
 	return buttons.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
@@ -243,35 +259,38 @@ test('X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, 
 	const { user, language } = phase4User(testInfo);
 	const video = fileIds.s7Video();
 	await expectTranscript(user, video);
-	await login(page, user);
-	await page.goto(playAt(video, START_SECONDS));
+	await withLanguage(user, language, async () => {
+		await login(page, user);
+		await page.goto(playAt(video, START_SECONDS));
 
-	await expect(section(page).locator('h3.avs-export__title')).toHaveText(T.T13[language]);
-	await expect(section(page).locator('p.avs-export__note')).toHaveText(T.T14[language]);
-	await expect(partialNote(page)).toHaveCount(0);
-	await expect(downloadLinks(page)).toHaveText([T.T16[language], T.T17[language], T.T18[language]]);
-	expect((await hrefs(page)).map(formatOf)).toEqual(['srt', 'vtt', 'txt']);
-	// The group carries the section title as its name.
-	await expect(page.getByRole('group', { name: T.T13[language] })).toBeVisible();
-	// The draft track on the video, never switched on by default (D-04-18).
-	await expect(page.locator('video#avs-media > track[kind="subtitles"]')).toHaveCount(1);
-	await expect(page.locator('#avs-media > track[default]')).toHaveCount(0);
-	// The sidecar block names the real target name (T20) and play.js shows the button.
-	const sidecarName = exportName(S7_VIDEO_NAME, 'vtt');
-	await expect(sidecarHint(page)).toHaveText(fill(T.T20[language], sidecarName));
-	await expect(page.locator('#avs-sidecar')).toBeVisible();
-	await expect(page.locator('#avs-sidecar')).toHaveText(T.T19[language]);
+		await expect(section(page).locator('h3.avs-export__title')).toHaveText(T.T13[language]);
+		await expect(section(page).locator('p.avs-export__note')).toHaveText(T.T14[language]);
+		await expect(partialNote(page)).toHaveCount(0);
+		await expect(downloadLinks(page)).toHaveText([T.T16[language], T.T17[language], T.T18[language]]);
+		expect((await hrefs(page)).map(formatOf)).toEqual(['srt', 'vtt', 'txt']);
+		// The group carries the section title as its name.
+		await expect(page.getByRole('group', { name: T.T13[language] })).toBeVisible();
+		// The draft track on the video, never switched on by default (D-04-18).
+		await expect(page.locator('video#avs-media > track[kind="subtitles"]')).toHaveCount(1);
+		await expect(page.locator('#avs-media > track[default]')).toHaveCount(0);
+		// The sidecar block names the real target name (T20) and play.js shows the button.
+		const sidecarName = exportName(S7_VIDEO_NAME, 'vtt');
+		await expect(sidecarHint(page)).toHaveText(fill(T.T20[language], sidecarName));
+		await expect(page.locator('#avs-sidecar')).toBeVisible();
+		await expect(page.locator('#avs-sidecar')).toHaveText(T.T19[language]);
 
-	const buttons = downloadLinks(page).or(page.locator('#avs-sidecar'));
-	await expectNoAccent(buttons);
-	const area = await clickableArea(page);
-	for (const height of await heights(buttons)) {
-		expect(height, `a button is lower than --default-clickable-area (${area} px)`).toBeGreaterThanOrEqual(area - 0.5);
-	}
-	await expectSectionFits(page);
-	await expectMediaQuiet(page);
-	await screenshot(page, 'x1', testInfo);
-	await expectAxeClean(page, 'x1', testInfo);
+		const buttons = downloadLinks(page).or(page.locator('#avs-sidecar'));
+		await expectNoAccent(buttons);
+		const area = await clickableArea(page);
+		for (const height of await heights(buttons)) {
+			expect(height, `a button is lower than --default-clickable-area (${area} px)`).toBeGreaterThanOrEqual(area - 0.5);
+		}
+		await expectSectionFits(page);
+		await expectMediaQuiet(page);
+		await wholePage(page, 'x1', testInfo);
+		await screenshotPart(section(page), 'x1-section', testInfo);
+		await expectAxeClean(page, 'x1', testInfo);
+	});
 });
 
 test('X1 grober Zeiger: Download- und Ablage-Knopf mindestens 44 px hoch @phase4', async ({ browser, page }, testInfo) => {
@@ -309,14 +328,18 @@ test('X1a Export an einer Audiodatei: drei Downloads, keine Spur @phase4 @axe', 
 	const alice = users.alice();
 	const audio = fileIds.s7DeDigit();
 	await expectTranscript(alice, audio);
-	await login(page, alice);
-	await page.goto(playAt(audio, START_SECONDS));
-	await expect(page.locator('audio#avs-media')).toBeAttached();
-	await expect(downloadLinks(page)).toHaveText([T.T16.en, T.T17.en, T.T18.en]);
-	await expect(page.locator('track')).toHaveCount(0);
-	await expectMediaQuiet(page);
-	await screenshot(page, 'x1a', testInfo);
-	await expectAxeClean(page, 'x1a', testInfo);
+	// alice owns the clip and reads English elsewhere; the picture is German (04-UI-SPEC).
+	await withLanguage(alice, 'de', async () => {
+		await login(page, alice);
+		await page.goto(playAt(audio, START_SECONDS));
+		await expect(page.locator('audio#avs-media')).toBeAttached();
+		await expect(downloadLinks(page)).toHaveText([T.T16.de, T.T17.de, T.T18.de]);
+		await expect(page.locator('track')).toHaveCount(0);
+		await expectMediaQuiet(page);
+		await wholePage(page, 'x1a', testInfo);
+		await screenshotPart(section(page), 'x1a-section', testInfo);
+		await expectAxeClean(page, 'x1a', testInfo);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -329,7 +352,7 @@ test('X1a Export an einer Audiodatei: drei Downloads, keine Spur @phase4 @axe', 
  * file is no longer partial, 'ok' when the TXT header and the VTT NOTE carry
  * T15 with the clock of the page, else what differed.
  */
-async function readTriple(page: Page, fileId: string): Promise<string> {
+async function readTriple(page: Page, fileId: string, language: Language): Promise<string> {
 	await page.goto(playAt(fileId, EARLY_SECONDS));
 	const before = await partialClock(page);
 	if (before === null) {
@@ -351,7 +374,8 @@ async function readTriple(page: Page, fileId: string): Promise<string> {
 	if (after !== before) {
 		return 'retry';
 	}
-	const expected = fill(T.T15.en, before);
+	// The downloads carry T15 in the display language of the user, like the page.
+	const expected = fill(T.T15[language], before);
 	// TXT: name, T35, T15, blank line, text (04-UI-SPEC "Dateiinhalte").
 	const txtLine = txtBody.replace(/\r\n/g, '\n').split('\n')[2] ?? '';
 	const note = noteLines(vttBody);
@@ -367,59 +391,74 @@ test('X2 Teiltranskript: gleiche Zeit auf der Seite, im TXT-Kopf und in der VTT-
 	const alice = users.alice();
 	const data = readFileSync(join(required('AVS_MEDIA_DIR'), X2_FILE));
 	const fileId = await uploadTo(alice, X2_FOLDER, X2_FILE, data, 'audio/ogg');
-	await login(page, alice);
+	// alice uploads the file in work and reads English elsewhere; the pictures and T15 are German (04-UI-SPEC).
+	const language: Language = 'de';
+	await withLanguage(alice, language, async () => {
+		await login(page, alice);
 
-	// Nothing finished: no section (X4). One piece finished: X2. All done: X1.
-	let seen = 'not yet';
-	await expect
-		.poll(
-			async () => {
-				await page.goto(playAt(fileId, EARLY_SECONDS));
-				if ((await partialNote(page).count()) > 0) {
-					seen = 'partial';
-				} else if ((await downloadLinks(page).count()) > 0) {
-					seen = 'done';
-				} else {
-					seen = 'not yet';
-				}
-				return seen;
-			},
-			{ timeout: PARTIAL_WITHIN_MS, intervals: [PARTIAL_POLL_MS] },
-		)
-		.not.toBe('not yet');
-	expect(seen, 'the file was done before a look caught it partial (X2)').toBe('partial');
+		// Nothing finished: no section (X4). One piece finished: X2. All done: X1.
+		let seen = 'not yet';
+		let pendingPictured = false;
+		await expect
+			.poll(
+				async () => {
+					await page.goto(playAt(fileId, EARLY_SECONDS));
+					if ((await partialNote(page).count()) > 0) {
+						seen = 'partial';
+					} else if ((await downloadLinks(page).count()) > 0) {
+						seen = 'done';
+					} else {
+						seen = 'not yet';
+						if (!pendingPictured && (await section(page).count()) === 0) {
+							// X4 for a file that has no transcript yet, caught on the way (one picture).
+							await expectMediaQuiet(page);
+							await wholePage(page, 'x4-pending', testInfo);
+							pendingPictured = true;
+						}
+					}
+					return seen;
+				},
+				{ timeout: PARTIAL_WITHIN_MS, intervals: [PARTIAL_POLL_MS] },
+			)
+			.not.toBe('not yet');
+		expect(seen, 'the file was done before a look caught it partial (X2)').toBe('partial');
+		if (!pendingPictured) {
+			testInfo.annotations.push({ type: 'gap', description: 'X4 x4-pending: the first look already found a finished piece' });
+		}
 
-	// The pictures first, while the window is surely open.
-	const clock = await partialClock(page);
-	expect(clock, 'T15 carries a time element').not.toBeNull();
-	await expect(partialNote(page)).toHaveText(fill(T.T15.en, clock as string));
-	await expect(partialNote(page).locator('time.avs-play__time')).toHaveAttribute('datetime', /^PT(\d+H)?(\d+M)?\d+S$/);
-	await expect(downloadLinks(page)).toHaveCount(3);
-	await screenshotVariants(page, 'x2', testInfo, ALL_VARIANTS, partialNote(page));
-	await expectAxeClean(page, 'x2', testInfo);
+		// The pictures first, while the window is surely open.
+		const clock = await partialClock(page);
+		expect(clock, 'T15 carries a time element').not.toBeNull();
+		await expect(partialNote(page)).toHaveText(fill(T.T15[language], clock as string));
+		await expect(partialNote(page).locator('time.avs-play__time')).toHaveAttribute('datetime', /^PT(\d+H)?(\d+M)?\d+S$/);
+		await expect(downloadLinks(page)).toHaveCount(3);
+		await screenshotVariants(page, 'x2', testInfo, ALL_VARIANTS, partialNote(page), ['x2-section', section(page)]);
+		await expectAxeClean(page, 'x2', testInfo);
 
-	// French at 375 px: fleur receives the file for the picture.
-	await ensureShare(alice, `/${X2_FOLDER}/${X2_FILE}`, 'fleur', 0, READ_ONLY);
-	await switchUser(page, users.fleur());
-	await page.setViewportSize({ width: 375, height: 900 });
-	await page.goto(playAt(fileId, EARLY_SECONDS));
-	const frenchClock = await partialClock(page);
-	if (frenchClock !== null) {
-		await expect(partialNote(page)).toHaveText(fill(T.T15.fr, frenchClock));
-		await screenshot(page, 'x2', testInfo, 'fr-w375-light');
-	} else {
-		testInfo.annotations.push({ type: 'gap', description: 'X2 fr-w375-light: the file was no longer partial when fleur opened it' });
-	}
-	await page.setViewportSize({ width: 1280, height: 900 });
-	await switchUser(page, alice);
+		// French at 375 px: fleur receives the file for the picture.
+		await ensureShare(alice, `/${X2_FOLDER}/${X2_FILE}`, 'fleur', 0, READ_ONLY);
+		await switchUser(page, users.fleur());
+		await page.setViewportSize({ width: 375, height: 900 });
+		await page.goto(playAt(fileId, EARLY_SECONDS));
+		const frenchClock = await partialClock(page);
+		if (frenchClock !== null) {
+			await expect(partialNote(page)).toHaveText(fill(T.T15.fr, frenchClock));
+			await wholePage(page, 'x2', testInfo, 'fr-w375-light');
+			await screenshotPart(section(page), 'x2-section', testInfo, 'fr-w375-light');
+		} else {
+			testInfo.annotations.push({ type: 'gap', description: 'X2 fr-w375-light: the file was no longer partial when fleur opened it' });
+		}
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await switchUser(page, alice);
 
-	// The triple, read again whenever a piece finished in between.
-	let verdict = 'retry';
-	await expect
-		.poll(async () => (verdict = await readTriple(page, fileId)), { timeout: PARTIAL_WITHIN_MS, intervals: [PARTIAL_POLL_MS] })
-		.not.toBe('retry');
-	expect(verdict, 'the file was done before page, TXT and VTT could be read with one clock (X2)').not.toBe('done');
-	expect(verdict, 'the clock of T15 on the page, in the TXT header and in the VTT NOTE').toBe('ok');
+		// The triple, read again whenever a piece finished in between.
+		let verdict = 'retry';
+		await expect
+			.poll(async () => (verdict = await readTriple(page, fileId, language)), { timeout: PARTIAL_WITHIN_MS, intervals: [PARTIAL_POLL_MS] })
+			.not.toBe('retry');
+		expect(verdict, 'the file was done before page, TXT and VTT could be read with one clock (X2)').not.toBe('done');
+		expect(verdict, 'the clock of T15 on the page, in the TXT header and in the VTT NOTE').toBe('ok');
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -438,7 +477,8 @@ test('X3 Freigabe mit Download-Sperre, Ansehen erlaubt: nur T13 und T24, Export,
 		// One POST per user in the grid is enough; the sidecar route allows 10 a minute.
 		await expectX3(page, locked, language, testInfo.project.name === ONCE);
 		await expectMediaQuiet(page);
-		await screenshot(page, 'x3', testInfo);
+		await wholePage(page, 'x3', testInfo);
+		await screenshotPart(section(page), 'x3-section', testInfo);
 		await expectAxeClean(page, 'x3', testInfo);
 	} finally {
 		toggleViewWithoutDownload(false);
@@ -522,8 +562,37 @@ test('X4 ohne Transkript und ausgeschlossen: kein Abschnitt, Hauptbereich ab dem
 	const withoutTranscript = await columnFromExcerpt(page);
 	expect(withoutTranscript.tail, 'after the excerpt block a file without transcript equals an excluded user').toBe(excludedVideo.tail);
 	await expectMediaQuiet(page);
-	await screenshot(page, 'x4', testInfo);
 	await expectAxeClean(page, 'x4', testInfo);
+
+	// The pictures of the cases of 04-UI-SPEC in German, after the byte
+	// comparisons, which need dora and oskar on the same (English) catalogue.
+	// x4: alice's file without a transcript (no speech).
+	await withLanguage(users.alice(), 'de', async () => {
+		await page.goto(playAt(stille, 0));
+		await expect(page.locator('section.avs-excerpt')).toBeVisible();
+		await expect(section(page)).toHaveCount(0);
+		await expectMediaQuiet(page);
+		await wholePage(page, 'x4', testInfo);
+		// x4-reason: a file with another reason (damaged, kaputt.mp3 of phase 3), no section either.
+		await page.goto(playAt(fileIds.kaputt(), 0));
+		await expect(page.locator('section.avs-excerpt')).toBeVisible();
+		await expect(section(page)).toHaveCount(0);
+		await expectMediaQuiet(page);
+		await wholePage(page, 'x4-reason', testInfo);
+	});
+	// x4-excluded: an excluded user on the video that has a transcript; elke reads German.
+	const elke = users.elke();
+	await switchUser(page, elke);
+	excludeUser(elke.name, true);
+	try {
+		await page.goto(playAt(video, START_SECONDS));
+		await expect(page.locator('section.avs-excerpt p.avs-excerpt__hint')).toHaveText(T.A5.de);
+		await expect(section(page)).toHaveCount(0);
+		await expectMediaQuiet(page);
+		await wholePage(page, 'x4-excluded', testInfo);
+	} finally {
+		excludeUser(elke.name, false);
+	}
 });
 
 // ---------------------------------------------------------------------------
@@ -537,30 +606,37 @@ test('X5 Freigabe nur lesen mit Download: T23 statt Knopf, Downloads gehen @phas
 	const ablage = fileIds.ablage();
 	const shareId = await ablageShare();
 	await expectTranscript(carol, ablage);
-	await login(page, carol);
+	// carol holds the share of the folder and reads English elsewhere; the pictures are German (04-UI-SPEC).
+	await withLanguage(carol, 'de', async () => {
+		await login(page, carol);
 
-	// Positive control: with the right to create files carol gets the button.
-	await page.goto(playAt(ablage, START_SECONDS));
-	await expect(page.locator('#avs-sidecar')).toBeVisible();
-
-	await updateShare(alice, shareId, { permissions: READ_ONLY });
-	try {
+		// Positive control: with the right to create files carol gets the button.
 		await page.goto(playAt(ablage, START_SECONDS));
-		await expect(sidecarHint(page)).toHaveText(T.T23.en);
-		await expect(page.locator('#avs-sidecar')).toHaveCount(0);
-		await expect(page.locator('#avs-sidecar-result')).toHaveCount(0);
-		const links = downloadLinks(page);
-		await expect(links).toHaveCount(3);
-		for (const [index, format] of FORMATS.entries()) {
-			const { name } = await downloadTo(page, links.nth(index), testInfo.outputPath('x5'));
-			expect(name).toBe(exportName(ABLAGE_FILE, format));
+		await expect(page.locator('#avs-sidecar')).toBeVisible();
+
+		await updateShare(alice, shareId, { permissions: READ_ONLY });
+		try {
+			await page.goto(playAt(ablage, START_SECONDS));
+			await expect(sidecarHint(page)).toHaveText(T.T23.de);
+			await expect(page.locator('#avs-sidecar')).toHaveCount(0);
+			await expect(page.locator('#avs-sidecar-result')).toHaveCount(0);
+			const links = downloadLinks(page);
+			await expect(links).toHaveCount(3);
+			for (const [index, format] of FORMATS.entries()) {
+				const { name } = await downloadTo(page, links.nth(index), testInfo.outputPath('x5'));
+				expect(name).toBe(exportName(ABLAGE_FILE, format));
+			}
+			// The last click leaves the TXT button under the pointer and focused, which
+			// draws it darker than SRT and VTT; the picture shows the page at rest.
+			await restPointerAndFocus(page);
+			await expectButtonsAtRest(links);
+			await expectMediaQuiet(page);
+			await screenshotVariants(page, 'x5', testInfo, [[1280, 'light'], [375, 'light']], section(page), ['x5-section', section(page)]);
+			await expectAxeClean(page, 'x5', testInfo);
+		} finally {
+			await updateShare(alice, shareId, { permissions: ABLAGE_PERMISSIONS });
 		}
-		await expectMediaQuiet(page);
-		await screenshotVariants(page, 'x5', testInfo, [[1280, 'light'], [375, 'light']], section(page));
-		await expectAxeClean(page, 'x5', testInfo);
-	} finally {
-		await updateShare(alice, shareId, { permissions: ABLAGE_PERMISSIONS });
-	}
+	});
 });
 
 test('X6 ohne JavaScript: Downloads gehen, Ablage-Knopf unsichtbar, T20 steht @phase4', async ({ browser, page }, testInfo) => {
@@ -590,7 +666,16 @@ test('X6 ohne JavaScript: Downloads gehen, Ablage-Knopf unsichtbar, T20 steht @p
 			const { name } = await downloadTo(plain, links.nth(index), testInfo.outputPath('x6'));
 			expect(name).toBe(exportName(S7_VIDEO_NAME, format));
 		}
-		await screenshot(plain, 'x6', testInfo);
+		// The last click leaves the TXT button under the pointer and focused (darker
+		// than SRT and VTT). Without JavaScript the page cannot blur it, so the
+		// pointer leaves and the same page is loaded again for the picture.
+		await plain.mouse.move(0, 0);
+		await plain.goto(playAt(video, START_SECONDS));
+		await expect(sidecarHint(plain)).toHaveText(fill(T.T20[language], exportName(S7_VIDEO_NAME, 'vtt')));
+		await expect(plain.locator('#avs-sidecar')).toBeHidden();
+		await expectButtonsAtRest(links);
+		await wholePage(plain, 'x6', testInfo);
+		await screenshotPart(section(plain), 'x6-section', testInfo);
 	} finally {
 		await context.close();
 	}
@@ -675,7 +760,10 @@ test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleiche
 			const response = await page.goto(srt);
 			expect(response?.status()).toBe(503);
 			const action = await expectErrorPage(page, language);
-			await screenshotVariants(page, 'd2', testInfo, [[1280, 'light'], [1280, 'dark'], [375, 'light']], page.locator('.avs-banner--error'));
+			await screenshotVariants(page, 'd2', testInfo, [[1280, 'light'], [1280, 'dark'], [375, 'light']], page.locator('.avs-banner--error'), [
+				'd2-banner',
+				page.locator('.avs-banner--error'),
+			]);
 			await expectAxeClean(page, 'd2', testInfo);
 			await action.click();
 			await expect(page).toHaveURL(new RegExp(`/apps/audio_video_search/play/${video}\\?t=${D2_MARK.replace('.', '\\.')}$`));
