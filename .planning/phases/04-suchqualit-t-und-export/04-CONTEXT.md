@@ -36,6 +36,14 @@ Nicht in dieser Phase: besseres Transkript (turbo/large-v3, ROVER, Profile), Adm
 - **D-04-12:** Ordinalzahlen im gleichen Zahlenraum (zwölfter <-> 12., twelfth, douzième), wichtig für Datumsangaben.
 - **D-04-13:** Komposita und Stemming: Findling-Analyzer-Muster 1:1 übernehmen (gleiche Analyzer-Kette, gleiche Wortlisten-Beschaffung fail-closed über Digest, an tantivy 0.26.2 gemessen). Keine Alternativ-Recherche.
 
+### Owner-Entscheide nach der Research (16.11.2026, F1 bis F5 aus 04-RESEARCH.md)
+- **D-04-14 (F1):** "Haushalt" findet "Haushaltsplanberatung" über eine Präfix-Suche zur Abfragezeit (zusätzliche Präfix-/Regex-Klausel auf body_de), KEIN Neuindex, Wortliste unverändert (bereinigte Liste ist gemessen schlechter). Beifang (z. B. Haushälterin) und Suchzeit werden gemessen und im Plan belegt.
+- **D-04-15 (F2):** Der Worker speichert künftig die Mehrheitssprache je Datei (aus der vorhandenen Text-Sprachkennung); für den Altbestand wird sie beim ersten Export nachbestimmt. `und` erscheint NIE im Dateinamen.
+- **D-04-16 (F3):** Untertitel-Grenzen Best-Effort + Zählung: Grenzen werden durch Timing-Dehnung eingehalten, wo physisch möglich; unvermeidbare Überschreitungen (schnelle Rede, wortgetreuer Text) werden minimiert, gezählt und im Test benannt (Schwelle als Gate). Überlange Einzelwörter (über 42 Zeichen) bleiben ungetrennt auf eigener Zeile. Text wird NIE verändert.
+- **D-04-17 (F4):** Export während laufender Transkription ERLAUBT, mit sichtbarem Hinweis "Transkript bis mm:ss, Datei wird noch verarbeitet" (DE/EN/FR, Wortlaut vor dem Bau zeigen).
+- **D-04-18 (F5):** Die Abspielseite zeigt die erzeugte VTT als eigene Untertitel-Spur am Player (track-Einbindung) IN Phase 4. Das README nennt ehrlich, dass der Nextcloud-Viewer Nebendateien erst ab NC 36 erkennt (stable33-35 haben keinen Code dafür; Schema `<Name>.<Sprache>.vtt` passt zu NC 36).
+- Nebenbefunde aus der Research, die der Plan fixen muss: `parse_query("12:30")` wirft heute einen Fehler (Suche still leer); `Folder::newFile()` überschreibt still (eigene Existenzprüfung unter Sperre nötig); Export-Timeout (heute 1,5 s) für lange Dateien eigenen gemessenen Wert geben; `IShare::canDownload()` NICHT verwenden (erst ab 33.0.1), bestehende Attribut-Prüfung behalten.
+
 ### Übernommen aus früheren Entscheiden (nicht neu verhandelt)
 - Treffer und Ausschnitt nur über Verweise mit state active (D-02-01a, D-02-15c); Ausschluss D-02-04/08/16; Probe-Regeln D-02-15/15a.
 - Trefferbild der Suche aus Phase 3 (D-03-01 bis D-03-03, D-03-15) bleibt unverändert; Phase 4 ändert Findbarkeit, nicht das Trefferbild.
