@@ -41,6 +41,23 @@ EXIT_PIN = 3
 
 
 @dataclass(frozen=True)
+class S7Targets:
+    """Die vorab gemessenen Zielformen eines S7-Clips (Plan 04-14, Erfolgskriterium 1 der Phase 4).
+
+    number_word, plural und compound stehen so im gemessenen Parakeet-Transkript (gefaltet
+    verglichen); number_forms sind Ziffer, DE, EN und FR derselben Zahl, singular und head die
+    Suchbegriffe, die über Wortform beziehungsweise Präfix-Klausel auf die Datei führen.
+    """
+
+    number_word: str
+    number_forms: tuple[str, str, str, str]
+    compound: str
+    head: str
+    plural: str | None = None
+    singular: str | None = None
+
+
+@dataclass(frozen=True)
 class Clip:
     name: str
     tar_path: str
@@ -50,6 +67,7 @@ class Clip:
     duration_s: float
     expected_word: str | None = None
     expected_text: str | None = None
+    s7: S7Targets | None = None
 
 
 SPEECH_DE = Clip(
@@ -88,7 +106,53 @@ SPEECH_ES = Clip(
         "área que visitan, dado que ello puede afectar sus planes de viaje."
     ),
 )
-CLIPS = (SPEECH_DE, SPEECH_TR, SPEECH_ES)
+# S7 (Plan 04-14): Sätze, deren Parakeet-Transkript vorab gemessen ist (zwei gleiche Läufe,
+# scripts/research/phase4/measure_s7_sentences.py, 16.11.2026). expected_text ist das gemessene
+# Transkript, nicht der FLEURS-Referenztext; expected_word ist die Zahlform, die Parakeet schreibt.
+# FLEURS kennt kein Kompositum mit Kopf "Haushalt"; den wörtlichen Fall beweist test_compounds.py.
+SPEECH_S7_DE = Clip(
+    name="speech_s7_de.wav",
+    tar_path="data/de_de/audio/test.tar.gz",
+    member="7739349083395946674.wav",
+    member_sha256="f451f0cb4df52872a837745ddeae9c640a2450483d4b1b9a5faf620735c5c3b2",
+    wav_sha256="bd7c8d0e869d9c0216823fb6803dcba6b5bf4434b6c73c57122df258c05087cb",
+    duration_s=22.8,
+    expected_word="zwanzig",
+    expected_text=(
+        "Eine Autobombe detonierte am Morgen des gestrigen Tages im Polizeipräsidium des türkischen Gazi Antep, "
+        "tötete zwei Polizisten und verwundete über zwanzig weitere Menschen."
+    ),
+    s7=S7Targets(
+        number_word="zwanzig",
+        number_forms=("20", "zwanzig", "twenty", "vingt"),
+        compound="Polizeipräsidium",
+        head="Polizei",
+        plural="Polizisten",
+        singular="Polizist",
+    ),
+)
+# Gegenstück: hier schreibt Parakeet die Zahl als Ziffer ("12"), das Zahlwort zwölf muss sie finden.
+SPEECH_S7_DE_DIGIT = Clip(
+    name="speech_s7_de_digit.wav",
+    tar_path="data/de_de/audio/test.tar.gz",
+    member="11014175886747870273.wav",
+    member_sha256="f62551ec2ec42f69ae29b6147e6954b62a3a46fcaf520265af301e9fa9a46c61",
+    wav_sha256="3e2e231c7a25b5d4e266ba7d451cf34efd62faf0e0ebb585634480375492a6e9",
+    duration_s=7.98,
+    expected_word="12",
+    expected_text=(
+        "Das Seitenverhältnis dieses Formats geteilt durch 12 und das einfachste ganzzeilige Verhältnis zu "
+        "erhalten, wird daher als 3 zu 2 bezeichnet."
+    ),
+    s7=S7Targets(
+        number_word="12",
+        number_forms=("12", "zwölf", "twelve", "douze"),
+        compound="Seitenverhältnis",
+        head="Seite",
+    ),
+)
+S7_CLIPS = (SPEECH_S7_DE, SPEECH_S7_DE_DIGIT)
+CLIPS = (SPEECH_DE, SPEECH_TR, SPEECH_ES, *S7_CLIPS)
 EXPECTED_WORD = SPEECH_DE.expected_word
 EXPECTED_TEXT = SPEECH_DE.expected_text
 
@@ -117,8 +181,12 @@ def host_allowed(url: str) -> bool:
     return parts.scheme == "https" and (host in ALLOWED_HOSTS or host.endswith(ALLOWED_HOST_SUFFIXES))
 
 
-def pick_member(tar_stream: IO[bytes], name: str, sha256: str) -> bytes:
-    """Bytes genau des Mitglieds TAR_MEMBER_DIR + name mit diesem sha256; schreibt nichts auf die Platte."""
+def read_member(tar_stream: IO[bytes], name: str) -> bytes:
+    """Bytes genau des Mitglieds TAR_MEMBER_DIR + name, ohne Pin; schreibt nichts auf die Platte.
+
+    Nur für die Vorabmessung neuer Clips (scripts/research/phase4/measure_s7_sentences.py), die
+    den sha256 erst ermittelt; jeder Abruf für CI und Tests geht über pick_member mit Pin.
+    """
     if "/" in name or "\\" in name or ".." in name or not name:
         raise ValueError(f"member name must be a plain file name: {name!r}")
     wanted = TAR_MEMBER_DIR + name
@@ -131,12 +199,17 @@ def pick_member(tar_stream: IO[bytes], name: str, sha256: str) -> bytes:
             handle = archive.extractfile(member)
             if handle is None:
                 raise PinError(f"{wanted} has no data")
-            data = handle.read()
-            actual = hashlib.sha256(data).hexdigest()
-            if actual != sha256:
-                raise PinError(f"{wanted}: sha256 {actual}, expected {sha256}")
-            return data
+            return handle.read()
     raise PinError(f"{wanted} not in archive")
+
+
+def pick_member(tar_stream: IO[bytes], name: str, sha256: str) -> bytes:
+    """Bytes genau des Mitglieds TAR_MEMBER_DIR + name mit diesem sha256; schreibt nichts auf die Platte."""
+    data = read_member(tar_stream, name)
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != sha256:
+        raise PinError(f"{TAR_MEMBER_DIR + name}: sha256 {actual}, expected {sha256}")
+    return data
 
 
 def to_wav(ff: str, src: Path, dst: Path) -> None:

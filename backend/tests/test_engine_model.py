@@ -11,18 +11,22 @@ language drops it) and for the Turkish clip (Parakeet gives almost no word).
 
 Needs the pinned models (AVS_TEST_MODELS, the root ``procure --root`` filled)
 and the clips of ci/media/fetch_speech.py (AVS_TEST_SPEECH, AVS_TEST_SPEECH_TR,
-AVS_TEST_SPEECH_ES, AVS_TEST_WORD). Without them every test skips with its reason; under CI=true it
+AVS_TEST_SPEECH_ES, AVS_TEST_WORD; the S7 clips of plan 04-14 lie next to
+AVS_TEST_SPEECH). Without them every test skips with its reason; under CI=true it
 fails instead, because CI fetches both through its cache and the coverage floor
 counts on these tests. Serial by nature: one child, one model in memory.
 """
 
 import asyncio
 import ctypes
+import importlib.util
 import os
 import sys
 import wave
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import numpy as np
 import pytest
@@ -41,10 +45,12 @@ from audio_video_search_backend.engine.constants import SAMPLE_RATE
 from audio_video_search_backend.engine.parakeet import Window
 from audio_video_search_backend.models import procure
 from audio_video_search_backend.worker.preview import take
+from tests.conftest import REPO_ROOT
 from tests.media_fixtures import missing
 
 pytestmark = pytest.mark.model
 
+FETCH_SPEECH = REPO_ROOT / "ci" / "media" / "fetch_speech.py"
 OFFSET_MS = 600_000
 SILENCE_S = 5
 
@@ -225,3 +231,53 @@ def test_the_turkish_clip_is_unsupported_language(worker: EngineWorker) -> None:
     pcm, clip_ms = _pcm(_path("AVS_TEST_SPEECH_TR"))
 
     assert _file_verdict(worker, pcm, clip_ms) == UNSUPPORTED_LANGUAGE
+
+
+def _fetch_speech() -> ModuleType:
+    """ci/media/fetch_speech.py as a module, without bytecode next to it."""
+    spec = importlib.util.spec_from_file_location("fetch_speech_for_model_tests", FETCH_SPEECH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    before = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        # dataclasses looks the module up in sys.modules while the class is built
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = before
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+S7_CLIPS = _fetch_speech().S7_CLIPS
+
+
+def _s7_clip_path(name: str) -> Path:
+    """The S7 clip lies next to AVS_TEST_SPEECH: python.yml fetches every clip of CLIPS into one folder."""
+    path = _path("AVS_TEST_SPEECH").parent / name
+    if not path.exists():
+        missing(f"{name} is not next to AVS_TEST_SPEECH")
+    return path
+
+
+@pytest.mark.parametrize("clip", S7_CLIPS, ids=[clip.name for clip in S7_CLIPS])
+def test_the_s7_clips_give_the_measured_target_forms(worker: EngineWorker, clip: Any) -> None:
+    """Plan 04-14: the E2E search spec counts on these forms, so they must come out of Parakeet as measured.
+
+    Tokens of the kept windows are compared folded, so punctuation and case do
+    not matter; the full text is not compared.
+    """
+    pcm, _ = _pcm(_s7_clip_path(clip.name))
+
+    code, windows = worker.ask(pcm, 0, False)
+
+    assert code == OK
+    tokens = {_norm(item.text) for window in windows if window.verdict == KEEP for item in window.words}
+    targets = clip.s7
+    wanted = list(dict.fromkeys([clip.expected_word, targets.number_word, targets.compound]))
+    if targets.plural:
+        wanted.append(targets.plural)
+    absent = [form for form in wanted if _norm(form) not in tokens]
+    assert not absent, f"{clip.name}: measured target forms missing from the transcript: {absent}"

@@ -17,6 +17,8 @@ from types import ModuleType
 
 import pytest
 
+from audio_video_search_backend.index import numbers
+from audio_video_search_backend.index.publish import PREFIX_MIN_CHARS
 from tests.conftest import REPO_ROOT
 
 FETCH_SPEECH = REPO_ROOT / "ci" / "media" / "fetch_speech.py"
@@ -66,13 +68,23 @@ def test_revision_is_a_commit(fs: ModuleType) -> None:
     assert fs.DATASET == "google/fleurs"
 
 
-def test_three_clips_de_tr_and_es(fs: ModuleType) -> None:
-    assert [clip.name for clip in fs.CLIPS] == ["speech_de.wav", "speech_tr.wav", "speech_es.wav"]
+def test_clips_de_tr_es_and_the_s7_clips(fs: ModuleType) -> None:
+    assert [clip.name for clip in fs.CLIPS] == [
+        "speech_de.wav",
+        "speech_tr.wav",
+        "speech_es.wav",
+        "speech_s7_de.wav",
+        "speech_s7_de_digit.wav",
+    ]
     assert [clip.tar_path for clip in fs.CLIPS] == [
         "data/de_de/audio/test.tar.gz",
         "data/tr_tr/audio/test.tar.gz",
         "data/es_419/audio/test.tar.gz",
+        "data/de_de/audio/test.tar.gz",
+        "data/de_de/audio/test.tar.gz",
     ]
+    assert fs.S7_CLIPS == (fs.SPEECH_S7_DE, fs.SPEECH_S7_DE_DIGIT)
+    assert len({clip.member_sha256 for clip in fs.CLIPS}) == len(fs.CLIPS)
 
 
 @pytest.mark.parametrize("index", [0, 1, 2])
@@ -86,6 +98,56 @@ def test_clip_pins_are_well_formed(fs: ModuleType, index: int) -> None:
     assert clip.member.endswith(".wav")
     assert 8.0 <= clip.duration_s <= 15.0
     assert fs.clip_url(clip) == (f"https://huggingface.co/datasets/google/fleurs/resolve/{fs.REVISION}/{clip.tar_path}")
+
+
+@pytest.mark.parametrize("index", [3, 4])
+def test_s7_clip_pins_are_well_formed(fs: ModuleType, index: int) -> None:
+    clip = fs.CLIPS[index]
+    assert clip in fs.S7_CLIPS
+    assert HEX64.fullmatch(clip.member_sha256)
+    assert HEX64.fullmatch(clip.wav_sha256)
+    assert re.fullmatch(r"\d+\.wav", clip.member)
+    assert 5.0 <= clip.duration_s <= 30.0
+    assert fs.clip_url(clip) == (f"https://huggingface.co/datasets/google/fleurs/resolve/{fs.REVISION}/{clip.tar_path}")
+
+
+def _fold(text: str) -> str:
+    return "".join(char for char in text.lower() if char.isalnum())
+
+
+@pytest.mark.parametrize("index", [3, 4])
+def test_s7_targets_stand_in_the_measured_text(fs: ModuleType, index: int) -> None:
+    """The target forms come from the measured transcript (plan 04-14), each number form names one value."""
+    clip = fs.CLIPS[index]
+    targets = clip.s7
+    tokens = {_fold(part) for part in clip.expected_text.split()}
+    assert clip.expected_word == targets.number_word
+    assert _fold(targets.number_word) in tokens
+    assert _fold(targets.compound) in tokens
+    assert targets.plural is None or _fold(targets.plural) in tokens
+    assert _fold(targets.head) not in tokens
+    assert _fold(targets.compound).startswith(_fold(targets.head)[:4])
+    assert len(targets.head) >= PREFIX_MIN_CHARS
+    assert targets.singular is None or _fold(targets.singular) not in tokens
+    values = [[span.value for span in numbers.recognize(form.split())] for form in targets.number_forms]
+    assert len(targets.number_forms) == 4
+    assert all(value == values[0] and len(value) == 1 for value in values)
+    assert targets.number_forms[0].isdigit()
+
+
+def test_only_the_three_old_clips_lack_s7_targets(fs: ModuleType) -> None:
+    assert [clip.s7 is None for clip in fs.CLIPS] == [True, True, True, False, False]
+
+
+def test_read_member_takes_the_named_member_without_a_pin(fs: ModuleType) -> None:
+    data = fs.read_member(archive({"test/a.wav": b"aaa", "test/b.wav": b"bbb"}), "b.wav")
+
+    assert data == b"bbb"
+
+
+def test_read_member_refuses_a_path(fs: ModuleType) -> None:
+    with pytest.raises(ValueError, match="plain file name"):
+        fs.read_member(archive({"test/a.wav": b"aaa"}), "../a.wav")
 
 
 def test_expected_word_is_in_the_expected_text(fs: ModuleType) -> None:
