@@ -59,7 +59,9 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "srt" },
     { name = "vulture" },
+    { name = "webvtt-py" },
 ]
 
 [package.metadata]
@@ -81,7 +83,9 @@ dev = [
     { name = "pytest-asyncio", specifier = "==1.4.1.post1" },
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "ruff", specifier = "==0.17.3" },
+    { name = "srt", specifier = "==3.5.3" },
     { name = "vulture", specifier = "==2.16" },
+    { name = "webvtt-py", specifier = "==0.8.0" },
 ]
 
 [[package]]
@@ -688,6 +692,12 @@ wheels = [
 ]
 
 [[package]]
+name = "srt"
+version = "3.5.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/b7/4a1bc231e0681ebf339337b0cd05b91dc6a0d701fa852bb812e244b7a030/srt-3.5.3.tar.gz", hash = "sha256:4884315043a4f0740fd1f878ed6caa376ac06d70e135f306a6dc44632eed0cc0", size = 28296, upload-time = "2023-03-28T02:35:44.007Z" }
+
+[[package]]
 name = "starlette"
 version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -854,6 +864,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/60/a1/17e507dadbfccb755758ba977b165fec92924dfc4a8d2573b4fc1561b0cd/websockets-17.4-cp313-cp313-win_amd64.whl", hash = "sha256:203e42eb77e06f85778a908b34c5ad032f34e98a68ef33920d6685c1e65a9420", size = 219560, upload-time = "2026-10-30T15:08:09.108Z" },
     { url = "https://files.pythonhosted.org/packages/01/ba/4f51fe8db73889ea3ecfdeee283d4ac3b7ad7a609c0e4c1fc6de04078021/websockets-17.4-cp313-cp313-win_arm64.whl", hash = "sha256:d8255971f6789cf0cb365e3e22b9b166eba978548a26241eaa5b7af0440d885a", size = 219496, upload-time = "2026-10-30T15:08:10.574Z" },
     { url = "https://files.pythonhosted.org/packages/eb/27/9db924cb0dbf22eade78d98fbae77790f9bf6bc729e6ab29aef9d68e4156/websockets-17.4-py3-none-any.whl", hash = "sha256:c6bd2c9781915592b209160d0f017d4c7c82ad53075e6b0c24d2a89299e7f9e9", size = 212900, upload-time = "2026-10-30T15:10:34.482Z" },
+]
+
+[[package]]
+name = "webvtt-py"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/83/0f8bbcf97562172eeba23e133626f9c54125c545833b368ead9aeb20366e/webvtt_py-0.8.0.tar.gz", hash = "sha256:86c4e14ff787975bc29345b896ea156c26c24fa8a3e558a80eb8e575bb81d9bb", size = 156492, upload-time = "2026-11-08T20:21:29.74Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/3d/d0e2e3f6b0026ccc528fa4f2aa075ebe733a0242106cb518c7077aadc6ae/webvtt_py-0.8.0-py3-none-any.whl", hash = "sha256:1780a77dd04cbcf69b323e58fd3148a2409c224376d3bafda01ef9cdfdd78524", size = 61443, upload-time = "2026-11-08T20:21:28.302Z" },
 ]
 
 [[package]]
