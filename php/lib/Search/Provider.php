@@ -9,12 +9,14 @@ use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCA\AudioVideoSearch\Service\SearchFilters;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IMimeTypeDetector;
 use OCP\Files\IRootFolder;
 use OCP\IAppConfig;
 use OCP\IConfig;
+use OCP\IDBConnection;
 use OCP\IL10N;
 use OCP\IURLGenerator;
 use OCP\IUser;
@@ -60,6 +62,14 @@ use Psr\Log\LoggerInterface;
  * AND the switch sample_visible on, decided here on the server, and it carries
  * the word "Test result" in its subline so it never looks like a real hit.
  *
+ * The date and person filters of the dialog (since, until, person) are
+ * applied here after that recheck, with the meaning the Files search gives
+ * them (SearchFilters, D-04-09, D-04-10): the modification time of the
+ * confirmed node inclusive at both bounds, the person over the share rows.
+ * A filter can only drop a confirmed file, never add one, so it tells
+ * nothing about foreign shares; a download lock of a share never blocks a
+ * hit (SRCH-04: search yes, export no).
+ *
  * An excluded user gets no hits at all (D-02-08, T-02-58): the group is empty
  * before the container is asked anything, and the answer is the one of a
  * search that found nothing. Every proposal is also asked about with
@@ -89,6 +99,14 @@ final class Provider implements IFilteringProvider {
 	private const MAX_ROUNDS = 3;
 	private const OVERFETCH = 4;
 
+	/**
+	 * The round ceiling while a filter is set: a filter can thin the yield of
+	 * a round badly (many proposals confirmed, few of them in the bounds), so
+	 * more rounds are allowed to fill a page; BUDGET_SECONDS stays the hard
+	 * ceiling over all of them.
+	 */
+	private const MAX_ROUNDS_FILTERED = 6;
+
 	/** The term ceiling of the contract, in characters. */
 	private const MAX_TERM_LENGTH = 200;
 
@@ -112,6 +130,7 @@ final class Provider implements IFilteringProvider {
 		private IMimeTypeDetector $mimeTypeDetector,
 		private LoggerInterface $logger,
 		private ExclusionService $exclusions,
+		private IDBConnection $db,
 	) {
 	}
 
@@ -134,13 +153,17 @@ final class Provider implements IFilteringProvider {
 	}
 
 	/**
-	 * Only the term in phase 1. A provider that claimed date or title filters
-	 * it does not apply would show wrong hits; one that names only the term is
-	 * hidden by the web client while such a filter is active, which is honest.
+	 * The term and the three core filters the web client of NC 33 to 35 keys
+	 * on: it sends since and until only when a provider names both, person
+	 * only when it names person, and a provider that misses one of them is
+	 * moved under "Partial matches" while such a filter is active (SRCH-06,
+	 * 04-RESEARCH Pattern 2). Every name here is applied in entries() after
+	 * the recheck, with the meaning of Files (SearchFilters), so no claimed
+	 * filter shows a wrong hit.
 	 */
 	#[\Override]
 	public function getSupportedFilters(): array {
-		return [IFilter::BUILTIN_TERM];
+		return [IFilter::BUILTIN_TERM, IFilter::BUILTIN_SINCE, IFilter::BUILTIN_UNTIL, IFilter::BUILTIN_PERSON];
 	}
 
 	#[\Override]
@@ -148,6 +171,11 @@ final class Provider implements IFilteringProvider {
 		return [];
 	}
 
+	/**
+	 * No names of our own: a custom name without its FilterDefinition makes
+	 * the core throw while it loads the providers, which costs every provider
+	 * of the dialog, and the three core filters above cover this phase.
+	 */
 	#[\Override]
 	public function getCustomFilters(): array {
 		return [];
@@ -177,7 +205,8 @@ final class Provider implements IFilteringProvider {
 			return SearchResult::complete($this->getName(), []);
 		}
 
-		$page = $this->entries($uid, $term, max(1, min(self::MAX_LIMIT, $query->getLimit())), $this->startOffset($query));
+		$filters = SearchFilters::fromQuery($query, $this->db, $this->logger);
+		$page = $this->entries($uid, $term, max(1, min(self::MAX_LIMIT, $query->getLimit())), $this->startOffset($query), $filters);
 
 		return $page['cursor'] !== null
 			? SearchResult::paginated($this->getName(), $page['entries'], $page['cursor'])
@@ -215,9 +244,18 @@ final class Provider implements IFilteringProvider {
 	 * removes them; such a hit never appears. A question that fails is a yes
 	 * (ExclusionService).
 	 *
+	 * The filters of the dialog come after that recheck and never before it,
+	 * so only files the searching user may read are asked about at all
+	 * (T-04-04): first the two date bounds on the mtime of the confirmed
+	 * node, then the person over the share table, one question per round for
+	 * all confirmed candidates the earlier rounds have not answered yet
+	 * (SearchFilters, D-04-09, D-04-10). A set filter can thin a page, so
+	 * with one the rounds go up to MAX_ROUNDS_FILTERED while BUDGET_SECONDS
+	 * stays the hard ceiling (T-04-06).
+	 *
 	 * @return array{entries: list<SearchResultEntry>, cursor: ?int}
 	 */
-	private function entries(string $uid, string $term, int $limit, int $offset): array {
+	private function entries(string $uid, string $term, int $limit, int $offset, SearchFilters $filters): array {
 		$startedAt = hrtime(true);
 		$showSamples = $this->config->getSystemValueBool('debug', false)
 			&& $this->appConfig->getValueBool(Application::APP_ID, self::KEY_SAMPLE_VISIBLE, false);
@@ -225,9 +263,12 @@ final class Provider implements IFilteringProvider {
 		$userFolder = null;
 		/** @var array<int, ?File> $checked the recheck of each file, once per search */
 		$checked = [];
+		/** @var array<int, bool> $shared the share answer of the person filter, once per file */
+		$shared = [];
 		$entries = [];
+		$rounds = $filters->hasAny() ? self::MAX_ROUNDS_FILTERED : self::MAX_ROUNDS;
 
-		for ($round = 0; $round < self::MAX_ROUNDS; $round++) {
+		for ($round = 0; $round < $rounds; $round++) {
 			if ($offset > self::MAX_CONTAINER_OFFSET || self::secondsSince($startedAt) > self::BUDGET_SECONDS) {
 				break;
 			}
@@ -249,14 +290,22 @@ final class Provider implements IFilteringProvider {
 				}
 			}
 
-			$last = count($page['hits']) - 1;
+			// Two passes per round: first the recheck of every proposal, then
+			// one share question for all confirmed candidates, then the
+			// entries. The two passes exist so the person filter asks the
+			// database once per round and only ever about files the user may
+			// read (T-04-04, T-04-06).
+			$budgetSpent = false;
+			/** @var list<array{int, int, array{fileId:int,startMs:int,excerpt:string,sample:bool,stage:string}, File}> $confirmed */
+			$confirmed = [];
 			foreach ($page['hits'] as $position => $hit) {
 				if (self::secondsSince($startedAt) > self::BUDGET_SECONDS) {
 					$this->logger->debug('Audio & Video Search: time budget spent during the recheck', [
 						'checked' => count($checked),
 						'delivered' => count($entries),
 					]);
-					break 2;
+					$budgetSpent = true;
+					break;
 				}
 				if ($userFolder === null || ($hit['sample'] && !$showSamples)) {
 					continue;
@@ -274,7 +323,31 @@ final class Provider implements IFilteringProvider {
 					}
 				}
 				$file = $checked[$fileId];
-				if ($file === null) {
+				if ($file === null || !$filters->matchesTime($file)) {
+					continue;
+				}
+
+				$confirmed[] = [$position, $fileId, $hit, $file];
+			}
+
+			if ($filters->hasPerson()) {
+				$unanswered = [];
+				foreach ($confirmed as [, $fileId]) {
+					if (!array_key_exists($fileId, $shared)) {
+						$unanswered[$fileId] = $fileId;
+					}
+				}
+				if ($unanswered !== []) {
+					$subset = $filters->sharedSubset(array_values($unanswered));
+					foreach ($unanswered as $fileId) {
+						$shared[$fileId] = isset($subset[$fileId]);
+					}
+				}
+			}
+
+			$last = count($page['hits']) - 1;
+			foreach ($confirmed as [$position, $fileId, $hit, $file]) {
+				if ($filters->hasPerson() && $shared[$fileId] !== true) {
 					continue;
 				}
 
@@ -289,7 +362,7 @@ final class Provider implements IFilteringProvider {
 				}
 			}
 
-			if (!$page['hasMore'] || $page['nextOffset'] <= $offset) {
+			if ($budgetSpent || !$page['hasMore'] || $page['nextOffset'] <= $offset) {
 				break;
 			}
 			$offset = $page['nextOffset'];
