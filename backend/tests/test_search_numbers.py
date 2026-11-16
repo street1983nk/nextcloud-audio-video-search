@@ -78,12 +78,13 @@ def test_a_stop_word_drops_out_instead_of_emptying_the_query(search_index: Searc
     assert _ids(search_index, "ein 12") == TWELVE
 
 
-@pytest.mark.parametrize(("term", "expected"), [("Häuser", [9, 10]), ("Markt", [10, 9, 11])])
-def test_a_term_without_a_number_keeps_hits_order_and_scores(
+@pytest.mark.parametrize(("term", "expected"), [("März", [5, 6]), ("jour", [13])])
+def test_a_short_term_without_a_number_keeps_hits_order_and_scores(
     search_index: SearchIndex, term: str, expected: list[int]
 ) -> None:
-    # The reference is tantivy itself with the query of phases 1 to 3, not a
-    # second call of the new code.
+    # Since plan 04-06 only a term made of words below PREFIX_MIN_CHARS keeps
+    # the legacy way of phases 1 to 3 byte for byte (D-04-14). The reference is
+    # tantivy itself, not a second call of the new code.
     reference_query = search_index._index.parse_query(term, list(BODY_FIELDS), conjunction_by_default=True)
     searcher = search_index._index.searcher()
     reference = [
@@ -93,11 +94,18 @@ def test_a_term_without_a_number_keeps_hits_order_and_scores(
 
     hits = search_index.search(term, 50)
 
-    # The order as written down: "Markt Markt Häuser" holds the term twice in
-    # three words and leads; at equal length and count the earlier document
-    # comes first; the longest segment comes last.
     assert [hit.media_id for hit in hits] == expected
     assert [(hit.media_id, hit.score) for hit in hits] == reference
+
+
+@pytest.mark.parametrize(("term", "expected"), [("Häuser", [9, 10]), ("Markt", [10, 9, 11])])
+def test_a_longer_term_takes_the_prefix_way_and_keeps_its_hits(
+    search_index: SearchIndex, term: str, expected: list[int]
+) -> None:
+    # A word of five or more characters carries a prefix clause since plan
+    # 04-06 (D-04-14): the hits and their order from phase 3 stay, only the
+    # scores shift by the constant share of the regex clause.
+    assert [hit.media_id for hit in search_index.search(term, 50)] == expected
 
 
 def _words(text: str, start_ms: int = 0) -> list[Word]:

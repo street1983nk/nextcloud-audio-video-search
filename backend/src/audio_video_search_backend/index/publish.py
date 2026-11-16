@@ -43,6 +43,7 @@ from tantivy import Document, Index, IndexWriter, Occur, Query
 
 from audio_video_search_backend.index import numbers
 from audio_video_search_backend.index.analyzer import (
+    MAX_TOKEN_CHARS,
     cached_german_analyzer,
     english_analyzer,
     french_analyzer,
@@ -75,6 +76,21 @@ _MAX_KEYS: Final = 1_000_000
 # alphanumeric splits). A point right after digits stays as the German ordinal
 # mark ("am 12. März"), unless a letter or digit follows ("1.000").
 _WORD: Final = re.compile(r"[^\W_]+(?:(?<=\d)\.(?![^\W_]))?")
+# The compound head prefix (plan 04-06, D-04-14): a query word of at least this
+# many characters, without a digit, adds a regex clause per German stem on
+# body_de, so "Haushalt" reaches the term "haushaltsplan" of
+# "Haushaltsplanberatung" without a rebuild. Below the floor ("Haus", "Plan")
+# the legacy way of phases 1 to 3 stays byte for byte.
+PREFIX_MIN_CHARS: Final = 5
+# Only a stem the chain left as plain folded letters becomes a pattern: the
+# escaped prefix then stays a cheap anchored automaton on the term dictionary
+# (T-04-16); anything else (accents the German chain keeps, digits) adds none.
+_PREFIX_STEM: Final = re.compile(r"[a-z]+")
+
+
+def _prefix_pattern(stem: str) -> str:
+    """The anchored prefix pattern of one folded stem; metacharacters escaped (T-04-16)."""
+    return re.escape(stem[:MAX_TOKEN_CHARS]) + ".*"
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,18 +299,43 @@ class SearchIndex:
         # any of the three languages drops out of the word by word query.
         return all(chain.analyze(word) for chain in self._chains)
 
+    def _prefix_stems(self, word: str) -> tuple[str, ...]:
+        """The folded German stems a query word widens to as prefixes (D-04-14).
+
+        Only a word of at least PREFIX_MIN_CHARS characters and without a digit
+        takes part; the stems come from the same de chain as the index, and
+        only plain folded letters pass (T-04-16).
+        """
+        if len(word) < PREFIX_MIN_CHARS or any(c.isdigit() for c in word):
+            return ()
+        return tuple(dict.fromkeys(t for t in self._chains[0].analyze(word) if _PREFIX_STEM.fullmatch(t)))
+
+    def _needs_word_way(self, words: Sequence[str]) -> bool:
+        # The word by word way runs for a number (plan 04-01) or for a word
+        # long enough for a compound head prefix (plan 04-06). A term made only
+        # of short plain words keeps the legacy way of phases 1 to 3.
+        if numbers.recognize(words):
+            return True
+        return any(
+            self._carries_meaning(word) and self._prefix_stems(word)
+            for word in (raw.rstrip(".").lower() for raw in words)
+        )
+
     def _word_query(self, words: Sequence[str]) -> Query | None:
         """The query word by word: each number a group of its spellings, all groups required.
 
         A stop word of any chain (an article such as "ein") drops out instead
         of emptying the query; a spelling the parser refuses is
         left out. Words are lower case, so AND, OR and NOT stay plain words.
+        A word with a prefix stem carries one regex clause per stem on body_de
+        in its Should group, so a compound head meets its compounds (D-04-14).
         """
         spans = {span.start: span for span in numbers.recognize(words)}
-        groups: dict[tuple[str, ...], Query] = {}
+        groups: dict[tuple[tuple[str, ...], tuple[str, ...]], Query] = {}
         position = 0
         while position < len(words):
             span = spans.get(position)
+            stems: tuple[str, ...] = ()
             if span is not None:
                 literal = " ".join(word.rstrip(".") for word in words[span.start : span.stop]).lower()
                 literal = f'"{literal}"' if " " in literal else literal
@@ -302,15 +343,20 @@ class SearchIndex:
                 position = span.stop
             else:
                 word = words[position].rstrip(".").lower()
-                forms = (word,) if self._carries_meaning(word) else ()
+                if self._carries_meaning(word):
+                    forms = (word,)
+                    stems = self._prefix_stems(word)
+                else:
+                    forms = ()
                 position += 1
-            if not forms or forms in groups:
+            if not forms or (forms, stems) in groups:
                 continue
             parts = [part for part in (self._parse(form) for form in forms) if part is not None]
+            parts += [Query.regex_query(self._schema, FIELD_BODY_DE, _prefix_pattern(stem)) for stem in stems]
             if len(parts) == 1:
-                groups[forms] = parts[0]
+                groups[(forms, stems)] = parts[0]
             elif parts:
-                groups[forms] = Query.boolean_query([(Occur.Should, part) for part in parts])
+                groups[(forms, stems)] = Query.boolean_query([(Occur.Should, part) for part in parts])
         if not groups:
             return None
         return Query.boolean_query([(Occur.Must, group) for group in groups.values()])
@@ -318,16 +364,17 @@ class SearchIndex:
     def search(self, term: str, limit: int) -> list[IndexHit]:
         """Candidates for a term over the three body fields; a query without any word is an empty list.
 
-        A term without a number goes to the parser as before (phases 1 to 3).
-        A term with a number, or one the parser refuses ("12:30"), takes the
-        word by word way of :meth:`_word_query` (plan 04-01, T-04-03).
+        A term of short plain words goes to the parser as before (phases 1 to
+        3). A term with a number or a prefix word (plan 04-06, D-04-14), or one
+        the parser refuses ("12:30"), takes the word by word way of
+        :meth:`_word_query` (plan 04-01, T-04-03).
         """
         text = normalize(term[:MAX_TERM_CHARS]).strip()
         if not text or limit <= 0:
             return []
         words = _WORD.findall(text)
         query: Query | None = None
-        if not numbers.recognize(words):
+        if not self._needs_word_way(words):
             try:
                 query = self._index.parse_query(text, list(BODY_FIELDS), conjunction_by_default=True)
             except ValueError:
@@ -356,22 +403,38 @@ class SearchIndex:
         """The start of the first word that shares a token with the term in any chain.
 
         A number in the term brings the tokens of all its spellings; a phrase
-        spelling counts with every part, so "vingt et un" meets a "vingt".
+        spelling counts with every part, so "vingt et un" meets a "vingt". For
+        a prefix word of the term, a word whose German token begins with the
+        stem counts too, so the jump lands on "Haushaltsplanberatung" when the
+        term was "Haushalt" (D-04-14).
         """
         text = normalize(term[:MAX_TERM_CHARS])
+        term_words = _WORD.findall(text)
         wanted = [set(chain.analyze(text)) for chain in self._chains]
-        for span in numbers.recognize(_WORD.findall(text)):
+        spans = numbers.recognize(term_words)
+        for span in spans:
             for form in numbers.variants(span.value, span.ordinal):
                 plain = form.strip('"')
                 for chain, tokens in zip(self._chains, wanted, strict=True):
                     tokens.update(chain.analyze(plain))
-        if not any(wanted):
+        in_span = {position for span in spans for position in range(span.start, span.stop)}
+        stems: set[str] = set()
+        for position, raw in enumerate(term_words):
+            if position in in_span:
+                continue
+            word = raw.rstrip(".").lower()
+            if self._carries_meaning(word):
+                stems.update(self._prefix_stems(word))
+        if not any(wanted) and not stems:
             return None
         for word in words:
             surface = normalize(word.surface)
-            for chain, tokens in zip(self._chains, wanted, strict=True):
-                if tokens and tokens.intersection(chain.analyze(surface)):
+            analyzed = [chain.analyze(surface) for chain in self._chains]
+            for tokens, wanted_tokens in zip(analyzed, wanted, strict=True):
+                if wanted_tokens and wanted_tokens.intersection(tokens):
                     return int(word.start_ms)
+            if stems and any(token.startswith(stem) for stem in stems for token in analyzed[0]):
+                return int(word.start_ms)
         return None
 
     def _keys(self) -> dict[int, set[int]]:
