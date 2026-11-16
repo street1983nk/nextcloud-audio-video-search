@@ -167,14 +167,14 @@ Plans:
   4. Ein Nutzer legt `<Name>.<Sprache>.vtt` neben das Medium; eine vorhandene Datei gleichen Namens wird nie überschrieben.
   5. Über eine Freigabe mit Download-Sperre findet der Empfänger Treffer, bekommt aber keinen Export und keine Nebendatei.
 
-**Plans:** 17 plans
+**Plans:** 1/17 plans executed
 
 Plans:
 **Wave 1**
 
 - [ ] 04-01-PLAN.md: Zahlen als Ziffer und Wort finden (0 bis 100, Ordinalia), 12:30 ohne Fehler
 - [ ] 04-02-PLAN.md: Datums- und Personenfilter mit Files-Semantik, Gruppe bleibt sichtbar
-- [ ] 04-03-PLAN.md: Owner-Freigabe Texte T13 bis T35, Kataloge, Gate gegen BITV-Behauptung
+- [x] 04-03-PLAN.md: Owner-Freigabe Texte T13 bis T35, Kataloge, Gate gegen BITV-Behauptung
 - [ ] 04-04-PLAN.md: Unabhängige Untertitel-Prüfer nach Legitimitäts-Checkpoint
 - [ ] 04-05-PLAN.md: Mehrheitssprache je Datei, Store v4, Nachbestimmung für Altbestand
 
@@ -342,7 +342,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 0/TBD | Not started | - |
+| 4. Suchqualität und Export | 1/17 | In Progress|  |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |
