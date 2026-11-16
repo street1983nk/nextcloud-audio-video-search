@@ -141,7 +141,7 @@ final class ExportController extends Controller {
 
 		return new DataDownloadResponse(
 			$this->payload($format, $answer, $fileName, $fileId),
-			self::downloadName($fileName, $answer['language'], $format),
+			self::attachmentName(self::downloadName($fileName, $answer['language'], $format)),
 			self::MIME_TYPES[$format],
 		);
 	}
@@ -338,6 +338,21 @@ final class ExportController extends Controller {
 		$base = $dot === false || $dot === 0 ? $name : substr($name, 0, $dot);
 
 		return $base . '.' . $language . '.' . $format;
+	}
+
+	/**
+	 * The download name as the Content-Disposition header can carry it:
+	 * control characters become spaces, as in the TXT head. The ASCII
+	 * fallback of DownloadResponse keeps them, and Symfony refuses such a
+	 * fallback with an exception, so a medium with a tab in its name would
+	 * end in a server error instead of the download. Only the header name
+	 * changes; the sidecar keeps downloadName() so it stays next to its
+	 * medium under the pattern of D-04-04.
+	 */
+	public static function attachmentName(string $name): string {
+		$safe = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $name);
+
+		return is_string($safe) ? $safe : (string)preg_replace('/[\x00-\x1F\x7F]/', ' ', $name);
 	}
 
 	/**

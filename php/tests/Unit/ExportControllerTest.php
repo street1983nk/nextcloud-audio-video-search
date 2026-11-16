@@ -587,6 +587,16 @@ final class ExportControllerTest extends TestCase {
 
 		self::assertInstanceOf(DataDownloadResponse::class, $response);
 		self::assertStringStartsWith("Sitz ung.webm\n", $response->render());
+		// The header carries the name too: the tab became a space there, so
+		// the download is a download and not a server error.
+		self::assertStringContainsString('Sitz ung.de.txt', (string)$response->getHeaders()['Content-Disposition']);
+	}
+
+	public function testTheAttachmentNameTurnsControlCharactersIntoSpacesAndKeepsTheRest(): void {
+		self::assertSame('a b c d.de.vtt', ExportController::attachmentName("a\tb\x00c\x7Fd.de.vtt"));
+		self::assertSame('Übung.final.fr.vtt', ExportController::attachmentName('Übung.final.fr.vtt'));
+		// The sidecar name is not touched: it keeps the pattern of its medium.
+		self::assertSame("Sitz\tung.de.vtt", ExportController::downloadName("Sitz\tung.webm", 'de', 'vtt'));
 	}
 
 	public function testTheVttCarriesTheNoticeAsANoteAndForAPartialTranscriptTheTime(): void {
