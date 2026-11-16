@@ -30,6 +30,7 @@ import {
 	columnFromExcerpt,
 	downloadTo,
 	ensureShare,
+	expectAxeClean,
 	EXPORT_TEXTS as T,
 	excludeUser,
 	exportName,
@@ -236,7 +237,7 @@ async function expectErrorPage(page: Page, language: Language): Promise<Locator>
 // ---------------------------------------------------------------------------
 // X1, X1a: the section of a finished transcript.
 
-test('X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, Spur ohne default @phase4 @screenshot', async ({ page }, testInfo) => {
+test('X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, Spur ohne default @phase4 @axe @screenshot', async ({ page }, testInfo) => {
 	only(testInfo, X1_PROJECTS);
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
@@ -270,6 +271,7 @@ test('X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, 
 	await expectSectionFits(page);
 	await expectMediaQuiet(page);
 	await screenshot(page, 'x1', testInfo);
+	await expectAxeClean(page, 'x1', testInfo);
 });
 
 test('X1 grober Zeiger: Download- und Ablage-Knopf mindestens 44 px hoch @phase4', async ({ browser, page }, testInfo) => {
@@ -301,7 +303,7 @@ test('X1 grober Zeiger: Download- und Ablage-Knopf mindestens 44 px hoch @phase4
 	}
 });
 
-test('X1a Export an einer Audiodatei: drei Downloads, keine Spur @phase4', async ({ page }, testInfo) => {
+test('X1a Export an einer Audiodatei: drei Downloads, keine Spur @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const alice = users.alice();
@@ -314,6 +316,7 @@ test('X1a Export an einer Audiodatei: drei Downloads, keine Spur @phase4', async
 	await expect(page.locator('track')).toHaveCount(0);
 	await expectMediaQuiet(page);
 	await screenshot(page, 'x1a', testInfo);
+	await expectAxeClean(page, 'x1a', testInfo);
 });
 
 // ---------------------------------------------------------------------------
@@ -358,7 +361,7 @@ async function readTriple(page: Page, fileId: string): Promise<string> {
 	return `page ${before}, TXT line 3 "${txtLine}", VTT NOTE ${JSON.stringify(note)}`;
 }
 
-test('X2 Teiltranskript: gleiche Zeit auf der Seite, im TXT-Kopf und in der VTT-NOTE @phase4', async ({ page }, testInfo) => {
+test('X2 Teiltranskript: gleiche Zeit auf der Seite, im TXT-Kopf und in der VTT-NOTE @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(2 * PARTIAL_WITHIN_MS + 5 * 60_000);
 	const alice = users.alice();
@@ -393,6 +396,7 @@ test('X2 Teiltranskript: gleiche Zeit auf der Seite, im TXT-Kopf und in der VTT-
 	await expect(partialNote(page).locator('time.avs-play__time')).toHaveAttribute('datetime', /^PT(\d+H)?(\d+M)?\d+S$/);
 	await expect(downloadLinks(page)).toHaveCount(3);
 	await screenshotVariants(page, 'x2', testInfo, ALL_VARIANTS, partialNote(page));
+	await expectAxeClean(page, 'x2', testInfo);
 
 	// French at 375 px: fleur receives the file for the picture.
 	await ensureShare(alice, `/${X2_FOLDER}/${X2_FILE}`, 'fleur', 0, READ_ONLY);
@@ -421,7 +425,7 @@ test('X2 Teiltranskript: gleiche Zeit auf der Seite, im TXT-Kopf und in der VTT-
 // ---------------------------------------------------------------------------
 // X3: a share with the download switched off while viewing is allowed.
 
-test('X3 Freigabe mit Download-Sperre, Ansehen erlaubt: nur T13 und T24, Export, Spur und Ablage 403 @phase4 @screenshot', async ({ page }, testInfo) => {
+test('X3 Freigabe mit Download-Sperre, Ansehen erlaubt: nur T13 und T24, Export, Spur und Ablage 403 @phase4 @axe @screenshot', async ({ page }, testInfo) => {
 	only(testInfo, X3_PROJECTS);
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
@@ -435,6 +439,7 @@ test('X3 Freigabe mit Download-Sperre, Ansehen erlaubt: nur T13 und T24, Export,
 		await expectX3(page, locked, language, testInfo.project.name === ONCE);
 		await expectMediaQuiet(page);
 		await screenshot(page, 'x3', testInfo);
+		await expectAxeClean(page, 'x3', testInfo);
 	} finally {
 		toggleViewWithoutDownload(false);
 	}
@@ -472,7 +477,7 @@ test('X3 Kombifall gesperrt und ausgeschlossen: derselbe Abschnitt, dieselben 40
 // ---------------------------------------------------------------------------
 // X4: no section at all, byte for byte the same for every reason.
 
-test('X4 ohne Transkript und ausgeschlossen: kein Abschnitt, Hauptbereich ab dem Ausschnitt byte-gleich @phase4', async ({ page }, testInfo) => {
+test('X4 ohne Transkript und ausgeschlossen: kein Abschnitt, Hauptbereich ab dem Ausschnitt byte-gleich @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const video = fileIds.s7Video();
@@ -518,12 +523,13 @@ test('X4 ohne Transkript und ausgeschlossen: kein Abschnitt, Hauptbereich ab dem
 	expect(withoutTranscript.tail, 'after the excerpt block a file without transcript equals an excluded user').toBe(excludedVideo.tail);
 	await expectMediaQuiet(page);
 	await screenshot(page, 'x4', testInfo);
+	await expectAxeClean(page, 'x4', testInfo);
 });
 
 // ---------------------------------------------------------------------------
 // X5: a share without the right to create files; X6: no JavaScript.
 
-test('X5 Freigabe nur lesen mit Download: T23 statt Knopf, Downloads gehen @phase4', async ({ page }, testInfo) => {
+test('X5 Freigabe nur lesen mit Download: T23 statt Knopf, Downloads gehen @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const alice = users.alice();
@@ -551,6 +557,7 @@ test('X5 Freigabe nur lesen mit Download: T23 statt Knopf, Downloads gehen @phas
 		}
 		await expectMediaQuiet(page);
 		await screenshotVariants(page, 'x5', testInfo, [[1280, 'light'], [375, 'light']], section(page));
+		await expectAxeClean(page, 'x5', testInfo);
 	} finally {
 		await updateShare(alice, shareId, { permissions: ABLAGE_PERMISSIONS });
 	}
@@ -636,7 +643,7 @@ test('D1 Downloads SRT, VTT, TXT: Name mit Sprache, auch mit Umlaut, MIME, TXT-Z
 // ---------------------------------------------------------------------------
 // D2: the error page of the download, with the container stopped.
 
-test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleichem ?t=, auch über den Link der Seite @phase4', async ({ page }, testInfo) => {
+test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleichem ?t=, auch über den Link der Seite @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS + 10 * 60_000);
 	const { user, language } = phase4User(testInfo);
@@ -669,6 +676,7 @@ test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleiche
 			expect(response?.status()).toBe(503);
 			const action = await expectErrorPage(page, language);
 			await screenshotVariants(page, 'd2', testInfo, [[1280, 'light'], [1280, 'dark'], [375, 'light']], page.locator('.avs-banner--error'));
+			await expectAxeClean(page, 'd2', testInfo);
 			await action.click();
 			await expect(page).toHaveURL(new RegExp(`/apps/audio_video_search/play/${video}\\?t=${D2_MARK.replace('.', '\\.')}$`));
 		},

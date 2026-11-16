@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { expect, request, test, type APIRequestContext, type Locator, type Page, type TestInfo } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 export const APP_PATH = '/index.php/apps/audio_video_search';
 export const ADMIN_PATH = '/index.php/settings/admin/audio_video_search';
@@ -1043,4 +1044,73 @@ export function noteLines(vtt: string): string[] {
 	const blocks = vtt.replace(/\r\n/g, '\n').split(/\n{2,}/);
 	const note = blocks.find((block) => block.startsWith('NOTE'));
 	return note === undefined ? [] : note.split('\n').slice(1);
+}
+
+// -- axe (plan 04-17, Owner 16.11.2026: @axe-core/playwright 4.14.0, exact pin) --
+
+/** The rules axe runs: WCAG 2.0, 2.1 and 2.2 on levels A and AA. */
+export const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+// 04-17: no finding of these weights on X1 to X5, E1 to E7 and D2.
+const AXE_BLOCKING = new Set(['serious', 'critical']);
+// The content of the app on the playback page and on the error page of the
+// download; the frame of Nextcloud around it is not ours to judge.
+const AXE_SCOPE = '#app-content.avs-play';
+
+type AxeFinding = { id: string; impact?: string | null; nodes: { target: unknown[] }[] };
+
+/** The serious and critical findings of an axe run, one line each: rule, weight and the elements. */
+export function blockingAxeFindings(violations: readonly AxeFinding[]): string[] {
+	return violations
+		.filter((violation) => violation.impact != null && AXE_BLOCKING.has(violation.impact))
+		.map((violation) => `${violation.id} (${violation.impact}): ${violation.nodes.map((node) => node.target.map(String).join(' ')).join(', ')}`);
+}
+
+/** One axe run over the content of the app; the whole list of findings goes into the report. */
+async function runAxe(page: Page, id: string, testInfo: TestInfo): Promise<{ violations: AxeFinding[]; passes: number }> {
+	const results = await new AxeBuilder({ page }).include(AXE_SCOPE).withTags(AXE_TAGS).analyze();
+	await testInfo.attach(`axe-${id}-${testInfo.project.name}.json`, {
+		body: JSON.stringify({ url: results.url, violations: results.violations, incomplete: results.incomplete.map((item) => item.id) }, null, 2),
+		contentType: 'application/json',
+	});
+	return { violations: results.violations, passes: results.passes.length };
+}
+
+/**
+ * axe on the state the page shows now: no serious or critical finding. The
+ * run must have looked at something (rules passed), so an empty scope can
+ * never pass as clean.
+ */
+export async function expectAxeClean(page: Page, id: string, testInfo: TestInfo): Promise<void> {
+	await expect(page.locator(AXE_SCOPE)).toBeAttached();
+	const { violations, passes } = await runAxe(page, id, testInfo);
+	expect(passes, `axe ${id}: the run checked no rule on ${AXE_SCOPE}`).toBeGreaterThan(0);
+	expect(blockingAxeFindings(violations), `axe ${id}: serious or critical findings`).toEqual([]);
+}
+
+/**
+ * Positive control of the axe gate: a button without a name and an image
+ * without alt, put into the scope of the page shown now, must come back as
+ * critical findings through the same filter expectAxeClean uses. Removes
+ * both again, so the page is unchanged afterwards.
+ */
+export async function expectAxeSelfTest(page: Page, testInfo: TestInfo): Promise<void> {
+	await page.locator(AXE_SCOPE).evaluate((scope) => {
+		const button = document.createElement('button');
+		button.id = 'avs-axe-probe-button';
+		const image = document.createElement('img');
+		image.id = 'avs-axe-probe-image';
+		image.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+		scope.append(button, image);
+	});
+	try {
+		const { violations } = await runAxe(page, 'self-test', testInfo);
+		const found = blockingAxeFindings(violations);
+		expect(found.some((line) => line.startsWith('button-name ') && line.includes('#avs-axe-probe-button')), 'axe finds the button without a name').toBe(true);
+		expect(found.some((line) => line.startsWith('image-alt ') && line.includes('#avs-axe-probe-image')), 'axe finds the image without alt').toBe(true);
+	} finally {
+		await page.evaluate(() => {
+			document.getElementById('avs-axe-probe-button')?.remove();
+			document.getElementById('avs-axe-probe-image')?.remove();
+		});
+	}
 }

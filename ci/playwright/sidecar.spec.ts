@@ -26,6 +26,8 @@ import {
 	apiAs,
 	deleteFile,
 	EXPORT_TEXTS as T,
+	expectAxeClean,
+	expectAxeSelfTest,
 	expectContrastSelfTest,
 	exportName,
 	exportRoutes,
@@ -142,7 +144,7 @@ async function expectFrameShown(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 // E1 and E2: the sidecar is laid down once, the second click never touches it.
 
-test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und die Datei bleibt byte-gleich @phase4', async ({ page }, testInfo) => {
+test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und die Datei bleibt byte-gleich @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
@@ -170,6 +172,7 @@ test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und
 	expect(content.startsWith(`WEBVTT\n\nNOTE\n${T.T35[language]}\n`), 'the sidecar is the VTT with T35 in its NOTE').toBe(true);
 	const before = await sha256OfFile(user, name);
 	await screenshotVariants(page, 'e1', testInfo, ALL_VARIANTS, created);
+	await expectAxeClean(page, 'e1', testInfo);
 
 	// E2: the same click again is a collision, nothing is written.
 	expect((await clickSidecar(page, video)).status()).toBe(409);
@@ -177,9 +180,10 @@ test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und
 	await expect(created).toBeHidden();
 	expect(await sha256OfFile(user, name), 'the second click left the sidecar byte for byte as it was').toBe(before);
 	await screenshotVariants(page, 'e2', testInfo, ALL_VARIANTS, collision);
+	await expectAxeClean(page, 'e2', testInfo);
 });
 
-test('E2 Kollision in Hochkontrast und Französisch @phase4 @screenshot', async ({ page }, testInfo) => {
+test('E2 Kollision in Hochkontrast und Französisch @phase4 @axe @screenshot', async ({ page }, testInfo) => {
 	only(testInfo, ['hc-1280', 'fr-w375-light']);
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
@@ -196,12 +200,13 @@ test('E2 Kollision in Hochkontrast und Französisch @phase4 @screenshot', async 
 	await expectErrorBanner(page, 2, fill(T.T22b[language], name), T.T22a[language]);
 	expect(await sha256OfFile(user, name)).toBe(before);
 	await screenshot(page, 'e2', testInfo);
+	await expectAxeClean(page, 'e2', testInfo);
 });
 
 // ---------------------------------------------------------------------------
 // E3 and E4: carol's rights change after the page was built.
 
-test('E3 Schreibrecht nach dem Seitenaufbau entzogen: T29b und T23, nichts angelegt @phase4', async ({ page }, testInfo) => {
+test('E3 Schreibrecht nach dem Seitenaufbau entzogen: T29b und T23, nichts angelegt @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const alice = users.alice();
@@ -221,12 +226,13 @@ test('E3 Schreibrecht nach dem Seitenaufbau entzogen: T29b und T23, nichts angel
 		await expectErrorBanner(page, 3, T.T23.en, T.T29b.en);
 		expect(await davStatus(alice, target), 'no sidecar was written into the folder').toBe(404);
 		await screenshot(page, 'e3', testInfo);
+		await expectAxeClean(page, 'e3', testInfo);
 	} finally {
 		await updateShare(alice, shareId, { permissions: ABLAGE_PERMISSIONS });
 	}
 });
 
-test('E4 Download-Sperre nach dem Seitenaufbau gesetzt: T29b und T24, nichts angelegt @phase4', async ({ page }, testInfo) => {
+test('E4 Download-Sperre nach dem Seitenaufbau gesetzt: T29b und T24, nichts angelegt @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const alice = users.alice();
@@ -246,6 +252,7 @@ test('E4 Download-Sperre nach dem Seitenaufbau gesetzt: T29b und T24, nichts ang
 		await expectErrorBanner(page, 4, T.T24.en, T.T29b.en);
 		expect(await davStatus(alice, target), 'no sidecar was written into the folder').toBe(404);
 		await screenshot(page, 'e4', testInfo);
+		await expectAxeClean(page, 'e4', testInfo);
 	} finally {
 		await updateShare(alice, shareId, { download: true });
 	}
@@ -264,7 +271,7 @@ test('E4 Download-Sperre nach dem Seitenaufbau gesetzt: T29b und T24, nichts ang
 // the answer of the route from the test, so the page proves its part: the
 // banner E5 with T26 in words.
 test(
-	'E5 Name zu lang: Banner T29b und T26 aus der Antwort 400 name_too_long @phase4',
+	'E5 Name zu lang: Banner T29b und T26 aus der Antwort 400 name_too_long @phase4 @axe',
 	{ annotation: { type: 'answered by the test', description: 'a 400 name_too_long cannot happen with a real file name (250-byte limit of Nextcloud); ExportControllerTest proves the server side' } },
 	async ({ page }, testInfo) => {
 		only(testInfo, [ONCE]);
@@ -283,6 +290,7 @@ test(
 			expect((await clickSidecar(page, video)).status()).toBe(400);
 			await expectErrorBanner(page, 5, T.T26[language], T.T29b[language]);
 			await screenshot(page, 'e5', testInfo);
+			await expectAxeClean(page, 'e5', testInfo);
 		} finally {
 			await page.unroute(route);
 		}
@@ -292,7 +300,7 @@ test(
 // ---------------------------------------------------------------------------
 // E7: the container is stopped after the page was built.
 
-test('E7 Container nach dem Seitenaufbau gestoppt: T29b und T25 @phase4', async ({ page }, testInfo) => {
+test('E7 Container nach dem Seitenaufbau gestoppt: T29b und T25 @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS + 10 * 60_000);
 	const { user, language } = phase4User(testInfo);
@@ -306,6 +314,7 @@ test('E7 Container nach dem Seitenaufbau gestoppt: T29b und T25 @phase4', async 
 			expect((await clickSidecar(page, video)).status()).toBe(503);
 			await expectErrorBanner(page, 7, T.T25[language], T.T29b[language]);
 			await screenshot(page, 'e7', testInfo);
+			await expectAxeClean(page, 'e7', testInfo);
 		},
 		user,
 		video,
@@ -401,9 +410,26 @@ test('Kontrast: Erklärsatz, Ablage-Satz und Knöpfe mindestens 4,5:1 in hell, d
 });
 
 // ---------------------------------------------------------------------------
+// The axe gate itself: it must find what it is there to find.
+
+test('axe Selbsttest: ein Knopf ohne Namen und ein Bild ohne Alternativtext sind kritische Befunde @phase4 @axe', async ({ page }, testInfo) => {
+	only(testInfo, [ONCE]);
+	test.setTimeout(PREPARED_MS);
+	const { user } = phase4User(testInfo);
+	const video = fileIds.s7Video();
+	await expectTranscript(user, video);
+	await login(page, user);
+	await page.goto(playAt(video, START_SECONDS));
+	await expect(sidecarButton(page)).toBeVisible();
+	await expectAxeSelfTest(page, testInfo);
+	// Without the probes the same page is clean (X1 checks it in every project).
+	await expectAxeClean(page, 'self-test-clean', testInfo);
+});
+
+// ---------------------------------------------------------------------------
 // E6 last: after it the sidecar route of this user stays refused for a minute.
 
-test('E6 Rate-Limit nach schnellen POSTs: T29b und T27 @phase4', async ({ page }, testInfo) => {
+test('E6 Rate-Limit nach schnellen POSTs: T29b und T27 @phase4 @axe', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
@@ -428,4 +454,5 @@ test('E6 Rate-Limit nach schnellen POSTs: T29b und T27 @phase4', async ({ page }
 	expect((await clickSidecar(page, video)).status()).toBe(429);
 	await expectErrorBanner(page, 6, T.T27[language], T.T29b[language]);
 	await screenshot(page, 'e6', testInfo);
+	await expectAxeClean(page, 'e6', testInfo);
 });
