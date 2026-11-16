@@ -10,13 +10,17 @@ use OCA\AudioVideoSearch\Service\DownloadPolicy;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCA\AudioVideoSearch\Service\SidecarWriter;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataDisplayResponse;
 use OCP\AppFramework\Http\DataDownloadResponse;
+use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\TemplateResponse;
+use OCP\Files\Cache\ICache;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
+use OCP\Files\NotPermittedException;
 use OCP\Files\Storage\ISharedStorage;
 use OCP\Files\Storage\IStorage;
 use OCP\IL10N;
@@ -25,6 +29,8 @@ use OCP\IURLGenerator;
 use OCP\IUser;
 use OCP\IUserManager;
 use OCP\IUserSession;
+use OCP\Lock\ILockingProvider;
+use OCP\Lock\LockedException;
 use OCP\Share\IAttributes;
 use OCP\Share\IShare;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -73,6 +79,17 @@ final class ExportControllerTest extends TestCase {
 	/** @var list<string> every log line with its context, as one text */
 	private array $logged = [];
 
+	/** @var array<string, string> the sidecar files of the parent folder, name to content */
+	private array $sidecars = [];
+
+	private bool $creatable = true;
+
+	private bool $lockTaken = false;
+
+	private bool $storageRefuses = false;
+
+	private int $newFileCalls = 0;
+
 	protected function setUp(): void {
 		parent::setUp();
 
@@ -87,6 +104,11 @@ final class ExportControllerTest extends TestCase {
 		$this->excludedFiles = [];
 		$this->exclusionsFail = false;
 		$this->logged = [];
+		$this->sidecars = [];
+		$this->creatable = true;
+		$this->lockTaken = false;
+		$this->storageRefuses = false;
+		$this->newFileCalls = 0;
 	}
 
 	private function controller(): ExportController {
@@ -143,6 +165,13 @@ final class ExportControllerTest extends TestCase {
 
 		$logger = $this->logger();
 
+		$locking = $this->createMock(ILockingProvider::class);
+		$locking->method('acquireLock')->willReturnCallback(function (string $path, int $type): void {
+			if ($this->lockTaken) {
+				throw new LockedException($path);
+			}
+		});
+
 		return new ExportController(
 			$request,
 			$root,
@@ -154,6 +183,7 @@ final class ExportControllerTest extends TestCase {
 			$logger,
 			$exclusions,
 			new DownloadPolicy($logger),
+			new SidecarWriter($locking, $logger),
 		);
 	}
 
@@ -196,9 +226,40 @@ final class ExportControllerTest extends TestCase {
 			$storage->method('instanceOfStorage')->willReturn(false);
 		}
 		$file->method('getStorage')->willReturn($storage);
+		$file->method('getParent')->willReturn($this->parentFolder());
 		$this->readable[$id] = $file;
 
 		return $file;
+	}
+
+	/**
+	 * The folder of the medium, a double whose files live in $this->sidecars,
+	 * so they survive across controller instances within one test.
+	 */
+	private function parentFolder(): Folder&MockObject {
+		$cache = $this->createMock(ICache::class);
+		$cache->method('getNumericStorageId')->willReturn(42);
+		$parentStorage = $this->createMock(IStorage::class);
+		$parentStorage->method('getCache')->willReturn($cache);
+
+		$parent = $this->createMock(Folder::class);
+		$parent->method('getStorage')->willReturn($parentStorage);
+		$parent->method('getInternalPath')->willReturn('files/Aufnahmen');
+		$parent->method('isCreatable')->willReturnCallback(fn (): bool => $this->creatable);
+		$parent->method('nodeExists')->willReturnCallback(
+			fn (string $name): bool => array_key_exists($name, $this->sidecars),
+		);
+		$parent->method('newFile')->willReturnCallback(function (string $name, mixed $content = null): File {
+			$this->newFileCalls++;
+			if ($this->storageRefuses) {
+				throw new NotPermittedException('no create permission');
+			}
+			$this->sidecars[$name] = (string)$content;
+
+			return $this->createMock(File::class);
+		});
+
+		return $parent;
 	}
 
 	/** A received share whose download switch is set to $download (null: not set). */
@@ -616,6 +677,198 @@ final class ExportControllerTest extends TestCase {
 		$this->containerNeverAsked = true;
 		$this->searchAllowed = false;
 		self::assertSame(Http::STATUS_SERVICE_UNAVAILABLE, $this->controller()->track(8)->getStatus());
+	}
+
+	// -- the sidecar (EXP-03, D-04-05 bis D-04-08) ----------------------------------------
+
+	private function sidecar(int $fileId): DataResponse {
+		return $this->controller()->sidecar($fileId);
+	}
+
+	/** What could tell two JSON answers apart: the status and the encoded data. */
+	private static function dataAnswer(DataResponse $response): string {
+		return $response->getStatus() . "\n" . json_encode($response->getData());
+	}
+
+	public function testTheSidecarIsCreatedNextToTheMediumAndCarriesTheNote(): void {
+		$cues = "1\n00:00:00.000 --> 00:00:02.000\nder Haushalt wird beraten\n";
+		$this->file(7, 'sitzung.mp4');
+		$this->export = self::known(['body' => "WEBVTT\n\n" . $cues, 'partial' => true, 'untilMs' => 60000]);
+
+		$response = $this->sidecar(7);
+
+		self::assertSame(Http::STATUS_CREATED, $response->getStatus());
+		self::assertSame(['name' => 'sitzung.de.vtt'], $response->getData());
+		self::assertSame([[self::UID, 7, 'vtt']], $this->exportCalls);
+		self::assertArrayHasKey('sitzung.de.vtt', $this->sidecars);
+		self::assertStringStartsWith("WEBVTT\n\nNOTE\n", $this->sidecars['sitzung.de.vtt']);
+		self::assertSame(
+			"WEBVTT\n\nNOTE\nSubtitle draft, created automatically and not reviewed.\n"
+			. "Transcript up to 1:00, the file is still being processed.\n\n" . $cues,
+			$this->sidecars['sitzung.de.vtt'],
+		);
+	}
+
+	public function testASecondCallAfterSuccessIsThe409WithTheSameNameAndTheFileStaysByteForByte(): void {
+		$this->file(7, 'sitzung.mp4');
+
+		$first = $this->sidecar(7);
+		self::assertSame(Http::STATUS_CREATED, $first->getStatus());
+		$before = hash('sha256', $this->sidecars['sitzung.de.vtt']);
+
+		$second = $this->sidecar(7);
+
+		self::assertSame(Http::STATUS_CONFLICT, $second->getStatus());
+		self::assertSame(['name' => 'sitzung.de.vtt'], $second->getData());
+		self::assertSame($before, hash('sha256', $this->sidecars['sitzung.de.vtt']));
+		self::assertSame(1, $this->newFileCalls);
+	}
+
+	public function testAForeignFileOfTheSameNameIsReportedAndNeverTouched(): void {
+		$this->file(7, 'sitzung.mp4');
+		$this->sidecars['sitzung.de.vtt'] = "WEBVTT\n\nder alte, korrigierte Untertitel\n";
+		$before = hash('sha256', $this->sidecars['sitzung.de.vtt']);
+
+		$response = $this->sidecar(7);
+
+		self::assertSame(Http::STATUS_CONFLICT, $response->getStatus());
+		self::assertSame(['name' => 'sitzung.de.vtt'], $response->getData());
+		self::assertSame($before, hash('sha256', $this->sidecars['sitzung.de.vtt']));
+		self::assertSame(0, $this->newFileCalls);
+	}
+
+	public function testABusyLockIsThe409WithTheNameAndNothingIsWritten(): void {
+		$this->file(7, 'sitzung.mp4');
+		$this->lockTaken = true;
+
+		$response = $this->sidecar(7);
+
+		self::assertSame(Http::STATUS_CONFLICT, $response->getStatus());
+		self::assertSame(['name' => 'sitzung.de.vtt'], $response->getData());
+		self::assertSame([], $this->sidecars);
+		self::assertSame(0, $this->newFileCalls);
+	}
+
+	public function testABlockedShareIsTheReasonBlockedAndNobodyIsAskedWhateverElseHolds(): void {
+		$this->file(7, 'sitzung.mp4', $this->sharedStorage(false));
+		$this->containerNeverAsked = true;
+
+		// The reference: blocked without any exclusion.
+		$blockedOnly = $this->sidecar(7);
+		self::assertSame(Http::STATUS_FORBIDDEN, $blockedOnly->getStatus());
+		self::assertSame(['reason' => 'blocked'], $blockedOnly->getData());
+
+		// Blocked and excluded: byte for byte the same, the exclusions are never asked.
+		$this->excludedFiles = [7];
+		$this->exclusionsNeverAsked = true;
+		self::assertSame(self::dataAnswer($blockedOnly), self::dataAnswer($this->sidecar(7)));
+
+		// An attribute nobody can read blocks the write the same way (fail closed).
+		$this->readable = [];
+		$this->file(7, 'sitzung.mp4', $this->brokenStorage());
+		self::assertSame(self::dataAnswer($blockedOnly), self::dataAnswer($this->sidecar(7)));
+
+		self::assertSame([], $this->sidecars);
+	}
+
+	public function testAFolderThatTakesNoNewFileIsTheReasonNotWritableAndTheContainerIsNeverAsked(): void {
+		$this->file(7, 'sitzung.mp4');
+		$this->creatable = false;
+		$this->containerNeverAsked = true;
+
+		$response = $this->sidecar(7);
+
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame(['reason' => 'not_writable'], $response->getData());
+		self::assertSame([], $this->exportCalls);
+		self::assertSame(0, $this->newFileCalls);
+	}
+
+	public function testARefusalDeepInTheStorageIsTheReasonNotWritable(): void {
+		$this->file(7, 'sitzung.mp4');
+		$this->storageRefuses = true;
+
+		$response = $this->sidecar(7);
+
+		self::assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+		self::assertSame(['reason' => 'not_writable'], $response->getData());
+		self::assertSame([], $this->sidecars);
+	}
+
+	public function testAnOverlongNameIsThe400AndNothingIsWrittenAndTheLimitSitsAt255Bytes(): void {
+		// 252 + ".de.vtt" = 259 bytes: over the limit.
+		$this->file(7, str_repeat('a', 252) . '.mp4');
+		$over = $this->sidecar(7);
+		self::assertSame(Http::STATUS_BAD_REQUEST, $over->getStatus());
+		self::assertSame(['reason' => 'name_too_long'], $over->getData());
+		self::assertSame(0, $this->newFileCalls);
+
+		// The positive control: 248 + ".de.vtt" = 255 bytes still works.
+		$this->readable = [];
+		$this->file(8, str_repeat('a', 248) . '.mp4');
+		$fits = $this->sidecar(8);
+		self::assertSame(Http::STATUS_CREATED, $fits->getStatus());
+		self::assertSame(['name' => str_repeat('a', 248) . '.de.vtt'], $fits->getData());
+	}
+
+	public function testAnExcludedAnUnknownAndAnUnreadableFileAreTheSameEmpty404(): void {
+		$this->file(7, 'sitzung.mp4');
+
+		// The reference: the container answers known false.
+		$this->export = ['known' => false];
+		$unknown = $this->sidecar(7);
+		self::assertSame(Http::STATUS_NOT_FOUND, $unknown->getStatus());
+		self::assertSame([], $unknown->getData());
+
+		// An excluded file: the container is never asked, the bytes are the same.
+		$this->export = self::known();
+		$this->excludedFiles = [7];
+		$this->containerNeverAsked = true;
+		self::assertSame(self::dataAnswer($unknown), self::dataAnswer($this->sidecar(7)));
+
+		// A file the user cannot read: same bytes again.
+		$this->excludedFiles = [];
+		$this->exclusionsNeverAsked = true;
+		self::assertSame(self::dataAnswer($unknown), self::dataAnswer($this->sidecar(5)));
+
+		self::assertSame([], $this->sidecars);
+	}
+
+	public function testADriftAndASilentContainerAreTheSameEmpty503ForTheSidecar(): void {
+		$this->file(7, 'sitzung.mp4');
+		$this->searchAllowed = false;
+		$this->containerNeverAsked = true;
+		$drift = $this->sidecar(7);
+		self::assertSame(Http::STATUS_SERVICE_UNAVAILABLE, $drift->getStatus());
+		self::assertSame([], $drift->getData());
+
+		$this->searchAllowed = true;
+		$this->containerNeverAsked = false;
+		$this->export = null;
+		self::assertSame(self::dataAnswer($drift), self::dataAnswer($this->sidecar(7)));
+		self::assertSame([], $this->sidecars);
+	}
+
+	public function testTheSidecarRouteIsAPostWithTheCsrfCheckAndItsOwnRateLimit(): void {
+		$reflection = new \ReflectionMethod(ExportController::class, 'sidecar');
+		$names = array_map(static fn (\ReflectionAttribute $attribute): string => $attribute->getName(), $reflection->getAttributes());
+
+		self::assertContains(\OCP\AppFramework\Http\Attribute\NoAdminRequired::class, $names);
+		self::assertContains(\OCP\AppFramework\Http\Attribute\UserRateLimit::class, $names);
+		// The route writes: the request token stays required (gate rule 20).
+		self::assertNotContains(\OCP\AppFramework\Http\Attribute\NoCSRFRequired::class, $names);
+		self::assertNotContains(\OCP\AppFramework\Http\Attribute\PublicPage::class, $names);
+		self::assertNotContains(\OCP\AppFramework\Http\Attribute\ExAppRequired::class, $names);
+
+		foreach ($reflection->getAttributes(\OCP\AppFramework\Http\Attribute\FrontpageRoute::class) as $route) {
+			$arguments = $route->getArguments();
+			self::assertSame('POST', $arguments['verb']);
+			self::assertSame('/sidecar/{fileId}', $arguments['url']);
+			self::assertSame(['fileId' => '\d+'], $arguments['requirements']);
+		}
+		foreach ($reflection->getAttributes(\OCP\AppFramework\Http\Attribute\UserRateLimit::class) as $limit) {
+			self::assertSame(['limit' => 10, 'period' => 60], $limit->getArguments());
+		}
 	}
 
 	// -- the routes -----------------------------------------------------------------------

@@ -11,10 +11,12 @@ use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCA\AudioVideoSearch\Service\SidecarWriter;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataDisplayResponse;
 use OCP\AppFramework\Http\DataDownloadResponse;
+use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\Files\File;
 use OCP\Files\IRootFolder;
@@ -25,10 +27,11 @@ use OCP\IUserSession;
 use Psr\Log\LoggerInterface;
 
 /**
- * The export of the subtitle draft: three downloads and the track of the
- * player, both only over the routes of this app (D-04-01).
+ * The export of the subtitle draft: three downloads, the track of the
+ * player and the sidecar next to the medium, all only over the routes of
+ * this app (D-04-01, EXP-03).
  *
- * The order of the checks is the contract of this controller, in both
+ * The order of the checks is the contract of this controller, in all three
  * methods, and gate rule 19 of backend/tests/test_php_gates.py holds it:
  *
  * 1. resolve: the file id is untrusted and is confirmed as the signed in
@@ -75,6 +78,7 @@ final class ExportController extends Controller {
 		private LoggerInterface $logger,
 		private ExclusionService $exclusions,
 		private DownloadPolicy $downloadPolicy,
+		private SidecarWriter $sidecarWriter,
 	) {
 		parent::__construct(Application::APP_ID, $request);
 	}
@@ -201,6 +205,123 @@ final class ExportController extends Controller {
 		$response->addHeader('Content-Disposition', null);
 
 		return $response;
+	}
+
+	/**
+	 * POST /apps/audio_video_search/sidecar/{fileId}
+	 *
+	 * The same VTT as the download, laid next to the medium as
+	 * <name>.<de|en|fr>.vtt (EXP-03, D-04-06, D-04-07). The route changes the
+	 * folder of the user, so unlike the two GET routes it keeps the CSRF
+	 * check (no NoCSRFRequired; gate rule 20 holds that) and carries a
+	 * tighter rate limit. Same check order as the downloads, then two more
+	 * questions in the view of the user: isCreatable of the parent, before
+	 * the container is asked, and the write itself through SidecarWriter,
+	 * which never touches an existing file (D-04-05). The file is written
+	 * once and never refreshed; there is no comparison against the medium
+	 * and no staleness notice (D-04-08).
+	 *
+	 * The answers are the closed list play.js knows (UI-SPEC E1 to E7): 201
+	 * and 409 carry the checked name, the two 403 reasons are 'blocked' and
+	 * 'not_writable', 400 is 'name_too_long', 404 and 503 carry nothing. A
+	 * collision reports and writes nothing; BUSY is the same collision told
+	 * a moment earlier.
+	 */
+	#[\OCP\AppFramework\Http\Attribute\NoAdminRequired]
+	#[\OCP\AppFramework\Http\Attribute\UserRateLimit(limit: 10, period: 60)]
+	#[\OCP\AppFramework\Http\Attribute\FrontpageRoute(verb: 'POST', url: '/sidecar/{fileId}', requirements: ['fileId' => '\d+'])]
+	public function sidecar(int $fileId): DataResponse {
+		$found = $this->resolve($fileId);
+		if ($found === null) {
+			return new DataResponse([], Http::STATUS_NOT_FOUND);
+		}
+		[$file, $uid] = $found;
+
+		// The block first, fail closed: see the class comment and gate rule 19.
+		if (!$this->downloadPolicy->allowsExport($file, $fileId)) {
+			return new DataResponse(['reason' => 'blocked'], Http::STATUS_FORBIDDEN);
+		}
+
+		try {
+			// The rules of now, as on the playback page (owner 14.11.2026).
+			$this->exclusions->reload();
+			$excluded = $this->exclusions->isExcludedUser($uid) || $this->exclusions->isExcludedFile($fileId);
+		} catch (\Throwable $e) {
+			$this->logger->warning('Audio & Video Search: the exclusions could not be asked for the sidecar, none is given', [
+				'class' => $e::class,
+			]);
+			$excluded = true;
+		}
+		if ($excluded) {
+			return new DataResponse([], Http::STATUS_NOT_FOUND);
+		}
+
+		// Whether the folder takes a new file, decided as the user: quota,
+		// the Team Folder ACL and files_accesscontrol answer only in that
+		// view. A question that fails is a no (fail closed), and the
+		// container is never asked for a folder nobody may write to.
+		try {
+			$creatable = $this->readerContext->actAs($uid, static fn (): bool => $file->getParent()->isCreatable());
+		} catch (\Throwable $e) {
+			$this->logger->warning('Audio & Video Search: the folder of the medium could not be asked, no sidecar', [
+				'fileId' => $fileId,
+				'class' => $e::class,
+			]);
+			$creatable = false;
+		}
+		if (!$creatable) {
+			return new DataResponse(['reason' => 'not_writable'], Http::STATUS_FORBIDDEN);
+		}
+
+		if (!$this->exAppService->searchAllowed()) {
+			return new DataResponse([], Http::STATUS_SERVICE_UNAVAILABLE);
+		}
+		$answer = $this->exAppService->export($uid, $fileId, 'vtt');
+		if ($answer === null) {
+			return new DataResponse([], Http::STATUS_SERVICE_UNAVAILABLE);
+		}
+		if ($answer['known'] !== true) {
+			// Byte for byte the answer of an unreadable file: not active and
+			// unknown may not be told apart (X4 leak rule).
+			return new DataResponse([], Http::STATUS_NOT_FOUND);
+		}
+
+		$name = self::downloadName((string)$file->getName(), $answer['language'], 'vtt');
+		if (strlen($name) > SidecarWriter::MAX_NAME_BYTES) {
+			return new DataResponse(['reason' => 'name_too_long'], Http::STATUS_BAD_REQUEST);
+		}
+
+		$content = self::withNote(
+			(string)$answer['body'],
+			$this->noteSafe($this->headerLines((bool)$answer['partial'], (int)$answer['untilMs']), $fileId),
+		);
+
+		try {
+			$result = $this->readerContext->actAs(
+				$uid,
+				fn (): string => $this->sidecarWriter->write($file->getParent(), $name, $content),
+			);
+		} catch (\Throwable $e) {
+			// Past the closed answers of the writer: a parent that vanished,
+			// a storage error, or a medium whose name is legal in Nextcloud
+			// but no plain sidecar name (a backslash). The catch-all answer
+			// of the page (E7), the class only in the log.
+			$this->logger->warning('Audio & Video Search: the sidecar could not be written', [
+				'fileId' => $fileId,
+				'class' => $e::class,
+			]);
+
+			return new DataResponse([], Http::STATUS_SERVICE_UNAVAILABLE);
+		}
+
+		return match ($result) {
+			SidecarWriter::CREATED => new DataResponse(['name' => $name], Http::STATUS_CREATED),
+			// A name that is taken and a creation that lost the race by a
+			// moment are the same truth: the file next to the medium is not
+			// this draft, and nothing was written (D-04-05).
+			SidecarWriter::EXISTS, SidecarWriter::BUSY => new DataResponse(['name' => $name], Http::STATUS_CONFLICT),
+			default => new DataResponse(['reason' => 'not_writable'], Http::STATUS_FORBIDDEN),
+		};
 	}
 
 	/**

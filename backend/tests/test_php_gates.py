@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The nineteen rules:
+The twenty rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -58,7 +58,8 @@ The nineteen rules:
     ``track`` of ``ExportController`` call ``reload`` and ask
     ``isExcludedUser`` and ``isExcludedFile`` before ``searchAllowed`` and
     before the export of the container, so an excluded user and an excluded
-    file get no draft there either (T-04-31).
+    file get no draft there either (T-04-31). Since plan 04-12 the sidecar
+    route stands under the same order.
 15. The app puts its own background jobs back (plan 02-17b): the list
     ``JobRegistry::JOBS`` names exactly the jobs of ``<background-jobs>`` in
     ``php/appinfo/info.xml``, and ``HandshakeController::handshake`` asks
@@ -81,13 +82,21 @@ The nineteen rules:
     ``QueueMapper::ORIGIN_CRAWL`` in the first crawl and the reconcile, never
     the default (D-03-05).
 19. The export path asks the download policy first (plan 04-10, SRCH-04,
-    T-04-29, T-04-29a): in ``download`` and ``track`` of ``ExportController``
-    the ``allowsExport`` question stands before the first ``reload``,
-    ``isExcludedUser`` or ``isExcludedFile`` and before every ``->export(``,
-    so a share whose download switch is off gets its 403 before anything
-    could leak whether the file is excluded or transcribed. And nothing under
-    ``php/lib`` calls ``canDownload`` of IShare, which exists only since
-    33.0.1; the attribute is read in DownloadPolicy alone.
+    T-04-29, T-04-29a): in ``download``, ``track`` and (since plan 04-12)
+    ``sidecar`` of ``ExportController`` the ``allowsExport`` question stands
+    before the first ``reload``, ``isExcludedUser`` or ``isExcludedFile`` and
+    before every ``->export(``, so a share whose download switch is off gets
+    its 403 before anything could leak whether the file is excluded or
+    transcribed. And nothing under ``php/lib`` calls ``canDownload`` of
+    IShare, which exists only since 33.0.1; the attribute is read in
+    DownloadPolicy alone.
+20. A new file is created in ``SidecarWriter.php`` only (plan 04-12, EXP-03,
+    D-04-05, T-04-36, T-04-38): ``->newFile(`` appears nowhere else under
+    ``php/lib``, in ``write`` the lock comes before the existence question
+    and the question before the creation (``Folder::newFile`` silently
+    overwrites an existing file, lib/private/Files/Node/Folder.php stable34),
+    and the ``sidecar`` route keeps the CSRF check: it carries no
+    ``NoCSRFRequired``.
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -615,6 +624,8 @@ EXCLUSION_CHECKS = (
     (EXPORT_CONTROLLER, "download", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
     (EXPORT_CONTROLLER, "track", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
     (EXPORT_CONTROLLER, "track", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "sidecar", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "sidecar", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
 )
 
 
@@ -631,6 +642,12 @@ HIT_CHECKS = (
         ("->isExcludedUser(", "->isExcludedFile(", "->export("),
     ),
     (EXPORT_CONTROLLER, "track", "$this->exclusions->reload(", ("->isExcludedUser(", "->isExcludedFile(", "->export(")),
+    (
+        EXPORT_CONTROLLER,
+        "sidecar",
+        "$this->exclusions->reload(",
+        ("->isExcludedUser(", "->isExcludedFile(", "->export("),
+    ),
 )
 
 
@@ -761,6 +778,7 @@ def test_self_rule14_fires_on_a_hit_judged_by_old_rules_or_not_at_all() -> None:
         f"{PLAYBACK_PAGE} has no excerpt",
         f"{EXPORT_CONTROLLER} has no download",
         f"{EXPORT_CONTROLLER} has no track",
+        f"{EXPORT_CONTROLLER} has no sidecar",
     ]
 
 
@@ -851,6 +869,8 @@ def test_self_rule14_fires_when_one_of_the_three_checks_is_gone_or_comes_too_lat
         f"{EXPORT_CONTROLLER} has no download",
         f"{EXPORT_CONTROLLER} has no track",
         f"{EXPORT_CONTROLLER} has no track",
+        f"{EXPORT_CONTROLLER} has no sidecar",
+        f"{EXPORT_CONTROLLER} has no sidecar",
         f"{QUEUE_SERVICE}::describeRow does not ask admissible again",
     ]
 
@@ -898,12 +918,14 @@ def test_self_rule14_fires_when_an_export_route_skips_the_exclusions_or_asks_the
     assert missing_exclusion_checks(no_user) == [
         f"{EXPORT_CONTROLLER}::download does not ask the exclusions",
         f"{EXPORT_CONTROLLER}::track does not ask the exclusions",
+        f"{EXPORT_CONTROLLER}::sidecar does not ask the exclusions",
     ]
 
     no_fresh = _mutated(sources, EXPORT_CONTROLLER, "$this->exclusions->reload();", "")
     assert missing_hit_checks(no_fresh) == [
         f"{EXPORT_CONTROLLER}::download does not call $this->exclusions->reload(",
         f"{EXPORT_CONTROLLER}::track does not call $this->exclusions->reload(",
+        f"{EXPORT_CONTROLLER}::sidecar does not call $this->exclusions->reload(",
     ]
 
     # Asked, but only after the container could have answered.
@@ -915,6 +937,8 @@ def test_self_rule14_fires_when_an_export_route_skips_the_exclusions_or_asks_the
         f"{EXPORT_CONTROLLER}::download reaches ->export( before the exclusions",
         f"{EXPORT_CONTROLLER}::track reaches ->export( before the exclusions",
         f"{EXPORT_CONTROLLER}::track reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->export( before the exclusions",
     ]
 
 
@@ -1314,7 +1338,7 @@ def test_self_rule18_fires_on_a_missing_and_on_a_wrong_origin() -> None:
 
 # -- rule 19 ------------------------------------------------------------------------
 
-EXPORT_METHODS = ("download", "track")
+EXPORT_METHODS = ("download", "track", "sidecar")
 POLICY_QUESTION = "->downloadPolicy->allowsExport("
 EXCLUSION_CALLS = ("->reload(", "->isExcludedUser(", "->isExcludedFile(")
 CONTAINER_EXPORT = "->export("
@@ -1324,12 +1348,12 @@ FORBIDDEN_DOWNLOAD_HELPER = "canDownload("
 def export_policy_findings(sources: dict[str, str]) -> list[str]:
     """The export methods that do not ask the download policy first of all.
 
-    In download and track the allowsExport question stands before the first
-    reload, isExcludedUser or isExcludedFile and before every export of the
-    container, so the 403 of a blocked share cannot become an oracle about
-    exclusions or transcripts (T-04-29, T-04-29a). And IShare::canDownload is
-    called nowhere under php/lib: it exists only since 33.0.1, the attribute
-    is read in DownloadPolicy alone.
+    In download, track and sidecar the allowsExport question stands before
+    the first reload, isExcludedUser or isExcludedFile and before every
+    export of the container, so the 403 of a blocked share cannot become an
+    oracle about exclusions or transcripts (T-04-29, T-04-29a, T-04-40). And
+    IShare::canDownload is called nowhere under php/lib: it exists only since
+    33.0.1, the attribute is read in DownloadPolicy alone.
     """
     findings = []
     source = sources.get(EXPORT_CONTROLLER)
@@ -1372,6 +1396,7 @@ def test_self_rule19_fires_when_the_exclusions_come_first() -> None:
     assert export_policy_findings(early) == [
         f"{EXPORT_CONTROLLER}::download reaches ->reload( before the download policy",
         f"{EXPORT_CONTROLLER}::track reaches ->reload( before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->reload( before the download policy",
     ]
 
     asked = "\t\t$x = $this->exclusions->isExcludedUser($uid) || $this->exclusions->isExcludedFile($fileId);\n"
@@ -1381,6 +1406,8 @@ def test_self_rule19_fires_when_the_exclusions_come_first() -> None:
         f"{EXPORT_CONTROLLER}::download reaches ->isExcludedFile( before the download policy",
         f"{EXPORT_CONTROLLER}::track reaches ->isExcludedUser( before the download policy",
         f"{EXPORT_CONTROLLER}::track reaches ->isExcludedFile( before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->isExcludedUser( before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->isExcludedFile( before the download policy",
     ]
 
 
@@ -1396,12 +1423,14 @@ def test_self_rule19_fires_when_the_container_comes_first() -> None:
     assert export_policy_findings(early) == [
         f"{EXPORT_CONTROLLER}::download asks the container before the download policy",
         f"{EXPORT_CONTROLLER}::track asks the container before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar asks the container before the download policy",
     ]
 
     gone = _mutated(sources, EXPORT_CONTROLLER, POLICY_QUESTION, "->downloadPolicy->nothing(")
     assert export_policy_findings(gone) == [
         f"{EXPORT_CONTROLLER}::download does not ask the download policy",
         f"{EXPORT_CONTROLLER}::track does not ask the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar does not ask the download policy",
     ]
 
     # A second decider would be a second truth: canDownload fires wherever it shows up.
@@ -1409,3 +1438,92 @@ def test_self_rule19_fires_when_the_container_comes_first() -> None:
     assert export_policy_findings(helper) == ["php/lib/Service/Other.php calls canDownload"]
 
     assert export_policy_findings({}) == [f"{EXPORT_CONTROLLER} is missing"]
+
+
+# -- rule 20 ------------------------------------------------------------------------
+
+SIDECAR_WRITER = "php/lib/Service/SidecarWriter.php"
+NEWFILE_CALL = "->newFile("
+LOCK_CALL = "->acquireLock("
+EXISTS_CALL = "->nodeExists("
+CSRF_WAIVER = "NoCSRFRequired"
+_SIDECAR_FUNCTION = re.compile(r"function\s+sidecar\s*\(")
+
+
+def sidecar_creation_findings(sources: dict[str, str]) -> list[str]:
+    """Rule 20: a new file is created in the sidecar writer only, under its lock.
+
+    ``->newFile(`` appears under php/lib in SidecarWriter.php alone, because
+    ``Folder::newFile`` silently overwrites an existing file (stable34,
+    lib/private/Files/Node/Folder.php): every creation has to pass the one
+    place that asks ``nodeExists`` first, and the lock has to be taken before
+    the question (T-04-36). And the sidecar route writes, so it keeps the
+    CSRF check: the method carries no ``NoCSRFRequired`` (T-04-38).
+    """
+    findings = []
+    writer = sources.get(SIDECAR_WRITER)
+    if writer is None:
+        findings.append(f"{SIDECAR_WRITER} is missing")
+    else:
+        body = php_method(writer, "write")
+        if body is None:
+            findings.append(f"{SIDECAR_WRITER} has no write")
+        else:
+            locked = body.find(LOCK_CALL)
+            asked = body.find(EXISTS_CALL)
+            created = body.find(NEWFILE_CALL)
+            if created < 0:
+                findings.append(f"{SIDECAR_WRITER}::write does not create the file")
+            if asked < 0 or (0 <= created < asked):
+                findings.append(f"{SIDECAR_WRITER}::write does not ask nodeExists before newFile")
+            if locked < 0 or (0 <= asked < locked):
+                findings.append(f"{SIDECAR_WRITER}::write does not take the lock before nodeExists")
+    findings += [
+        f"{name} creates a file outside the sidecar writer"
+        for name, text in sorted(sources.items())
+        if name != SIDECAR_WRITER and NEWFILE_CALL in php_code(text)
+    ]
+    controller = sources.get(EXPORT_CONTROLLER)
+    if controller is None:
+        findings.append(f"{EXPORT_CONTROLLER} is missing")
+    else:
+        lines = controller.splitlines()
+        at = next((index for index, line in enumerate(lines) if _SIDECAR_FUNCTION.search(line)), None)
+        if at is None:
+            findings.append(f"{EXPORT_CONTROLLER} has no sidecar")
+        elif any(CSRF_WAIVER in attribute for attribute in _attributes_above(lines, at)):
+            findings.append(f"{EXPORT_CONTROLLER}::sidecar waives the CSRF check")
+    return findings
+
+
+def test_rule20_new_files_are_created_in_the_sidecar_writer_only() -> None:
+    assert sidecar_creation_findings(_lib_sources()) == []
+
+
+def test_self_rule20_fires_on_a_second_creator_and_on_a_missing_check() -> None:
+    sources = _lib_sources()
+
+    second = {**sources, "php/lib/Service/Other.php": "<?php\n$folder->newFile($name, $content);\n"}
+    assert sidecar_creation_findings(second) == ["php/lib/Service/Other.php creates a file outside the sidecar writer"]
+    # A call in a comment is no call.
+    commented = {**sources, "php/lib/Service/Other.php": "<?php\n// $folder->newFile($name, $content);\n"}
+    assert sidecar_creation_findings(commented) == []
+
+    unasked = _mutated(sources, SIDECAR_WRITER, "$parent->nodeExists(", "$this->stillThere(")
+    assert sidecar_creation_findings(unasked) == [f"{SIDECAR_WRITER}::write does not ask nodeExists before newFile"]
+
+    unlocked = _mutated(sources, SIDECAR_WRITER, "$this->locking->acquireLock(", "$this->locking->nothing(")
+    assert sidecar_creation_findings(unlocked) == [f"{SIDECAR_WRITER}::write does not take the lock before nodeExists"]
+
+    no_creation = _mutated(sources, SIDECAR_WRITER, "$parent->newFile(", "$this->nothing(")
+    assert sidecar_creation_findings(no_creation) == [f"{SIDECAR_WRITER}::write does not create the file"]
+
+    waived = _mutated(
+        sources,
+        EXPORT_CONTROLLER,
+        "\tpublic function sidecar(",
+        "\t#[\\OCP\\AppFramework\\Http\\Attribute\\NoCSRFRequired]\n\tpublic function sidecar(",
+    )
+    assert sidecar_creation_findings(waived) == [f"{EXPORT_CONTROLLER}::sidecar waives the CSRF check"]
+
+    assert sidecar_creation_findings({}) == [f"{SIDECAR_WRITER} is missing", f"{EXPORT_CONTROLLER} is missing"]
