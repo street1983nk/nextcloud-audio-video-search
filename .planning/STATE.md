@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-10-PLAN.md
-last_updated: "2026-11-16T13:55:08.272Z"
+stopped_at: Completed 04-12-PLAN.md
+last_updated: "2026-11-16T14:20:47.658Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 81
-  completed_plans: 73
+  completed_plans: 74
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 10 of 17
+Plan: 11 of 17
 Status: Ready to execute
 Last activity: 2026-11-16
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 91%
 
 ## Performance Metrics
 
@@ -76,6 +76,7 @@ Progress: [█████████░] 90%
 | Phase 04 P07 | 35min | 1 tasks | 3 files |
 | Phase 04 P10 | 45 min | 3 tasks | 10 files |
 | Phase 04 P08 | 45 min | 2 tasks | 5 files |
+| Phase 04 P12 | 40 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -139,6 +140,7 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-10: Spur-Route entfernt den von DataDisplayResponse gesetzten Content-Disposition-Header per addHeader(null), die Spur traegt keinen
 - [Phase 04]: 04-08: ffmpeg-Erwartungswert = len(cues) + Pfeil-Textzeilen (check_ffmpeg zaehlt Pfeilzeilen der zurueckcodierten Ausgabe, ffmpeg schreibt Textzeilen woertlich zurueck); negativer Wortstart wird in build_cues auf 0 geklemmt
 - [Phase 04]: 04-08: Messung 100k Woerter (12,6 h): Timeout 30 s bestaetigt; EXPORT_MAX_BODY_BYTES nach Formel 8 MiB statt 16 MiB aus 04-10, Entscheidung im Abgleichtest 04-09
+- [Phase 04]: 04-12: BUSY (Sperre belegt) antwortet wie EXISTS mit 409 und Namen; isCreatable-Ausnahme zählt als nein (403 not_writable), sonstige Schreibausnahmen 503 {} (E7)
 
 ### Pending Todos
 
@@ -164,6 +166,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T13:53:52.032Z
-Stopped at: Completed 04-10-PLAN.md
+Last session: 2026-11-16T14:20:47.628Z
+Stopped at: Completed 04-12-PLAN.md
 Resume file: None
