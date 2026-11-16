@@ -79,6 +79,7 @@ def win(
     verdict: str = KEEP,
     n_words: int | None = None,
     speech: int | None = None,
+    lid: str = "",
 ) -> Window:
     return Window(
         start_ms=start,
@@ -87,6 +88,7 @@ def win(
         n_words=len(words) if n_words is None else n_words,
         verdict=verdict,
         words=words if verdict == KEEP else (),
+        lid=lid,
     )
 
 
@@ -1319,3 +1321,43 @@ async def test_a_25_minute_wav_through_real_ffprobe_and_ffmpeg(
     assert abs(lengths[2] - (25 * MIN - (1_212_000 - CHUNK_CONTEXT_MS))) <= 1
     assert _words(db, media_id) == _table_words(_long_table())
     assert _left(tmp_dir) == []
+
+
+# -- the language counters of take (plan 04-05, D-04-15) ------------------------------
+
+
+def test_take_counts_the_kept_words_per_text_language() -> None:
+    windows = [
+        win(0, 4000, (ew("eins", 500), ew("zwei", 1500)), lid="de"),
+        win(4000, 8000, (ew("three", 4500),), lid="en"),
+        win(8000, 10000, (ew("quatre", 8500),), lid="fr"),
+        win(10000, 12000, (ew("merhaba", 10500),), lid="tr"),
+        win(12000, 14000, (ew("still", 12500),)),
+        win(14000, 16000, verdict=DROP_LANGUAGE, n_words=3, lid="fr"),
+    ]
+
+    taken = preview_module.take(windows, 0, 60_000)
+
+    counters = taken.counters
+    # A word outside the three languages is kept; only the counters skip it.
+    assert counters.kept_words == 6
+    assert (counters.words_de, counters.words_en, counters.words_fr) == (2, 1, 1)
+    assert counters.drop_language == 3
+
+
+def test_context_words_do_not_count_for_the_language_either() -> None:
+    windows = [win(0, 4000, (ew("eins", 500), ew("zwei", 1500)), lid="de")]
+
+    taken = preview_module.take(windows, 1000, 60_000)
+
+    assert taken.counters.kept_words == 1
+    assert taken.counters.words_de == 1
+
+
+def test_add_sums_the_language_counters() -> None:
+    one = ChunkCounters(kept_words=1, drop_script=0, drop_language=0, drop_conf=0, speech_ms=0, words_de=1)
+    two = ChunkCounters(kept_words=2, drop_script=0, drop_language=0, drop_conf=0, speech_ms=0, words_en=1, words_fr=1)
+
+    both = preview_module._add(one, two)
+
+    assert (both.kept_words, both.words_de, both.words_en, both.words_fr) == (3, 1, 1, 1)
