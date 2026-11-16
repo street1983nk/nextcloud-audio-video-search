@@ -1323,6 +1323,38 @@ final class PlayControllerTest extends TestCase {
 		}
 	}
 
+	// -- the download entry of the native player (owner, UI acceptance 16.11.2026) -------------
+
+	public function testOnlyAClearAllowedLeavesTheDownloadEntryOfThePlayer(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->file(6, 'Geteilt/Offen.webm', storage: $this->sharedStorage(true));
+		$this->file(7, 'Sitzung.webm');
+		$this->file(8, 'Geteilt/Unklar.webm', storage: $this->unreadableShare());
+
+		self::assertTrue($this->play(4)['mediaNoDownload']);
+		self::assertTrue($this->play(8)['mediaNoDownload']);
+		// Positive control: an own file and a share with download keep the entry.
+		self::assertFalse($this->play(6)['mediaNoDownload']);
+		self::assertFalse($this->play(7)['mediaNoDownload']);
+		self::assertTrue($this->play(5)['mediaNoDownload']);
+	}
+
+	public function testTheRenderedMediumOfABlockedShareCarriesNoDownloadAndAnOpenOneDoesNot(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->file(7, 'Sitzung.webm');
+		$this->file(8, 'Geteilt/Unklar.mp3', 'audio/mpeg', storage: $this->unreadableShare());
+		$this->exportNeverAsked = true;
+
+		$blocked = self::page($this->response(4));
+		self::assertSame(1, preg_match('#<video id="avs-media" [^>]*\bcontrols controlslist="nodownload" #', $blocked));
+		self::assertSame(1, preg_match('#<audio id="avs-media" [^>]*\bcontrols controlslist="nodownload" #', self::page($this->response(8))));
+
+		$this->exportNeverAsked = false;
+		$open = self::page($this->response(7));
+		self::assertStringContainsString('<video id="avs-media" ', $open);
+		self::assertStringNotContainsString('controlslist', $open);
+	}
+
 	public function testAPageWithoutASectionRendersTheSameBytesForExcludedAndUnknown(): void {
 		$this->file(7, 'Sitzung.webm');
 		$this->t = '42.0';

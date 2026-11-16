@@ -53,6 +53,11 @@ $excerptNote = is_string($_['excerptNote'] ?? null) ? $_['excerptNote'] : '';
 $excerptHours = is_int($_['excerptHours'] ?? null) ? $_['excerptHours'] : 0;
 $filesUrl = is_string($_['filesUrl'] ?? null) ? $_['filesUrl'] : '';
 $downloadAllowed = ($_['downloadAllowed'] ?? false) === true;
+// X3: where the share forbids the download, the native player offers none in
+// its menu either (owner, UI acceptance 16.11.2026). Fail closed like the
+// export: only an explicit false leaves the entry. A hurdle, not a lock: the
+// medium still reaches the browser to be played.
+$mediaNoDownload = ($_['mediaNoDownload'] ?? true) !== false;
 
 // The export section (04-UI-SPEC, X1 to X4). A state outside the closed list
 // is X4, and X1/X2 without all three addresses is X4 as well: no button may
@@ -257,7 +262,7 @@ if ($excerptHours >= 1) {
 	</div>
 
 	<?php if ($ready) { ?>
-		<<?php p($mediaTag); ?> id="avs-media" class="avs-media avs-media--<?php p($mediaTag); ?>" controls preload="metadata" playsinline src="<?php p($mediaSrc); ?>" data-start="<?php p($startSeconds); ?>" aria-label="<?php p($l->t('Playback: %s', [$fileName])); ?>"><?php if ($track) { ?>
+		<<?php p($mediaTag); ?> id="avs-media" class="avs-media avs-media--<?php p($mediaTag); ?>" controls<?php if ($mediaNoDownload) { ?> controlslist="nodownload"<?php } ?> preload="metadata" playsinline src="<?php p($mediaSrc); ?>" data-start="<?php p($startSeconds); ?>" aria-label="<?php p($l->t('Playback: %s', [$fileName])); ?>"><?php if ($track) { ?>
 			<track kind="subtitles" src="<?php p($trackUrl); ?>" srclang="<?php p($trackLang); ?>" label="<?php p($trackLabel); ?>">
 		<?php } ?></<?php p($mediaTag); ?>>
 

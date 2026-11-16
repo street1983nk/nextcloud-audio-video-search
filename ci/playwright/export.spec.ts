@@ -212,6 +212,8 @@ async function expectX3(page: Page, fileId: string, language: Language, withPost
 	await page.goto(playAt(fileId, START_SECONDS));
 	// Viewing is allowed: the page plays (state ready), unlike the Phase 3 page download_blocked.
 	await expect(page.locator('#avs-media')).toBeAttached();
+	// The share forbids the download: the menu of the native player offers none either (owner 16.11.2026).
+	await expect(page.locator('#avs-media')).toHaveAttribute('controlslist', 'nodownload');
 	await expect(page.locator('#avs-banner-download_blocked')).toBeHidden();
 	await expect(section(page).locator('h3.avs-export__title')).toHaveText(T.T13[language]);
 	await expect(section(page).locator('p.avs-export__hint')).toHaveText(T.T24[language]);
@@ -273,6 +275,8 @@ test('X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, 
 		// The draft track on the video, never switched on by default (D-04-18).
 		await expect(page.locator('video#avs-media > track[kind="subtitles"]')).toHaveCount(1);
 		await expect(page.locator('#avs-media > track[default]')).toHaveCount(0);
+		// A clear download: the menu of the native player keeps its entry (counterpart of X3).
+		await expect(page.locator('#avs-media[controlslist]')).toHaveCount(0);
 		// The sidecar block names the real target name (T20) and play.js shows the button.
 		const sidecarName = exportName(S7_VIDEO_NAME, 'vtt');
 		await expect(sidecarHint(page)).toHaveText(fill(T.T20[language], sidecarName));

@@ -183,6 +183,9 @@ final class PageController extends Controller {
 			'excerptHours' => $excerpt['hours'],
 			'filesUrl' => $this->urlGenerator->linkToRoute('files.view.showFile', ['fileid' => $fileId]),
 			'downloadAllowed' => $downloadAllowed,
+			// The menu of the native player offers no download unless the
+			// verdict is a clear ALLOWED: the export reading, fail closed.
+			'mediaNoDownload' => $verdict !== DownloadPolicy::ALLOWED,
 		] + $export, $startMs);
 	}
 
@@ -513,6 +516,7 @@ final class PageController extends Controller {
 			'excerptHours' => 0,
 			'filesUrl' => $this->urlGenerator->linkToRoute('files.view.index'),
 			'downloadAllowed' => false,
+			'mediaNoDownload' => true,
 		] + self::exportParams(self::EXPORT_NONE), $startMs);
 		$response->setStatus(Http::STATUS_NOT_FOUND);
 

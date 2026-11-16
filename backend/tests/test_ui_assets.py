@@ -359,6 +359,58 @@ def test_the_format_banner_offers_a_download_only_with_the_button() -> None:
     assert not without_download.startswith("Download")
 
 
+MEDIA_ELEMENT = re.compile(r"<<\?php p\(\$mediaTag\); \?> id=\"avs-media\"[^\n]*")
+NO_DOWNLOAD_BRANCH = '<?php if ($mediaNoDownload) { ?> controlslist="nodownload"<?php } ?>'
+NO_DOWNLOAD_FAIL_CLOSED = "$mediaNoDownload = ($_['mediaNoDownload'] ?? true) !== false;"
+NO_DOWNLOAD_VERDICT = "'mediaNoDownload' => $verdict !== DownloadPolicy::ALLOWED,"
+
+
+def no_download_findings(template: str, controller: str) -> list[str]:
+    """What keeps the native player of a blocked share from hiding its download entry.
+
+    The entry goes only behind the branch on $mediaNoDownload (never always,
+    never not at all), the template reads a missing value as a block, and the
+    controller sets the value from the verdict the export reads: anything but
+    a clear ALLOWED (owner, UI acceptance 16.11.2026).
+    """
+    found = []
+    media = MEDIA_ELEMENT.findall(template)
+    if len(media) != 1:
+        found.append("one medium element")
+    elif NO_DOWNLOAD_BRANCH not in media[0]:
+        found.append("branch on the medium")
+    if template.count("nodownload") != 1:
+        found.append("nodownload once")
+    if NO_DOWNLOAD_FAIL_CLOSED not in template:
+        found.append("fail closed default")
+    if NO_DOWNLOAD_VERDICT not in controller:
+        found.append("verdict in the controller")
+    return found
+
+
+def test_a_blocked_share_hides_the_download_entry_of_the_player() -> None:
+    template = (TEMPLATES / "play.php").read_text(encoding="utf-8")
+    controller = (PHP_ROOT / "lib" / "Controller" / "PageController.php").read_text(encoding="utf-8")
+    assert no_download_findings(template, controller) == []
+
+
+def test_self_no_download_rule_fires() -> None:
+    template = (TEMPLATES / "play.php").read_text(encoding="utf-8")
+    controller = (PHP_ROOT / "lib" / "Controller" / "PageController.php").read_text(encoding="utf-8")
+    # Always on: the attribute without the branch.
+    always = template.replace(NO_DOWNLOAD_BRANCH, ' controlslist="nodownload"')
+    assert "branch on the medium" in no_download_findings(always, controller)
+    # Not at all: the attribute removed.
+    never = template.replace(NO_DOWNLOAD_BRANCH, "")
+    assert no_download_findings(never, controller) == ["branch on the medium", "nodownload once"]
+    # Fail open: a missing value would leave the entry.
+    fail_open = template.replace("?? true) !== false", "?? false) === true")
+    assert no_download_findings(fail_open, controller) == ["fail closed default"]
+    # The playback reading of the verdict (UNKNOWN plays) is not the export one.
+    playback = controller.replace(NO_DOWNLOAD_VERDICT, "'mediaNoDownload' => $verdict === DownloadPolicy::BLOCKED,")
+    assert no_download_findings(template, playback) == ["verdict in the controller"]
+
+
 def test_the_admin_section_keeps_its_contract() -> None:
     template = (TEMPLATES / "admin.php").read_text(encoding="utf-8")
     script = (SCRIPTS / "admin.js").read_text(encoding="utf-8")
