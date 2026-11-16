@@ -16,15 +16,21 @@
 // No fixed waits: web-first assertions, waitForResponse and expect.poll only.
 import { expect, request, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import {
+	expectFinalSearchDone,
 	fold,
 	foldedTokens,
 	exportResponse,
 	GROUP_NAME,
 	login,
+	openUnifiedSearch,
 	s7Expectations,
-	screenshot,
+	screenshotPart,
+	searchField,
 	searchInDialog,
 	users,
+	watchProviderSearches,
+	wholePage,
+	withLanguage,
 	type S7Clip,
 	type User,
 } from './helpers';
@@ -40,6 +46,28 @@ const ONCE = 'w1280-light';
 const S6_PROJECTS = ['w1280-light', 'w1280-dark'];
 // The person of the person filter: carol receives s7-ziffer.wav from alice (ci/seed.sh).
 const PERSON = 'carol';
+// The pictures of the review are German (04-UI-SPEC, owner 16.11.2026): alice
+// owns the clips and reads English elsewhere, so the dialog tests switch her.
+const REVIEW_LANGUAGE = 'de' as const;
+// The labels of the filters of the core search dialog, from the catalogues of
+// nextcloud/server core/l10n (en source strings, de_DE.json and de.json, the
+// same on stable33, stable34 and master, checked 16.11.2026).
+const CORE_TEXTS = {
+	thisYear: { en: /This year/, de: /Dieses Jahr/ },
+	searchPeople: { en: /Search people/, de: /Personen suchen/ },
+} as const;
+// The term of 04-UI-SPEC S7 that has to come back without an error, hit or not.
+const CLOCK_TERM = '12:30';
+
+/** A file name part for a search term: letters and digits without accents, the rest a dash. */
+function termSlug(term: string): string {
+	return term
+		.normalize('NFKD')
+		.replace(/[̀-ͯ]/g, '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-|-$/g, '');
+}
 
 type Entry = { title: string; subline: string; resourceUrl: string; attributes: Record<string, string> };
 
@@ -167,24 +195,71 @@ test.describe.serial('phase 4 search quality @phase4', () => {
 	test('S7 Suche im Dialog mit dem Zahlwort zur Ziffer @phase4', async ({ page }, testInfo) => {
 		only(testInfo, [ONCE]);
 		const clip = s7Expectations().find((item) => /^\d+$/.test(item.numberWord)) ?? s7Expectations()[0];
-		await login(page, users.alice());
-		// The German word of the number, where Parakeet wrote the digit: the widening in the real dialog.
-		const group = await searchInDialog(page, clip.numberForms[1]);
-		await expect(group.locator(`a[href*="/play/${clip.fileId}"]`).first()).toBeVisible();
-		await screenshot(page, 's7-number', testInfo);
+		const alice = users.alice();
+		await withLanguage(alice, REVIEW_LANGUAGE, async () => {
+			await login(page, alice);
+			// The German word of the number, where Parakeet wrote the digit: the widening in the real dialog.
+			const group = await searchInDialog(page, clip.numberForms[1]);
+			await expect(group.locator(`a[href*="/play/${clip.fileId}"]`).first()).toBeVisible();
+			await wholePage(page, 's7-number', testInfo);
+		});
+	});
+
+	test('S7 Trefferliste je Suchbegriff im Dialog, als Bild für die Abnahme @phase4', async ({ page }, testInfo) => {
+		only(testInfo, [ONCE]);
+		const clips = s7Expectations();
+		// Every term of 04-UI-SPEC S7 as the clips measured it: the four forms of
+		// the number, singular and plural, head and compound; then "12:30".
+		const terms = [
+			...new Set(
+				clips.flatMap((clip) => [
+					...clip.numberForms,
+					...(clip.singular === null ? [] : [clip.singular]),
+					...(clip.plural === null ? [] : [clip.plural]),
+					clip.head,
+					clip.compound,
+				]),
+			),
+		];
+		const alice = users.alice();
+		await withLanguage(alice, REVIEW_LANGUAGE, async () => {
+			await login(page, alice);
+			await watchProviderSearches(page);
+			await openUnifiedSearch(page);
+			const input = searchField(page);
+			await expect(input).toBeVisible();
+			for (const [index, term] of [...terms, CLOCK_TERM].entries()) {
+				await input.fill(term);
+				await expectFinalSearchDone(page);
+				const group = page.getByRole('list', { name: GROUP_NAME }).or(page.getByRole('listbox', { name: GROUP_NAME }));
+				const name = `s7-term-${String(index + 1).padStart(2, '0')}-${termSlug(term)}`;
+				if (term === CLOCK_TERM) {
+					// "12:30" may find nothing; the picture shows the dialog without an error.
+					await wholePage(page, name, testInfo);
+				} else {
+					// The OCS checks above prove the file among the hits; the dialog shows the group of the term.
+					await expect(group, `the dialog shows the group for "${term}"`).toBeVisible();
+					await screenshotPart(group, name, testInfo);
+				}
+				console.log(`S7-TERM ${name} "${term}" hits in the dialog: ${await group.locator('a[href*="/play/"]').count()}`);
+			}
+		});
 	});
 
 	test('S6 Datumsfilter: die Gruppe steht im Hauptteil, nicht unter Partial matches @phase4', async ({ page }, testInfo) => {
 		only(testInfo, S6_PROJECTS);
 		const clip = s7Expectations()[s7Expectations().length - 1];
-		await login(page, users.alice());
-		await searchInDialog(page, clip.numberForms[1]);
-		await filtered(page, 'since', async () => {
-			await page.locator('[data-cy-unified-search-filter="date"]').getByRole('button').first().click();
-			await page.getByRole('menuitem', { name: /This year/ }).click();
+		const alice = users.alice();
+		await withLanguage(alice, REVIEW_LANGUAGE, async () => {
+			await login(page, alice);
+			await searchInDialog(page, clip.numberForms[1]);
+			await filtered(page, 'since', async () => {
+				await page.locator('[data-cy-unified-search-filter="date"]').getByRole('button').first().click();
+				await page.getByRole('menuitem', { name: CORE_TEXTS.thisYear[REVIEW_LANGUAGE] }).click();
+			});
+			await expectInMainPart(page, clip.fileId);
+			await wholePage(page, 's6-date', testInfo);
 		});
-		await expectInMainPart(page, clip.fileId);
-		await screenshot(page, 's6-date', testInfo);
 	});
 
 	test('S6 Personenfilter: die Gruppe steht im Hauptteil, nicht unter Partial matches @phase4', async ({ page }, testInfo) => {
@@ -193,15 +268,18 @@ test.describe.serial('phase 4 search quality @phase4', () => {
 		const clip = s7Expectations().find((item) => item.key === 'S7_DE_DIGIT');
 		expect(clip, 'AVS_S7_TARGETS holds S7_DE_DIGIT').toBeDefined();
 		const shared = clip as S7Clip;
-		await login(page, users.alice());
-		await searchInDialog(page, shared.numberForms[1]);
-		await filtered(page, 'person', async () => {
-			await page.locator('[data-cy-unified-search-filter="people"]').getByRole('button').first().click();
-			await page.getByRole('textbox', { name: /Search people/ }).fill(PERSON);
-			await page.locator('.searchable-list__list li', { hasText: PERSON }).getByRole('button').first().click();
+		const alice = users.alice();
+		await withLanguage(alice, REVIEW_LANGUAGE, async () => {
+			await login(page, alice);
+			await searchInDialog(page, shared.numberForms[1]);
+			await filtered(page, 'person', async () => {
+				await page.locator('[data-cy-unified-search-filter="people"]').getByRole('button').first().click();
+				await page.getByRole('textbox', { name: CORE_TEXTS.searchPeople[REVIEW_LANGUAGE] }).fill(PERSON);
+				await page.locator('.searchable-list__list li', { hasText: PERSON }).getByRole('button').first().click();
+			});
+			await expectInMainPart(page, shared.fileId);
+			await wholePage(page, 's6-person', testInfo);
 		});
-		await expectInMainPart(page, shared.fileId);
-		await screenshot(page, 's6-person', testInfo);
 	});
 
 	test('SRCH-04 Empfänger einer Freigabe mit Download-Sperre findet Treffer @phase4', async ({}, testInfo) => {
