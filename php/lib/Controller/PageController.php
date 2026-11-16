@@ -11,6 +11,7 @@ use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
 use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCA\AudioVideoSearch\Service\SidecarWriter;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\TemplateResponse;
@@ -49,6 +50,11 @@ use Psr\Log\LoggerInterface;
  * ones of the search provider and the content gateway (gate rule 14), and a
  * question that fails counts as excluded. The medium itself still plays:
  * that is WebDAV and the rights of the user, not the transcript.
+ *
+ * Under the excerpt a ready page carries the export section (plan 04-11):
+ * links to the SRT, VTT and TXT routes, the sidecar button and the subtitle
+ * track. Its state comes from the same download verdict as the page and the
+ * same exclusion finding as the excerpt; see exportState().
  */
 final class PageController extends Controller {
 	/** One day, the ceiling of the start time in seconds. */
@@ -97,6 +103,12 @@ final class PageController extends Controller {
 	public const NOTE_PREVIEW = 'preview';
 	public const NOTE_PARTIAL = 'partial';
 
+	/** The export section (04-UI-SPEC): X1, X2, X3 and X4 (no section). */
+	public const EXPORT_AVAILABLE = 'available';
+	public const EXPORT_PARTIAL = 'partial';
+	public const EXPORT_BLOCKED = 'blocked';
+	public const EXPORT_NONE = 'none';
+
 	public function __construct(
 		IRequest $request,
 		private IRootFolder $rootFolder,
@@ -132,7 +144,11 @@ final class PageController extends Controller {
 
 		[$userFolder, $file, $uid] = $found;
 		$mediaTag = self::mediaTag((string)$file->getMimetype());
-		$downloadAllowed = $this->downloadPolicy->allowsPlayback($file, $fileId);
+		// One verdict for the whole page: playback reads it fail open (the
+		// rule of DownloadPolicy::allowsPlayback, WebDAV checks again), the
+		// export section reads the same verdict fail closed.
+		$verdict = $this->downloadPolicy->decide($file, $fileId);
+		$downloadAllowed = $verdict !== DownloadPolicy::BLOCKED;
 
 		$state = self::STATE_READY;
 		if ($mediaTag === '') {
@@ -141,16 +157,18 @@ final class PageController extends Controller {
 			$state = self::STATE_DOWNLOAD_BLOCKED;
 		}
 
+		$fileName = (string)$file->getName();
+
 		$src = '';
 		$mediaSrc = '';
 		$excerpt = self::excerptState(self::EXCERPT_SKIPPED);
+		$export = self::exportParams(self::EXPORT_NONE);
 		if ($state === self::STATE_READY) {
 			$src = $this->davUrl($uid, $userFolder, $file);
 			$mediaSrc = $startMs > 0 ? $src . '#t=' . self::seconds($startMs) : $src;
 			$excerpt = $this->excerpt($uid, $fileId, $startMs);
+			$export = $this->exportState($uid, $file, $fileId, $verdict, $excerpt['excluded']);
 		}
-
-		$fileName = (string)$file->getName();
 
 		return $this->render([
 			'state' => $state,
@@ -165,7 +183,7 @@ final class PageController extends Controller {
 			'excerptHours' => $excerpt['hours'],
 			'filesUrl' => $this->urlGenerator->linkToRoute('files.view.showFile', ['fileid' => $fileId]),
 			'downloadAllowed' => $downloadAllowed,
-		], $startMs);
+		] + $export, $startMs);
 	}
 
 	/**
@@ -284,7 +302,11 @@ final class PageController extends Controller {
 	 * number of hours; none of these is A5. Only constants of this class and
 	 * the checked text and limit leave this method.
 	 *
-	 * @return array{state: string, text: string, note: string, hours: int}
+	 * The verdict on the exclusions leaves the method as 'excluded', so the
+	 * export section judges by the same answer and the exclusions are asked
+	 * once per page (gate rule 14).
+	 *
+	 * @return array{state: string, text: string, note: string, hours: int, excluded: bool}
 	 */
 	private function excerpt(string $uid, int $fileId, int $startMs): array {
 		try {
@@ -298,7 +320,7 @@ final class PageController extends Controller {
 			$excluded = true;
 		}
 		if ($excluded) {
-			return self::excerptState(self::EXCERPT_NONE);
+			return self::excerptState(self::EXCERPT_NONE, true);
 		}
 
 		if (!$this->exAppService->searchAllowed()) {
@@ -322,7 +344,7 @@ final class PageController extends Controller {
 				$note = self::NOTE_PREVIEW;
 			}
 
-			return ['state' => self::EXCERPT_OK, 'text' => $text, 'note' => $note, 'hours' => 0];
+			return ['state' => self::EXCERPT_OK, 'text' => $text, 'note' => $note, 'hours' => 0, 'excluded' => false];
 		}
 
 		if ($answer['pendingHere']) {
@@ -343,16 +365,131 @@ final class PageController extends Controller {
 			return self::excerptState(self::EXCERPT_SKIPPED_OTHER);
 		}
 
-		return ['state' => self::EXCERPT_TOO_LONG, 'text' => '', 'note' => self::NOTE_NONE, 'hours' => $hours];
+		return ['state' => self::EXCERPT_TOO_LONG, 'text' => '', 'note' => self::NOTE_NONE, 'hours' => $hours, 'excluded' => false];
 	}
 
 	/**
 	 * A state without text, note and hours.
 	 *
-	 * @return array{state: string, text: string, note: string, hours: int}
+	 * @return array{state: string, text: string, note: string, hours: int, excluded: bool}
 	 */
-	private static function excerptState(string $state): array {
-		return ['state' => $state, 'text' => '', 'note' => self::NOTE_NONE, 'hours' => 0];
+	private static function excerptState(string $state, bool $excluded = false): array {
+		return ['state' => $state, 'text' => '', 'note' => self::NOTE_NONE, 'hours' => 0, 'excluded' => $excluded];
+	}
+
+	/**
+	 * The export section of a ready page (04-UI-SPEC, "Zustände des
+	 * Export-Abschnitts"), in this order:
+	 *
+	 * 1. The download switch first, before the exclusions and before the
+	 *    container: BLOCKED is X3 whatever else holds, so the hint T24 hangs on
+	 *    the attribute of the share alone and tells nothing about an exclusion
+	 *    or a transcript (leak rule of the UI-SPEC, T-04-45a).
+	 * 2. A verdict that cannot be read is X4: no section, never a hint that
+	 *    claims a block that is not certain, and never a button.
+	 * 3. Excluded (the finding of excerpt(), asked once), a drift on record,
+	 *    a silent container and a file the container does not know are X4,
+	 *    byte for byte the same parameters.
+	 * 4. Otherwise X1, or X2 with the end of the last finished piece.
+	 *
+	 * Only checked values leave this method: routes of this app, the language
+	 * out of the closed list of ExAppService, a clock and a name built here.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function exportState(string $uid, File $file, int $fileId, string $verdict, bool $excluded): array {
+		if ($verdict === DownloadPolicy::BLOCKED) {
+			return self::exportParams(self::EXPORT_BLOCKED);
+		}
+		if ($verdict !== DownloadPolicy::ALLOWED || $excluded) {
+			return self::exportParams(self::EXPORT_NONE);
+		}
+
+		if (!$this->exAppService->searchAllowed()) {
+			return self::exportParams(self::EXPORT_NONE);
+		}
+		$meta = $this->exAppService->exportMeta($uid, $fileId);
+		if ($meta === null || $meta['known'] !== true) {
+			return self::exportParams(self::EXPORT_NONE);
+		}
+
+		$language = (string)($meta['language'] ?? '');
+		$partial = ($meta['partial'] ?? false) === true;
+		$untilMs = (int)($meta['untilMs'] ?? 0);
+
+		$name = ExportController::downloadName((string)$file->getName(), $language, 'vtt');
+		if (strlen($name) > SidecarWriter::MAX_NAME_BYTES) {
+			// The page then names no file (T20b); the route answers 400 (E5).
+			$name = '';
+		}
+
+		$urls = [];
+		foreach (['srt', 'vtt', 'txt'] as $format) {
+			$urls[$format] = $this->urlGenerator->linkToRoute('audio_video_search.export.download', ['fileId' => $fileId, 'format' => $format]);
+		}
+
+		return [
+			'exportState' => $partial ? self::EXPORT_PARTIAL : self::EXPORT_AVAILABLE,
+			'exportUntilClock' => $partial ? Provider::clock($untilMs) : '',
+			'exportUntilIso' => $partial ? self::isoDuration($untilMs) : '',
+			'exportUrls' => $urls,
+			'sidecarAllowed' => $this->sidecarAllowed($uid, $file, $fileId),
+			'sidecarName' => $name,
+			'sidecarUrl' => $this->urlGenerator->linkToRoute('audio_video_search.export.sidecar', ['fileId' => $fileId]),
+			'trackUrl' => $this->urlGenerator->linkToRoute('audio_video_search.export.track', ['fileId' => $fileId]),
+			'trackLang' => $language,
+			'trackLabel' => $this->l10n->t('%s, subtitle draft', [$this->languageName($language)]),
+		];
+	}
+
+	/**
+	 * Whether the folder of the medium takes a new file, asked as the user
+	 * like the sidecar route does: quota, the Team Folder ACL and
+	 * files_accesscontrol answer only in that view. A question that fails is
+	 * a no; the log names the file id and the class only.
+	 */
+	private function sidecarAllowed(string $uid, File $file, int $fileId): bool {
+		try {
+			return $this->readerContext->actAs($uid, static fn (): bool => $file->getParent()->isCreatable()) === true;
+		} catch (\Throwable $e) {
+			$this->logger->warning('Audio & Video Search: the folder of the medium could not be asked for the playback page', [
+				'fileId' => $fileId,
+				'class' => $e::class,
+			]);
+
+			return false;
+		}
+	}
+
+	/** The name of a transcript language in the display language (T32 to T34). */
+	private function languageName(string $language): string {
+		return match ($language) {
+			'de' => $this->l10n->t('German'),
+			'en' => $this->l10n->t('English'),
+			default => $this->l10n->t('French'),
+		};
+	}
+
+	/**
+	 * The parameters of a section without buttons: every key of the data
+	 * contract, every value empty, so X3 and X4 differ in exportState only
+	 * and every case of X4 renders the same bytes.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private static function exportParams(string $state): array {
+		return [
+			'exportState' => $state,
+			'exportUntilClock' => '',
+			'exportUntilIso' => '',
+			'exportUrls' => [],
+			'sidecarAllowed' => false,
+			'sidecarName' => '',
+			'sidecarUrl' => '',
+			'trackUrl' => '',
+			'trackLang' => '',
+			'trackLabel' => '',
+		];
 	}
 
 	private function unavailable(int $fileId, int $startMs): TemplateResponse {
@@ -371,7 +508,7 @@ final class PageController extends Controller {
 			'excerptHours' => 0,
 			'filesUrl' => $this->urlGenerator->linkToRoute('files.view.index'),
 			'downloadAllowed' => false,
-		], $startMs);
+		] + self::exportParams(self::EXPORT_NONE), $startMs);
 		$response->setStatus(Http::STATUS_NOT_FOUND);
 
 		return $response;

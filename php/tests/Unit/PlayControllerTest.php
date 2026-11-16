@@ -52,6 +52,34 @@ use Psr\Log\LoggerInterface;
 final class PlayControllerTest extends TestCase {
 	private const UID = 'alice';
 
+	/** The data contract of the export section (04-UI-SPEC), in this order. */
+	private const EXPORT_KEYS = [
+		'exportState',
+		'exportUntilClock',
+		'exportUntilIso',
+		'exportUrls',
+		'sidecarAllowed',
+		'sidecarName',
+		'sidecarUrl',
+		'trackUrl',
+		'trackLang',
+		'trackLabel',
+	];
+
+	/** The export parameters of a section without buttons, X3 apart from its state. */
+	private const NO_EXPORT = [
+		'exportState' => 'none',
+		'exportUntilClock' => '',
+		'exportUntilIso' => '',
+		'exportUrls' => [],
+		'sidecarAllowed' => false,
+		'sidecarName' => '',
+		'sidecarUrl' => '',
+		'trackUrl' => '',
+		'trackLang' => '',
+		'trackLabel' => '',
+	];
+
 	private string $uid = self::UID;
 	private mixed $t = '';
 
@@ -104,6 +132,18 @@ final class PlayControllerTest extends TestCase {
 	/** @var list<string> every log line with its context, as one text */
 	private array $logged = [];
 
+	/** @var array<string, mixed>|null what ExAppService::exportMeta answers */
+	private ?array $exportMeta = null;
+
+	/** Set where the export must not reach the container: exportMeta() then expects never(). */
+	private bool $exportNeverAsked = false;
+
+	/** @var list<array{string,int}> */
+	private array $exportMetaCalls = [];
+
+	/** What isCreatable of the folder of the medium answers, or what it throws. */
+	private bool|\Throwable $creatable = true;
+
 	protected function setUp(): void {
 		parent::setUp();
 
@@ -126,6 +166,10 @@ final class PlayControllerTest extends TestCase {
 		$this->askedUsers = [];
 		$this->askedFiles = [];
 		$this->logged = [];
+		$this->exportMeta = self::meta();
+		$this->exportNeverAsked = false;
+		$this->exportMetaCalls = [];
+		$this->creatable = true;
 	}
 
 	private function controller(): PageController {
@@ -182,6 +226,13 @@ final class PlayControllerTest extends TestCase {
 				$this->excerptCalls[] = [$uid, $fileId, $startMs];
 
 				return $this->excerpt;
+			});
+		$exApp->expects($this->exportNeverAsked ? self::never() : self::any())
+			->method('exportMeta')
+			->willReturnCallback(function (string $uid, int $fileId): ?array {
+				$this->exportMetaCalls[] = [$uid, $fileId];
+
+				return $this->exportMeta;
 			});
 
 		$exclusions = $this->createMock(ExclusionService::class);
@@ -259,6 +310,26 @@ final class PlayControllerTest extends TestCase {
 	}
 
 	/**
+	 * An answer of ExAppService::exportMeta about a file with a transcript.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return array<string, mixed>
+	 */
+	private static function meta(array $fields = []): array {
+		return $fields + ['known' => true, 'partial' => false, 'untilMs' => 0, 'language' => 'de'];
+	}
+
+	/**
+	 * The parameters of the export section out of all parameters of a page.
+	 *
+	 * @param array<string, mixed> $params
+	 * @return array<string, mixed>
+	 */
+	private static function exportPart(array $params): array {
+		return array_intersect_key($params, array_flip(self::EXPORT_KEYS));
+	}
+
+	/**
 	 * The excerpt block of a page as the server renders it: the template of
 	 * the response without the layout around it, cut to its section.
 	 */
@@ -306,14 +377,19 @@ final class PlayControllerTest extends TestCase {
 	 */
 	private function answerWithoutTranscript(int $fileId): array {
 		$this->excerpt = self::unknownFile();
+		$this->exportMeta = ['known' => false];
 		$answer = self::answer($this->response($fileId));
 		self::assertSame('none', $answer['params']['excerptState']);
 		self::assertSame('', $answer['params']['excerpt']);
 		self::assertSame('', $answer['params']['excerptNote']);
 		self::assertSame(0, $answer['params']['excerptHours']);
+		self::assertSame('none', $answer['params']['exportState']);
 		self::assertCount(1, $this->excerptCalls);
+		self::assertCount(1, $this->exportMetaCalls);
 
 		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
+		$this->exportMeta = self::meta();
+		$this->exportMetaCalls = [];
 		$this->excerptCalls = [];
 		$this->allowedCalls = 0;
 		$this->askedUsers = [];
@@ -334,6 +410,15 @@ final class PlayControllerTest extends TestCase {
 			$storage->method('instanceOfStorage')->willReturn(false);
 		}
 		$file->method('getStorage')->willReturn($storage);
+		$parent = $this->createMock(Folder::class);
+		$parent->method('isCreatable')->willReturnCallback(function (): bool {
+			if ($this->creatable instanceof \Throwable) {
+				throw $this->creatable;
+			}
+
+			return $this->creatable;
+		});
+		$file->method('getParent')->willReturn($parent);
 		$this->readable[$id] = $file;
 
 		return $file;
@@ -921,6 +1006,219 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame(Http::STATUS_NOT_FOUND, $this->response(5)->getStatus());
 		self::assertSame([], $this->askedUsers);
 		self::assertSame([], $this->askedFiles);
+	}
+
+	// -- the export section (plan 04-11, 04-UI-SPEC X1 to X4) -------------------------------
+
+	/** A received share whose rules cannot be read: the verdict is UNKNOWN. */
+	private function unreadableShare(): ISharedStorage&MockObject {
+		$storage = $this->createMock(ISharedStorage::class);
+		$storage->method('instanceOfStorage')->willReturnCallback(
+			static fn (string $class): bool => $class === ISharedStorage::class,
+		);
+		$storage->method('getShare')->willThrowException(new \RuntimeException('share of alice on Sitzung.webm is gone'));
+
+		return $storage;
+	}
+
+	public function testEveryPageThatIsNotReadyHasNoExportSectionAndNeverAsksForOne(): void {
+		$this->exportNeverAsked = true;
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->viewWithoutDownload = false;
+
+		$notMedia = $this->play(3);
+		$blocked = $this->play(4);
+		$unavailable = $this->play(5);
+
+		self::assertSame('not_media', $notMedia['state']);
+		self::assertSame('download_blocked', $blocked['state']);
+		self::assertSame('unavailable', $unavailable['state']);
+		foreach ([$notMedia, $blocked, $unavailable] as $params) {
+			self::assertSame(self::NO_EXPORT, self::exportPart($params));
+		}
+		// The same set of keys on every page, the unavailable one included.
+		$keys = array_keys($this->play(3));
+		sort($keys);
+		$unavailableKeys = array_keys($unavailable);
+		sort($unavailableKeys);
+		self::assertSame($keys, $unavailableKeys);
+		self::assertSame([], $this->exportMetaCalls);
+	}
+
+	public function testABlockedShareThatMayBeViewedShowsTheHintOnlyAndNeverAsksTheContainerForAnExport(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->viewWithoutDownload = true;
+		$this->exportNeverAsked = true;
+
+		$params = $this->play(4);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame(['exportState' => 'blocked'] + self::NO_EXPORT, self::exportPart($params));
+		self::assertSame([], $this->exportMetaCalls);
+		$flat = json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+		self::assertStringNotContainsString('audio_video_search.export', $flat);
+	}
+
+	public function testABlockedShareThatIsAlsoExcludedIsTheSameBlockAndNoHintOfTheExclusion(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->exportNeverAsked = true;
+
+		$blocked = self::exportPart($this->play(4));
+
+		// Positive control: the exclusion does change the excerpt of the page.
+		$this->excludedUsers = [self::UID];
+		$excludedPage = $this->play(4);
+		self::assertSame('none', $excludedPage['excerptState']);
+		$excluded = self::exportPart($excludedPage);
+
+		self::assertSame('blocked', $excluded['exportState']);
+		self::assertSame($blocked, $excluded);
+		self::assertSame([], $this->exportMetaCalls);
+	}
+
+	public function testAShareWhoseRulesCannotBeReadPlaysButHasNoExportSection(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->unreadableShare());
+		$this->exportNeverAsked = true;
+
+		$params = $this->play(4);
+
+		self::assertSame('ready', $params['state']);
+		self::assertTrue($params['downloadAllowed']);
+		self::assertSame(self::NO_EXPORT, self::exportPart($params));
+		self::assertSame([], $this->exportMetaCalls);
+		foreach ($this->logged as $line) {
+			self::assertStringNotContainsString('Sitzung', $line);
+			self::assertStringNotContainsString(self::UID, $line);
+		}
+	}
+
+	public function testAnExcludedUserOrFileWithADownloadHasNoExportSectionAndTheExclusionsAreAskedOnce(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->exportNeverAsked = true;
+
+		$this->excludedUsers = [self::UID];
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame(['reload', 'user'], $this->exclusionCalls);
+
+		$this->excludedUsers = [];
+		$this->excludedFiles = [7];
+		$this->exclusionCalls = [];
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame(['reload', 'user', 'file'], $this->exclusionCalls);
+		self::assertSame([], $this->exportMetaCalls);
+		self::assertSame(0, $this->allowedCalls);
+	}
+
+	public function testADriftASilentContainerAndAnUnknownFileHaveNoExportSection(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$this->searchAllowed = false;
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame([], $this->exportMetaCalls);
+
+		$this->searchAllowed = true;
+		$this->exportMeta = null;
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+
+		$this->exportMeta = ['known' => false];
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame([[self::UID, 7], [self::UID, 7]], $this->exportMetaCalls);
+	}
+
+	public function testAFinishedTranscriptOffersTheThreeFormatsTheSidecarAndTheTrack(): void {
+		$this->file(7, 'Ordner/Sitzung.webm');
+
+		$params = $this->play(7);
+
+		self::assertSame([
+			'exportState' => 'available',
+			'exportUntilClock' => '',
+			'exportUntilIso' => '',
+			'exportUrls' => [
+				'srt' => '/nc/route/audio_video_search.export.download?fileId=7&format=srt',
+				'vtt' => '/nc/route/audio_video_search.export.download?fileId=7&format=vtt',
+				'txt' => '/nc/route/audio_video_search.export.download?fileId=7&format=txt',
+			],
+			'sidecarAllowed' => true,
+			'sidecarName' => 'Sitzung.de.vtt',
+			'sidecarUrl' => '/nc/route/audio_video_search.export.sidecar?fileId=7',
+			'trackUrl' => '/nc/route/audio_video_search.export.track?fileId=7',
+			'trackLang' => 'de',
+			'trackLabel' => 'German, subtitle draft',
+		], self::exportPart($params));
+		self::assertSame(['srt', 'vtt', 'txt'], array_keys($params['exportUrls']));
+		self::assertSame([[self::UID, 7]], $this->exportMetaCalls);
+	}
+
+	public function testAPartialTranscriptNamesTheEndOfTheLastFinishedPiece(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->exportMeta = self::meta(['partial' => true, 'untilMs' => 3723456, 'language' => 'fr']);
+
+		$params = $this->play(7);
+
+		self::assertSame('partial', $params['exportState']);
+		self::assertSame('1:02:03', $params['exportUntilClock']);
+		self::assertSame('PT1H2M3S', $params['exportUntilIso']);
+		self::assertSame('Sitzung.fr.vtt', $params['sidecarName']);
+		self::assertSame('fr', $params['trackLang']);
+		self::assertSame('French, subtitle draft', $params['trackLabel']);
+
+		$this->exportMeta = self::meta(['partial' => true, 'untilMs' => 65000, 'language' => 'en']);
+		$params = $this->play(7);
+		self::assertSame('1:05', $params['exportUntilClock']);
+		self::assertSame('PT1M5S', $params['exportUntilIso']);
+		self::assertSame('English, subtitle draft', $params['trackLabel']);
+	}
+
+	public function testTheSidecarIsOfferedOnlyWhereTheUserMayCreateAFile(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$this->creatable = false;
+		$params = $this->play(7);
+		self::assertSame('available', $params['exportState']);
+		self::assertFalse($params['sidecarAllowed']);
+		self::assertSame([], $this->logged);
+
+		$this->creatable = new \RuntimeException('storage of alice: Sitzung.webm');
+		$params = $this->play(7);
+		self::assertSame('available', $params['exportState']);
+		self::assertFalse($params['sidecarAllowed']);
+		self::assertCount(1, $this->logged);
+		self::assertStringContainsString('RuntimeException', $this->logged[0]);
+		self::assertStringNotContainsString('Sitzung', $this->logged[0]);
+		self::assertStringNotContainsString(self::UID, $this->logged[0]);
+	}
+
+	public function testATargetNameOverTheLimitIsNotNamedOnThePage(): void {
+		// 248 bytes of name and ".de.vtt" make exactly 255: still named.
+		$this->file(7, str_repeat('a', 248) . '.webm');
+		self::assertSame(str_repeat('a', 248) . '.de.vtt', $this->play(7)['sidecarName']);
+
+		$this->file(8, str_repeat('ä', 125) . '.webm');
+		$params = $this->play(8);
+		self::assertSame('available', $params['exportState']);
+		self::assertSame('', $params['sidecarName']);
+	}
+
+	public function testTheAnswersWithoutASectionAreTheSameForExcludedAndUnknown(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$unknown = $this->answerWithoutTranscript(7);
+
+		// Positive control: a file with a transcript has a different answer.
+		$withTranscript = self::answer($this->response(7));
+		self::assertNotSame($unknown, $withTranscript);
+		self::assertSame('available', $withTranscript['params']['exportState']);
+
+		$this->exportMetaCalls = [];
+		$this->excludedFiles = [7];
+		$this->exportNeverAsked = true;
+		$this->containerNeverAsked = true;
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+		self::assertSame([], $this->exportMetaCalls);
 	}
 
 	// -- the route ----------------------------------------------------------------------
