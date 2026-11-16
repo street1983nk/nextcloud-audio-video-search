@@ -113,6 +113,30 @@ Der Lauf meldet nur die Gesamtsumme (OK, 921 tests, 11512 assertions); `php -l` 
 - ghcr `audio_video_search_backend`: vorher und nachher `STATE 404 Package not found`; Positivkontrolle `findling_backend` liefert 1.6.2
 - Plan-Prüfung: `gh run list --commit 56f3627…`: 0 nicht-success, vier Workflows
 
+## Korrekturschleife aus 04-16: Abnahmebilder (lokal, wartet auf Push 3)
+
+Owner-Entscheide 16.11.2026 nach der Prüfliste der UI-Abnahme. Nur Testcode und Prüfvertrag, kein Produktcode; keine Erwartung aufgeweicht, kein neuer Text.
+
+| Commit | Inhalt |
+|---|---|
+| ce6a68d | docs(04-16): S6 im Prüfvertrag nennt den Providernamen des Produkts ("Audio and video", DE "Audio und Video", FR "Audio et vidéo") |
+| a6c0e3f | test(04-16): Abspielseite ganz, deutsch, Abschnitts- und Bannerbilder, X4-Fälle, Spur aus und Spurmenü, X5/X6 in Ruhe, Kontrastwerte im Log |
+| ee556b4 | test(04-16): S6/S7 deutsch, je S7-Suchbegriff ein Bild der Trefferliste |
+
+**Warum die Bilder Fensterausschnitte waren:** `screenshot()` setzte schon `fullPage: true`, aber auf Nextcloud wächst das Dokument nie; `#app-content` scrollt in sich. Playwright misst die Dokumenthöhe und nimmt deshalb genau das Fenster (x 900 px). `wholePage()` vergrößert das Fenster, bis kein innerer Scroller mehr überläuft (höchstens vier Runden, Deckel 8000 px), und setzt es danach zurück.
+
+**Warum die DE-Bilder englisch waren:** Nur `phase4User()` liefert elke (de_DE). Die Fälle, deren Zustand an einer bestimmten Person hängt, meldeten sich als alice (X1a, X2, X4, S6, S7: Eigentümerin der Clips), carol (X5, E3, E4: Freigabe des Ordners Ablage) oder dora (Hochkontrast) an. ci/seed.sh setzt die Sprache nur für elke und fleur; alle anderen bekommen bei der ersten Anmeldung die Browsersprache (en-US) als Nutzersprache gespeichert. `phase4User()` gab für Hochkontrast ausdrücklich `en` zurück. Jetzt schaltet `withLanguage()` die Person für den Fall per occ (`core lang`/`locale` wie im Seed) auf Deutsch und baut in finally zurück; ein Worker, also trifft kein anderer Fall die Person dazwischen. Die Byte-Vergleiche von X4 laufen weiter mit dora und oskar auf demselben (englischen) Katalog, die deutschen X4-Bilder entstehen danach.
+
+**Neue Bilder:** `*-section` (X1, X1a, X2, X3, X5, X6), `*-banner` (D2, E1 bis E7), `x4-reason` (kaputt.mp3), `x4-excluded` (elke ausgeschlossen, A5), `x4-pending` (Datei aus X2 vor dem ersten fertigen Stück, wenn erwischt, sonst Annotation `gap`), `track-off` (Chromium und Firefox), `track-menu` und `track-menu-player` (nur Chromium; Firefox-Menü ist von der Seite aus nicht erreichbar, Annotation `gap`), `s7-term-NN-<begriff>` je Suchbegriff plus "12:30".
+
+**Prüfbar im Log nach Push 3:** `CONTRAST kontrast-<projekt> <teil> <wert>:1 text <farbe>` (vier Zeilen je Kontrast-Projekt), `S7-TERM <bild> "<begriff>" hits in the dialog: <n>`, bei Bedarf `GAP track-menu ...`.
+
+**X5/X6:** Der dunklere TXT-Knopf ist Hover und Fokus nach dem letzten Download-Klick (`a.button` des Kerns färbt bei `:hover`/`:focus`). Vor dem Bild verlässt der Zeiger die Seite und der Fokus wird gelöst (X6 ohne JavaScript: neu laden); eine neue Prüfung verlangt dann dieselbe Hintergrundfarbe für alle drei Knöpfe.
+
+**Statisch geprüft:** tsc 5.9.3 über die Scratchpad-tsconfig 0 Fehler (Positivkontrolle 2 Fehler); `--list --grep @phase4` 207 Einträge in 3 Dateien (vorher 201, neu der S7-Bilderfall in 6 Projekten); Hauptlauf 132, `--grep @axe` 105 unverändert; Python-Gates grün, pytest 2352 passed, 18 skipped, 4 xfailed.
+
+**Offen bis Push 3:** Spurmenü über die DevTools-Box des Bedienelements ist ungetestet gegen echtes Chromium (fällt nur als Lücke, nicht als Fehler aus); die S7-Bilder je Begriff zeigen die Gruppe nach dem letzten Suchlauf, ein kurzes Nachrendern ist nicht eigens abgewartet.
+
 ## Deviations from Plan
 
 1. **debug-Prüfung gegen origin/phase-03 statt origin/main.** `git log --name-only origin/main..HEAD` trifft vier alte Commits mit `.planning/debug/`: afec969, 6c2ba5e (discovery-push11-wait-preview.md), f61cb37, 6ddfd34 (discovery-push9-exclude-after.md). Alle vier stehen schon auf origin/phase-03 und sind damit längst öffentlich; gegen origin/phase-03 ist die Prüfung leer. Autor- und Textprüfung gegen origin/phase-04 waren sauber.
