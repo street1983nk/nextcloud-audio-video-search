@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-15-PLAN.md (Push 2 56f3627, alle Läufe grün)
-last_updated: "2026-11-16T19:15:59.550Z"
+stopped_at: Completed 04-16-PLAN.md (Owner-Abnahme 16.11., X3-Fix 42c0cae lokal, Push 4 und secure-phase 4 offen)
+last_updated: "2026-11-16T22:00:00.000Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 81
-  completed_plans: 80
+  completed_plans: 81
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 17 of 17 (offen: 04-16 UI-Abnahme; 04-15 CI-Beweis grün auf 56f3627)
-Status: Ready to execute
+Plan: 17 of 17 (alle Pläne fertig; offen: Push 4 mit X3-Fix 42c0cae nach Owner-Freigabe, dann secure-phase 4 und verify-work 4)
+Status: Plans complete, Phase-Abschluss nach secure-phase 4
 Last activity: 2026-11-16
 
-Progress: [██████████] 99%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -81,6 +81,7 @@ Progress: [██████████] 99%
 | Phase 04 P11 | 75 min | 3 tasks | 6 files |
 | Phase 04 P13 | 35 min | 2 tasks | 5 files |
 | Phase 04 P15 | 60 min | 2 tasks | 1 files |
+| Phase 04 P16 | 45 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -157,6 +158,8 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-17 (Owner 16.11.): Export-Links tragen ?t= aus dem geprüften startMs (seconds(), unter 0,1 s keins), D2 prüft den Rückweg über den Link echt
 - [Phase 04]: 04-17 (Owner 16.11.): Nebendatei bei Datei-Freigabe landet weiter im Home der Empfängerin
 - [Phase 4]: 04-15: Push 2 (56f3627) auf phase-04 in allen vier Workflows grün, Discovery legs=all 6 x 22/22; debug-Prüfung gegen origin/phase-03
+- [Phase 04]: 04-16 (Owner 16.11.): alle Prüfpunkte abgenommen (Lauf 43942105866); Spurmenü T31 ohne Bild akzeptiert; S7-Vertrag auf Polizei/Seite nachgezogen; X6-Hinweis und Bannerbreiten bleiben; Trefferzeilen-Ausschnitt S6/S7 ist Backlog
+- [Phase 04]: 04-16 (Owner 16.11.): X3 setzt controlslist=nodownload am Medium, fail-closed wie der Export (jedes Urteil außer ALLOWED); nur Bedien-Hürde, keine technische Sperre
 
 ### Pending Todos
 
@@ -169,6 +172,7 @@ Recent decisions affecting current work:
 - 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10) per Owner 07.11. in Plan 13 Task 3
 - 02-12: PHPUnit und php -l der neuen PHP-Dateien (StorageClassifier, StorageStateMapper, 7 Testdateien) lokal nicht gelaufen; Beleg erst in CI beim nächsten freigegebenen Push
 - 04-17: axe-Prüfung und D2-Fix gebaut (16.11.), Beleg erst im Push-Tor 04-15 (PHPUnit PlayControllerTest und @phase4/@axe nur in CI)
+- 04-16: X3-Fix 42c0cae (controlslist=nodownload) lokal; PHPUnit PlayControllerTest und Playwright X1/X3 erst in CI nach Push 4 (Owner-Freigabe nötig); danach secure-phase 4
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -183,6 +187,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T19:15:52.243Z
-Stopped at: Completed 04-15-PLAN.md (Push 2 56f3627, alle Läufe grün)
+Last session: 2026-11-16T22:00:00.000Z
+Stopped at: Completed 04-16-PLAN.md (Owner-Abnahme, X3-Fix 42c0cae lokal, Push 4 offen)
 Resume file: None

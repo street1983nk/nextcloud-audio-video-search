@@ -167,7 +167,7 @@ Plans:
   4. Ein Nutzer legt `<Name>.<Sprache>.vtt` neben das Medium; eine vorhandene Datei gleichen Namens wird nie überschrieben.
   5. Über eine Freigabe mit Download-Sperre findet der Empfänger Treffer, bekommt aber keinen Export und keine Nebendatei.
 
-**Plans:** 16/17 plans executed
+**Plans:** 17/17 plans executed (Phase-Abschluss erst nach secure-phase 4 und Push 4)
 
 Plans:
 **Wave 1**
@@ -209,7 +209,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 04-16-PLAN.md: Gemeinsame UI-Abnahme mit dem Owner
+- [x] 04-16-PLAN.md: Gemeinsame UI-Abnahme mit dem Owner (abgenommen 16.11., X3-Fix 42c0cae wartet auf Push 4)
 
 **UI hint**: yes
 **Research flag**: Standardmuster (Findling-Muster für Tantivy-Normalisierung). Viewer-Untertitel-Schema für NC 33 bis 35 unbelegt, Nebendatei vor dem Plan gegen den Viewer prüfen.
@@ -342,7 +342,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 16/17 | In Progress|  |
+| 4. Suchqualität und Export | 17/17 | In Progress (secure-phase offen)|  |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |
