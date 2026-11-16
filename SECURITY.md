@@ -36,6 +36,11 @@ of the recording and never overwrites an existing file; search filters never
 reveal shares the user cannot see, they only remove results the user may read
 anyway.
 
+When a share does not allow downloads (or this cannot be decided), the playback
+view also hides the download entry of the browser's media player. This is a
+usability measure, not a protection: the browser still receives the media to
+play it. The download block itself is enforced by Nextcloud.
+
 Known residual risk, accepted: the app checks that the sidecar name is free and
 creates the file under its own exclusive lock, which keeps parallel saves
 through the app apart. Another client (for example a sync client or WebDAV)
