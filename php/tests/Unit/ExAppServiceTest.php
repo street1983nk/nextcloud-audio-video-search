@@ -538,6 +538,101 @@ final class ExAppServiceTest extends TestCase {
 		self::assertNull($this->service($this->json(['result' => 'gone', 'mediaId' => null]))->removeSample('alice', 11));
 	}
 
+	// -- export and exportMeta (plan 04-10) ---------------------------------------------
+
+	/** @return array<string, mixed> */
+	private static function exportAnswer(array $override = []): array {
+		return $override + ['known' => true, 'partial' => false, 'untilMs' => 0, 'language' => 'de', 'body' => "WEBVTT\n\n"];
+	}
+
+	public function testExportHasItsShapeAndItsOwnBudget(): void {
+		$service = $this->service($this->json(self::exportAnswer(['partial' => true, 'untilMs' => 754250, 'language' => 'fr'])));
+
+		self::assertSame(
+			['known' => true, 'partial' => true, 'untilMs' => 754250, 'language' => 'fr', 'body' => "WEBVTT\n\n"],
+			$service->export('alice', 11, 'vtt'),
+		);
+		self::assertSame('/export', $this->calls[0]['path']);
+		self::assertSame('POST', $this->calls[0]['method']);
+		self::assertSame(['fileId' => 11, 'format' => 'vtt'], $this->calls[0]['params']);
+		self::assertSame(ExAppService::EXPORT_TIMEOUT_SECONDS, $this->calls[0]['timeout']);
+	}
+
+	public function testExportOfAnUnknownFileIsKnownFalseAndNothingElse(): void {
+		$service = $this->service($this->json(['known' => false, 'partial' => true, 'untilMs' => 5, 'language' => 'de', 'body' => 'x']));
+
+		self::assertSame(['known' => false], $service->export('alice', 11, 'srt'));
+	}
+
+	/** @return array<string, array{array<string, mixed>}> */
+	public static function malformedExportAnswers(): array {
+		return [
+			'language und' => [self::exportAnswer(['language' => 'und'])],
+			'language not a string' => [self::exportAnswer(['language' => 12])],
+			'language missing' => [array_diff_key(self::exportAnswer(), ['language' => ''])],
+			'body not a string' => [self::exportAnswer(['body' => 42])],
+			'body missing' => [array_diff_key(self::exportAnswer(), ['body' => ''])],
+			'untilMs negative' => [self::exportAnswer(['untilMs' => -1])],
+			'untilMs as text' => [self::exportAnswer(['untilMs' => '5'])],
+			'partial as number' => [self::exportAnswer(['partial' => 1])],
+			'known missing' => [array_diff_key(self::exportAnswer(), ['known' => ''])],
+			'known as text' => [self::exportAnswer(['known' => 'yes'])],
+		];
+	}
+
+	/** @param array<string, mixed> $answer */
+	#[DataProvider('malformedExportAnswers')]
+	public function testOneExportFieldOutOfShapeMakesTheWholeAnswerNoAnswer(array $answer): void {
+		self::assertNull($this->service($this->json($answer))->export('alice', 11, 'vtt'));
+	}
+
+	public function testExportRefusesAFormatOutsideTheListWithoutACall(): void {
+		$service = $this->service($this->json(self::exportAnswer()));
+
+		self::assertNull($service->export('alice', 11, 'pdf'));
+		self::assertNull($service->export('alice', 11, 'SRT'));
+		self::assertNull($service->export('alice', 11, ''));
+		self::assertNull($service->export('alice', 0, 'srt'));
+		self::assertSame([], $this->calls);
+		self::assertSame(['srt', 'vtt', 'txt'], ExAppService::EXPORT_FORMATS);
+	}
+
+	public function testAnExportBodyAboveOneMebibyteIsStillAnAnswerAndTheOwnCeilingHolds(): void {
+		// More than MAX_BODY_BYTES (1 MiB), well under EXPORT_MAX_BODY_BYTES.
+		$long = str_repeat('a', 1048577);
+		$kept = $this->service($this->json(self::exportAnswer(['body' => $long])))->export('alice', 11, 'txt');
+
+		self::assertIsArray($kept);
+		self::assertSame($long, $kept['body']);
+
+		// Beyond the export ceiling of 16 MiB the answer is dropped unparsed.
+		$beyond = str_repeat('a', 16777217);
+		self::assertNull($this->service($this->json(self::exportAnswer(['body' => $beyond])))->export('alice', 11, 'txt'));
+	}
+
+	public function testExportMetaHasItsShapeAndTheSearchBudget(): void {
+		$service = $this->service($this->json(['known' => true, 'partial' => true, 'untilMs' => 60000, 'language' => 'en']));
+
+		self::assertSame(
+			['known' => true, 'partial' => true, 'untilMs' => 60000, 'language' => 'en'],
+			$service->exportMeta('alice', 11),
+		);
+		self::assertSame('/export/meta', $this->calls[0]['path']);
+		self::assertSame(['fileId' => 11], $this->calls[0]['params']);
+		self::assertSame(ExAppService::REQUEST_TIMEOUT_SECONDS, $this->calls[0]['timeout']);
+
+		self::assertSame(['known' => false], $this->service($this->json(['known' => false, 'language' => 'de']))->exportMeta('alice', 11));
+		self::assertNull($this->service($this->json(['known' => true, 'partial' => false, 'untilMs' => 0, 'language' => 'und']))->exportMeta('alice', 11));
+		self::assertNull($this->service($this->json(['known' => true]))->exportMeta('alice', 11));
+		self::assertNull($this->service($this->json(['known' => true, 'partial' => false, 'untilMs' => 0, 'language' => 'de']))->exportMeta('alice', 0));
+	}
+
+	public function testAMetaAnswerAboveTheStandardCeilingIsNoAnswer(): void {
+		$huge = '{"known":true,"partial":false,"untilMs":0,"language":"de","pad":"' . str_repeat('a', 1048577) . '"}';
+
+		self::assertNull($this->service($this->answer($huge))->exportMeta('alice', 11));
+	}
+
 	// -- the admin routes of occ (plan 02-10) ---------------------------------------
 
 	/**

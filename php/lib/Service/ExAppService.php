@@ -37,6 +37,8 @@ use Psr\Log\LoggerInterface;
  * The contract, as the container implements it (plan 05):
  *   POST /search         {term, limit}         -> {appVersion, hits: [{fileId, startMs, excerpt, sample}]}
  *   POST /excerpt        {fileId, atMs}        -> {known, excerpt}
+ *   POST /export         {fileId, format}      -> {known} | {known, partial, untilMs, language, body}
+ *   POST /export/meta    {fileId}              -> {known} | {known, partial, untilMs, language}
  *   POST /sample         {fileId, userId, atMs} -> {result, mediaId, indexRev} | {error}
  *   POST /sample/remove  {fileId}              -> {result, mediaId}
  *   GET  /status                               -> {appVersion, companion, sampleCount, ...}
@@ -70,6 +72,29 @@ class ExAppService {
 	 * and hash it. 1.5 s would refuse any real recording.
 	 */
 	public const SAMPLE_TIMEOUT_SECONDS = 120.0;
+
+	/**
+	 * The export budget of its own (plan 04-10, side finding "export timeout"):
+	 * a twelve hour recording carries around 100,000 words, and the container
+	 * renders them into one subtitle body in a single answer. The 1.5 s search
+	 * budget would refuse any real recording. Starting value; plan 04-08
+	 * measures, plan 04-09 holds the container to it by test and forces an
+	 * adjustment here if the measurement says otherwise.
+	 */
+	public const EXPORT_TIMEOUT_SECONDS = 30.0;
+
+	/**
+	 * The answer ceiling of the export, for the same reason: 100,000 words
+	 * with time marks do not fit under the 1 MiB of MAX_BODY_BYTES. 16 MiB,
+	 * same measurement plan as the timeout above.
+	 */
+	private const EXPORT_MAX_BODY_BYTES = 16777216;
+
+	/** The three formats of the export routes (D-04-02), and the only ones sent on. */
+	public const EXPORT_FORMATS = ['srt', 'vtt', 'txt'];
+
+	/** The languages a transcript may carry in a file name; 'und' never leaves the container (D-04-15). */
+	public const EXPORT_LANGUAGES = ['de', 'en', 'fr'];
 
 	/** Ten seconds for the two admin routes of occ (plan 02-10): counting 140,000 rows takes well under one. */
 	public const ADMIN_TIMEOUT_SECONDS = 10.0;
@@ -321,6 +346,111 @@ class ExAppService {
 			'reason' => $reason,
 			'limitHours' => $limitHours,
 		];
+	}
+
+	/**
+	 * The subtitle draft of one file in one format, or null when there is no
+	 * usable answer (plan 04-10, EXP-01).
+	 *
+	 * Own budget: EXPORT_TIMEOUT_SECONDS and EXPORT_MAX_BODY_BYTES instead of
+	 * the search values, see the constants. A format outside EXPORT_FORMATS is
+	 * refused here, without a call.
+	 *
+	 * The container answers {known: false} for every file it may not speak
+	 * about (UI-SPEC, leak rule); with known false every other field is
+	 * dropped, so nothing it sent along can reach the controller. With known
+	 * true each field is checked for its type and range, and one field out of
+	 * shape makes the whole answer no answer: partial a bool, untilMs an int
+	 * of zero or more, language one of EXPORT_LANGUAGES (never 'und',
+	 * D-04-15), body a UTF-8 string.
+	 *
+	 * @return array{known:false}|array{known:true,partial:bool,untilMs:int,language:string,body:string}|null
+	 */
+	public function export(string $uid, int $fileId, string $format): ?array {
+		if ($fileId <= 0 || !in_array($format, self::EXPORT_FORMATS, true)) {
+			return null;
+		}
+
+		$answer = $this->call(
+			'/export',
+			$uid,
+			['fileId' => $fileId, 'format' => $format],
+			self::EXPORT_TIMEOUT_SECONDS,
+			maxBytes: self::EXPORT_MAX_BODY_BYTES,
+		);
+		if ($answer === null || !is_bool($answer['known'] ?? null)) {
+			return null;
+		}
+		if ($answer['known'] === false) {
+			return ['known' => false];
+		}
+
+		$fields = self::exportFields($answer);
+		if ($fields === null) {
+			return null;
+		}
+
+		$body = $answer['body'] ?? null;
+		if (!is_string($body) || !mb_check_encoding($body, 'UTF-8')) {
+			return null;
+		}
+
+		return ['known' => true] + $fields + ['body' => $body];
+	}
+
+	/**
+	 * The state of the export of one file, without the body: whether the
+	 * container knows it, whether it is partial, up to where and in which
+	 * language. Search budget and standard ceiling, because the answer is
+	 * four small fields.
+	 *
+	 * @return array{known:false}|array{known:true,partial:bool,untilMs:int,language:string}|null
+	 */
+	public function exportMeta(string $uid, int $fileId): ?array {
+		if ($fileId <= 0) {
+			return null;
+		}
+
+		$answer = $this->call('/export/meta', $uid, ['fileId' => $fileId], self::REQUEST_TIMEOUT_SECONDS);
+		if ($answer === null || !is_bool($answer['known'] ?? null)) {
+			return null;
+		}
+		if ($answer['known'] === false) {
+			return ['known' => false];
+		}
+
+		$fields = self::exportFields($answer);
+		if ($fields === null) {
+			return null;
+		}
+
+		return ['known' => true] + $fields;
+	}
+
+	/**
+	 * The three fields export and exportMeta share, each with its type and
+	 * range, or null when one of them is out of shape.
+	 *
+	 * @param array<mixed> $answer
+	 * @return array{partial:bool,untilMs:int,language:string}|null
+	 */
+	private static function exportFields(array $answer): ?array {
+		$partial = $answer['partial'] ?? null;
+		if (!is_bool($partial)) {
+			return null;
+		}
+
+		$untilMs = $answer['untilMs'] ?? null;
+		if (!is_int($untilMs) || $untilMs < 0) {
+			return null;
+		}
+
+		$language = $answer['language'] ?? null;
+		if (!is_string($language) || !in_array($language, self::EXPORT_LANGUAGES, true)) {
+			return null;
+		}
+
+		return ['partial' => $partial, 'untilMs' => $untilMs, 'language' => $language];
 	}
 
 	/**
@@ -976,7 +1106,7 @@ class ExAppService {
 	 * @param array<string,mixed> $body
 	 * @return array<mixed>|null
 	 */
-	private function call(string $route, string $userId, array $body, float $timeout, string $method = 'POST'): ?array {
+	private function call(string $route, string $userId, array $body, float $timeout, string $method = 'POST', int $maxBytes = self::MAX_BODY_BYTES): ?array {
 		$startedAt = hrtime(true);
 		$response = $this->proxyRequest($route, $userId, $method, $body, $timeout);
 		$innerMs = round((hrtime(true) - $startedAt) / 1000000, 1);
@@ -1008,7 +1138,7 @@ class ExAppService {
 
 		// Case 3: the length is checked before the parser builds the tree.
 		$responseBody = $response->getBody();
-		if (!is_string($responseBody) || strlen($responseBody) > self::MAX_BODY_BYTES) {
+		if (!is_string($responseBody) || strlen($responseBody) > $maxBytes) {
 			$this->logger->warning('Audio & Video Search: backend answer is not a bounded string body', [
 				'route' => $route,
 				'innerMs' => $innerMs,
