@@ -196,7 +196,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 04-13-PLAN.md: READMEs DE/EN/FR (Viewer erst ab NC 36), SECURITY, Changelog
+- [x] 04-13-PLAN.md: READMEs DE/EN/FR (Viewer erst ab NC 36), SECURITY, Changelog
 - [ ] 04-14-PLAN.md: S7-Testsätze vorab gemessen, E2E Suche und Filter, Workflow-Schritte, Download-Beweis
 
 **Wave 6** *(blocked on Wave 5 completion)*
@@ -342,7 +342,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 12/17 | In Progress|  |
+| 4. Suchqualität und Export | 13/17 | In Progress|  |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |

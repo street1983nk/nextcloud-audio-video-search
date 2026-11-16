@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-11-PLAN.md
-last_updated: "2026-11-16T15:05:25.000Z"
+stopped_at: Completed 04-13-PLAN.md
+last_updated: "2026-11-16T17:30:00.000Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 81
-  completed_plans: 76
+  completed_plans: 77
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 13 of 17
+Plan: 14 of 17 (offen: 04-14, 04-15, 04-16, 04-17)
 Status: Ready to execute
 Last activity: 2026-11-16
 
-Progress: [█████████░] 94%
+Progress: [█████████░] 95%
 
 ## Performance Metrics
 
@@ -79,6 +79,7 @@ Progress: [█████████░] 94%
 | Phase 04 P12 | 40 min | 2 tasks | 5 files |
 | Phase 04 P09 | 50 min | 2 tasks | 6 files |
 | Phase 04 P11 | 75 min | 3 tasks | 6 files |
+| Phase 04 P13 | 35 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -138,6 +139,7 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-12: Neuprüfung neu sofort, credentials_missing und session_credentials jeden Lauf, sonst alle 24 h; 60 s Budget je SchedulerJob-Lauf
 - [Phase 04]: 04-07: Cue-Schnitt bei Rang-Gleichstand nach Balance (kleinster Laengenunterschied), verhindert Rest-Cues unter 1 s
 - [Phase 04]: 04-07: FAST-cps-Gate 0,98 statt 5-%-Schritt 1,00 (gemessen 0,9762), damit die Schwelle als Gate wirken kann
+- [Phase 04]: 04-13: README-Status nennt Suche und Untertitel-Entwurf als gebaut, aber unveröffentlicht; T-04-42 als Restrisiko in der öffentlichen SECURITY.md
 - [Phase 04]: 04-10: UNKNOWN-Freigabe-Attribut sperrt den Export fail-closed mit derselben 403-T24-Seite wie BLOCKED; Wiedergabe bleibt fail-open
 - [Phase 04]: 04-10: Spur-Route entfernt den von DataDisplayResponse gesetzten Content-Disposition-Header per addHeader(null), die Spur traegt keinen
 - [Phase 04]: 04-08: ffmpeg-Erwartungswert = len(cues) + Pfeil-Textzeilen (check_ffmpeg zaehlt Pfeilzeilen der zurueckcodierten Ausgabe, ffmpeg schreibt Textzeilen woertlich zurueck); negativer Wortstart wird in build_cues auf 0 geklemmt
