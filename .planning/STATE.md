@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-17-PLAN.md (axe und D2-Fix nachgezogen)
-last_updated: "2026-11-16T22:00:00.000Z"
+stopped_at: Completed 04-15-PLAN.md (Push 2 56f3627, alle Läufe grün)
+last_updated: "2026-11-16T19:15:59.550Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 81
-  completed_plans: 79
+  completed_plans: 80
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 16 of 17 (offen: 04-15 Push-Tor, 04-16 UI-Abnahme)
+Plan: 17 of 17 (offen: 04-16 UI-Abnahme; 04-15 CI-Beweis grün auf 56f3627)
 Status: Ready to execute
 Last activity: 2026-11-16
 
-Progress: [██████████] 96%
+Progress: [██████████] 99%
 
 ## Performance Metrics
 
@@ -80,6 +80,7 @@ Progress: [██████████] 96%
 | Phase 04 P09 | 50 min | 2 tasks | 6 files |
 | Phase 04 P11 | 75 min | 3 tasks | 6 files |
 | Phase 04 P13 | 35 min | 2 tasks | 5 files |
+| Phase 04 P15 | 60 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -155,6 +156,7 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-17 (Owner 16.11.): axe über @axe-core/playwright 4.14.0 exakt gepinnt (axe-core 4.14.0 im Lockfile, --before=2026-11-01, weil axe-core 4.14.1 erst am 16.11. erschien), Bereich #app-content.avs-play, WCAG 2.x A/AA, Filter serious/critical, Selbsttest
 - [Phase 04]: 04-17 (Owner 16.11.): Export-Links tragen ?t= aus dem geprüften startMs (seconds(), unter 0,1 s keins), D2 prüft den Rückweg über den Link echt
 - [Phase 04]: 04-17 (Owner 16.11.): Nebendatei bei Datei-Freigabe landet weiter im Home der Empfängerin
+- [Phase 4]: 04-15: Push 2 (56f3627) auf phase-04 in allen vier Workflows grün, Discovery legs=all 6 x 22/22; debug-Prüfung gegen origin/phase-03
 
 ### Pending Todos
 
@@ -181,6 +183,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T22:00:00.000Z
-Stopped at: Completed 04-17-PLAN.md (axe und D2-Fix nachgezogen)
+Last session: 2026-11-16T19:15:52.243Z
+Stopped at: Completed 04-15-PLAN.md (Push 2 56f3627, alle Läufe grün)
 Resume file: None
