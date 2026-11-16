@@ -606,7 +606,10 @@ jobs:
           CI: 'true'
           AVS_DOWNLOADS_DIR: ${{ runner.temp }}/avs-downloads
           AVS_FFMPEG: ${{ runner.temp }}/btbn-ffmpeg/ffmpeg
+          # "Install the PHP app" moved app-src/php to apps/audio_video_search.
+          AVS_L10N_DIR: ${{ github.workspace }}/apps/audio_video_search/l10n
         run: |
+          test -f "${AVS_L10N_DIR}/de.json"
           uv sync --frozen
           uv run pytest tests/test_downloaded_subtitles.py -q -rs
 

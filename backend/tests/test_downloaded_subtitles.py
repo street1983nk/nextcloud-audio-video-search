@@ -25,6 +25,9 @@ from tests.conftest import REPO_ROOT
 from tests.subtitle_checkers import SubtitleCheckError, check_ffmpeg, check_srt, check_vtt
 
 DOWNLOADS_ENV = "AVS_DOWNLOADS_DIR"
+# In deploy-harp.yml the PHP app no longer lies under php/: "Install the PHP
+# app" moved it to apps/audio_video_search of the server checkout.
+L10N_ENV = "AVS_L10N_DIR"
 NAME = re.compile(r"^.+\.(de|en|fr)\.(srt|vtt|txt)$")
 FORMATS = ("srt", "vtt", "txt")
 # The source string of T35 (UI-SPEC 04); the catalogues carry its German and French text.
@@ -33,11 +36,17 @@ CATALOGUES = ("de", "fr")
 FORBIDDEN = "BITV"
 
 
+def l10n_dir() -> Path:
+    """The catalogue folder: AVS_L10N_DIR where the job moved the PHP app (deploy-harp.yml), else php/l10n."""
+    value = os.environ.get(L10N_ENV, "").strip()
+    return Path(value) if value else REPO_ROOT / "php" / "l10n"
+
+
 def t35_texts() -> frozenset[str]:
-    """T35 in English, German and French, read from php/l10n like the page reads it."""
+    """T35 in English, German and French, read from the catalogues like the page reads it."""
     texts = {T35_SOURCE}
     for language in CATALOGUES:
-        catalogue = json.loads((REPO_ROOT / "php" / "l10n" / f"{language}.json").read_text(encoding="utf-8"))
+        catalogue = json.loads((l10n_dir() / f"{language}.json").read_text(encoding="utf-8"))
         texts.add(catalogue["translations"][T35_SOURCE])
     return frozenset(texts)
 
@@ -123,6 +132,17 @@ def test_t35_is_read_in_three_languages() -> None:
         "Untertitel-Entwurf, automatisch erstellt und nicht geprüft.",
         "Brouillon de sous-titres, créé automatiquement et non vérifié.",
     }
+
+
+def test_the_catalogues_come_from_avs_l10n_dir_when_it_is_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The job of deploy-harp.yml moved the PHP app away from php/; a folder
+    # with other texts proves the variable is read and not php/l10n.
+    for language in CATALOGUES:
+        catalogue = {"translations": {T35_SOURCE: f"T35 {language}"}}
+        (tmp_path / f"{language}.json").write_text(json.dumps(catalogue), encoding="utf-8")
+    monkeypatch.setenv(L10N_ENV, str(tmp_path))
+
+    assert t35_texts() == {T35_SOURCE, "T35 de", "T35 fr"}
 
 
 def test_an_empty_folder_fails(tmp_path: Path) -> None:

@@ -834,7 +834,7 @@ def phase4_findings(source: str, summary: str, dockerfile: str) -> list[str]:
     downloads = steps.get(DOWNLOADS_STEP, "")
     if "uv run pytest tests/test_downloaded_subtitles.py" not in downloads:
         findings.append("no step runs tests/test_downloaded_subtitles.py")
-    for part in ("AVS_DOWNLOADS_DIR:", "CI: 'true'", "AVS_FFMPEG:"):
+    for part in ("AVS_DOWNLOADS_DIR:", "CI: 'true'", "AVS_FFMPEG:", "AVS_L10N_DIR:"):
         if part not in downloads:
             findings.append(f"the download proof lacks {part.rstrip(':')}")
     if DOWNLOADS_STEP in names and PHASE4_STEP in names and names.index(DOWNLOADS_STEP) < names.index(PHASE4_STEP):
