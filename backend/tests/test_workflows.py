@@ -315,10 +315,15 @@ BEFORE_CONTROL = (
     '"origin" not in',
     "upgrade positive control failed",
 )
-# What the check after the update names, in its own step.
+# What the check after the update names, in its own step: schema step 4 of
+# plan 04-05 with its columns in preview_job and media.
 AFTER_CHECK = (
-    'version == ("3",)',
+    'version == ("4",)',
     "preview_job",
+    "PRAGMA table_info(preview_job)",
+    "PRAGMA table_info(media)",
+    '"words_de", "words_en", "words_fr"',
+    '"language" in media_columns',
     "sample_ref",
     "PRAGMA table_info(oc_avs_queue)",
     '"origin" in',
@@ -401,7 +406,7 @@ def lifecycle_findings(source: str, redeploy: str) -> list[str]:
         findings.append("the upgrade job does not update the ExApp with app_api:app:update --info-xml")
     if "./occ upgrade" not in upgrade:
         findings.append("the upgrade job does not run occ upgrade")
-    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 3"):
+    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 4"):
         if proof not in upgrade:
             findings.append(f"the upgrade job does not compare {proof} before and after")
     if "rm-data" in source or "rm-data" in redeploy:
@@ -541,14 +546,31 @@ def test_the_upgrade_rule_fires_when_the_control_misses_the_new_table_and_column
     after = steps[UPGRADE_AFTER_STEP]
     broken = upgrade.replace(
         before, before.replace("preview_job", "preview_tab").replace('"origin" not in', '"origins" not in')
-    ).replace(after, after.replace('version == ("3",)', 'version == ("2",)').replace('has("byPreview")', 'has("x")'))
+    ).replace(after, after.replace('version == ("4",)', 'version == ("2",)').replace('has("byPreview")', 'has("x")'))
     assert broken != upgrade
 
     assert real_prev_findings(broken) == [
         "the positive control before the update does not check preview_job",
         'the positive control before the update does not check "origin" not in',
-        'the check after the update does not look at version == ("3",)',
+        'the check after the update does not look at version == ("4",)',
         'the check after the update does not look at has("byPreview")',
+    ]
+
+
+def test_the_upgrade_rule_fires_when_the_check_misses_the_columns_of_step_4() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    after = dict(steps_of(upgrade))[UPGRADE_AFTER_STEP]
+    broken = upgrade.replace(
+        after,
+        after.replace("PRAGMA table_info(media)", "PRAGMA table_info(medium)").replace(
+            '"language" in media_columns', '"lang" in media_columns'
+        ),
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the check after the update does not look at PRAGMA table_info(media)",
+        'the check after the update does not look at "language" in media_columns',
     ]
 
 

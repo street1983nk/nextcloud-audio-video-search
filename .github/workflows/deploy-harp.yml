@@ -34,8 +34,8 @@ name: Deploy through HaRP
 # The second job, upgrade, installs both halves at the released 0.2.0 (built
 # out of its commit), seeds them and updates them to the version of this
 # commit (occ upgrade and app_api:app:update); state.db, the test results, the
-# schema step of state.db from 2 to 3 and the column origin of oc_avs_queue
-# have to survive (plan 10, PLAT-01, plans 02-21 and 03-19).
+# schema steps of state.db from 2 to 4 and the column origin of oc_avs_queue
+# have to survive (plan 10, PLAT-01, plans 02-21, 03-19 and 04-05).
 on:
   push:
     branches:
@@ -854,7 +854,7 @@ jobs:
   # in the volume of the container (same inode, so the same file and not a new
   # one), the test results (same file ids found by the same search, same
   # sampleCount, the sample in sample_ref with its transcript), the schema
-  # step to 3 with the table preview_job, the column origin of the PHP
+  # steps to 4 with the table preview_job and the columns of 04-05, the column origin of the PHP
   # migration, and at the end the admin state ok and an answer of occ
   # audio_video_search:status --json with byPreview.
   #
@@ -1231,7 +1231,7 @@ jobs:
           done
           cat status-after.json; echo
           jq -e --arg v "${CURR_VERSION}" --argjson n "${SAMPLE_COUNT}" \
-            '.appVersion == $v and .schemaVersion == 3 and .sampleCount == $n and .companion == "ok"' status-after.json
+            '.appVersion == $v and .schemaVersion == 4 and .sampleCount == $n and .companion == "ok"' status-after.json
           volume="nc_app_${BACKEND_APP_ID}_data"
           created=$(docker volume inspect --format '{{.CreatedAt}}' "${volume}")
           inode=$(docker exec "${EXAPP_CONTAINER}" sh -c 'stat -c %i "${APP_PERSISTENT_STORAGE}/state.db"')
@@ -1271,8 +1271,9 @@ jobs:
           fi
           jq -e -s 'any(.[]; .msg == "models ready")' procure-lines.json
 
-      # The schema steps themselves (plans 02-21 and 03-19): state.db at 3 in
-      # the same file with the table preview_job, the sample of 0.2.0 still in
+      # The schema steps themselves (plans 02-21, 03-19 and 04-05): state.db at
+      # 4 in the same file with the table preview_job and the columns of step
+      # 4 (words_de/en/fr in preview_job, language in media), the sample of 0.2.0 still in
       # sample_ref with its transcript (current), no row of file_ref left with
       # state sample or a storage_id that is not a number, the tables of the
       # PHP migrations in place with the column origin in oc_avs_queue, and
@@ -1290,8 +1291,11 @@ jobs:
               " WHERE s.file_id = ?", (file_id,)).fetchone()
           left = db.execute(
               "SELECT COUNT(*) FROM file_ref WHERE state = 'sample' OR typeof(storage_id) <> 'integer'").fetchone()
-          print(f"schema_version {version}, preview_job {'preview_job' in tables}, sample_ref with transcript {sample}, old rows left {left}")
-          sys.exit(0 if version == ("3",) and "preview_job" in tables and sample is not None and left == (0,) else 1)
+          preview_columns = {row[1] for row in db.execute("PRAGMA table_info(preview_job)")}
+          media_columns = {row[1] for row in db.execute("PRAGMA table_info(media)")}
+          step4 = {"words_de", "words_en", "words_fr"} <= preview_columns and "language" in media_columns
+          print(f"schema_version {version}, preview_job {'preview_job' in tables}, columns of step 4 {step4}, sample_ref with transcript {sample}, old rows left {left}")
+          sys.exit(0 if version == ("4",) and "preview_job" in tables and step4 and sample is not None and left == (0,) else 1)
           PY
           python3 - data/owncloud.db <<'PY'
           import sqlite3, sys
