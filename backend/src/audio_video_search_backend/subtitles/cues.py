@@ -85,7 +85,8 @@ def build_cues(words: Sequence[Word]) -> list[Cue]:
     """Cues from word times under the EXP-02 limits; the text is never changed.
 
     The input is sorted by ``(start_ms, end_ms)`` first; a word whose end lies
-    before its start keeps its text and gets ``end = start`` for the timing.
+    before its start keeps its text and gets ``end = start`` for the timing,
+    and a negative start becomes 0 (SRT and VTT carry no negative time).
     """
     tokens = _tokens(words)
     if not tokens:
@@ -114,7 +115,7 @@ def count_overruns(cues: Sequence[Cue]) -> Overruns:
 def _tokens(words: Sequence[Word]) -> list[_Token]:
     out: list[_Token] = []
     for word in sorted(words, key=lambda w: (w.start_ms, w.end_ms)):
-        start = int(word.start_ms)
+        start = max(int(word.start_ms), 0)
         end = max(int(word.end_ms), start)
         out.extend(_Token(start, end, part) for part in _CONTROL.sub(" ", word.surface).split(" ") if part)
     return out

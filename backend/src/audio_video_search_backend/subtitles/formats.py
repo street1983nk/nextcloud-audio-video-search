@@ -23,21 +23,65 @@ from collections.abc import Sequence
 from typing import Final
 
 from audio_video_search_backend.model.overlay import Word
-from audio_video_search_backend.subtitles.cues import Cue
+
+# The private control-run pattern is shared on purpose: T-04-20 has exactly
+# one definition, so TXT cleans a surface precisely like the cue builder.
+from audio_video_search_backend.subtitles.cues import _CONTROL, Cue
 
 TXT_PARAGRAPH_PAUSE_MS: Final = 2000
+
+# "&" first, or the mask would escape its own ampersands (T-04-21).
+_VTT_MASK: Final = (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"))
+
+
+def _clock(ms: int, sep: str) -> str:
+    """``HH:MM:SS<sep>mmm``, hours two digits, three above 99 h."""
+    hours, rest = divmod(ms, 3_600_000)
+    minutes, rest = divmod(rest, 60_000)
+    seconds, milli = divmod(rest, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}{sep}{milli:03d}"
+
+
+def _escape_vtt(text: str) -> str:
+    """The cue text with ``&`` ``<`` ``>`` masked, nothing else touched."""
+    for raw, masked in _VTT_MASK:
+        text = text.replace(raw, masked)
+    return text
 
 
 def to_srt(cues: Sequence[Cue]) -> str:
     """The cues as one SRT text; an empty list yields an empty string."""
-    raise NotImplementedError
+    blocks = (
+        f"{number}\n{_clock(cue.start_ms, ',')} --> {_clock(cue.end_ms, ',')}\n" + "\n".join(cue.lines)
+        for number, cue in enumerate(cues, start=1)
+    )
+    body = "\n\n".join(blocks)
+    return body + "\n" if body else ""
 
 
 def to_vtt(cues: Sequence[Cue]) -> str:
     """The cues as one WebVTT text; an empty list yields only the header."""
-    raise NotImplementedError
+    blocks = (
+        f"{_clock(cue.start_ms, '.')} --> {_clock(cue.end_ms, '.')}\n"
+        + "\n".join(_escape_vtt(line) for line in cue.lines)
+        for cue in cues
+    )
+    body = "\n\n".join(blocks)
+    return "WEBVTT\n\n" + (body + "\n" if body else "")
 
 
 def to_txt(words: Sequence[Word]) -> str:
     """The words as flow text with paragraphs at long pauses; no time marks."""
-    raise NotImplementedError
+    parts: list[str] = []
+    previous_end: int | None = None
+    for word in sorted(words, key=lambda w: (w.start_ms, w.end_ms)):
+        start = int(word.start_ms)
+        end = max(int(word.end_ms), start)
+        text = " ".join(part for part in _CONTROL.sub(" ", word.surface).split(" ") if part)
+        if not text:
+            continue
+        if previous_end is not None:
+            parts.append("\n\n" if start - previous_end > TXT_PARAGRAPH_PAUSE_MS else " ")
+        parts.append(text)
+        previous_end = end
+    return "".join(parts) + "\n" if parts else ""

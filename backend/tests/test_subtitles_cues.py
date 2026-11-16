@@ -203,6 +203,7 @@ def test_fuzz_times_are_monotone_and_bounded() -> None:
     for words in _FUZZ:
         cues = build_cues(words)
         for cue in cues:
+            assert cue.start_ms >= 0, "SRT und VTT kennen keine negative Zeit (Fix 04-08)"
             assert cue.start_ms < cue.end_ms
             assert cue.end_ms - cue.start_ms <= MAX_MS
         for left, right in itertools.pairwise(cues):
