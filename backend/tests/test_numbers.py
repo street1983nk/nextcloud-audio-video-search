@@ -99,6 +99,47 @@ RECOGNIZED = [
     (["12ème"], 12, True),
     (["1er"], 1, True),
     (["1re"], 1, True),
+    # Round hundreds (plan 04-06, D-04-11)
+    (["zweihundert"], 200, False),
+    (["two", "hundred"], 200, False),
+    (["deux", "cents"], 200, False),
+    (["deux", "cent"], 200, False),
+    (["neunhundert"], 900, False),
+    # Thousands and grouped ten thousands
+    (["tausend"], 1000, False),
+    (["eintausend"], 1000, False),
+    (["one", "thousand"], 1000, False),
+    (["mille"], 1000, False),
+    (["dreitausend"], 3000, False),
+    (["three", "thousand"], 3000, False),
+    (["trois", "mille"], 3000, False),
+    (["zehntausend"], 10000, False),
+    (["dreißigtausend"], 30000, False),
+    (["thirty", "thousand"], 30000, False),
+    (["trente", "mille"], 30000, False),
+    (["hunderttausend"], 100000, False),
+    (["cent", "mille"], 100000, False),
+    # Years 1100 to 2099
+    (["neunzehnhundertneunzig"], 1990, False),
+    (["neunzehnhundert"], 1900, False),
+    (["nineteen", "ninety"], 1990, False),
+    (["nineteen", "oh", "five"], 1905, False),
+    (["mille", "neuf", "cent", "quatre-vingt-dix"], 1990, False),
+    (["dix-neuf", "cent", "quatre-vingt-dix"], 1990, False),
+    (["zweitausendvierundzwanzig"], 2024, False),
+    (["zwanzigvierundzwanzig"], 2024, False),
+    (["twenty", "twenty", "four"], 2024, False),
+    (["two", "thousand", "twenty", "four"], 2024, False),
+    (["deux", "mille", "vingt-quatre"], 2024, False),
+    # Digits of the new range, with and without thousands grouping
+    (["200"], 200, False),
+    (["3000"], 3000, False),
+    (["30000"], 30000, False),
+    (["30", "000"], 30000, False),
+    (["1", "000"], 1000, False),
+    (["100", "000"], 100000, False),
+    (["1990"], 1990, False),
+    (["2024"], 2024, False),
 ]
 
 
@@ -133,6 +174,16 @@ REQUIRED_VARIANTS = [
     (100, False, {"100", "hundert", "cent"}),
     (2, True, {"2", "zwei", "two", "deux", "zweiten", "second", "deuxième", "2nd"}),
     (3, True, {"3", "drei", "three", "trois", "dritten", "third", "troisième", "3rd"}),
+    # Plan 04-06 (D-04-11): round hundreds, thousands, grouping, years.
+    (200, False, {"200", "zweihundert", '"two hundred"', '"deux cents"'}),
+    (3000, False, {"3000", '"3 000"', "dreitausend", '"three thousand"', '"trois mille"'}),
+    (30000, False, {"30000", '"30 000"', "dreißigtausend", '"thirty thousand"', '"trente mille"'}),
+    (100000, False, {"100000", '"100 000"', "hunderttausend", '"one hundred thousand"', '"cent mille"'}),
+    (1990, False, {"1990", "neunzehnhundertneunzig", '"nineteen ninety"', '"mille neuf cent quatre vingt dix"'}),
+    (1990, False, {'"dix neuf cent quatre vingt dix"'}),
+    (1905, False, {"1905", "neunzehnhundertfünf", '"nineteen oh five"'}),
+    (2024, False, {"2024", "zweitausendvierundzwanzig", "zwanzigvierundzwanzig", '"twenty twenty four"'}),
+    (2024, False, {'"two thousand twenty four"', '"deux mille vingt quatre"'}),
 ]
 
 
@@ -154,8 +205,16 @@ def test_one_never_widens_to_an_article(ordinal: bool) -> None:
 
 
 def test_the_variants_stay_bounded_for_every_value() -> None:
-    # T-04-01: the variant count per number is fixed by the tables.
-    for value in range(101):
+    # T-04-01: the variant count per number is fixed by the tables; since plan
+    # 04-06 the bound also holds for hundreds, thousands and every year.
+    values = [
+        *range(101),
+        *range(200, 1000, 100),
+        *range(1000, 10000, 1000),
+        *range(10000, 100001, 10000),
+        *range(1100, 2100),
+    ]
+    for value in values:
         for ordinal in (False, True):
             forms = numbers.variants(value, ordinal)
             assert 0 < len(forms) <= 24
@@ -171,6 +230,30 @@ def test_words_that_are_no_number_stay_unrecognized(words: list[str]) -> None:
     assert numbers.recognize(words) == []
 
 
+@pytest.mark.parametrize(
+    "words",
+    [["234"], ["2345"], ["150"], ["12500"], ["123456"], ["neunhundertneunzig"], ["twelve", "thousand"]],
+    ids=["234", "2345", "150", "12500", "123456", "neunhundertneunzig", "twelve thousand"],
+)
+def test_no_full_parser_numbers_outside_the_patterns_stay_digits_only(words: list[str]) -> None:
+    # D-04-11: no full number parser. A digit outside the round values and the
+    # year window, and a number word outside the tables, is no number span; the
+    # search keeps it as a plain word.
+    assert numbers.recognize(words) == []
+
+
+def test_the_year_window_is_a_named_constant() -> None:
+    assert numbers.YEAR_RANGE == (1100, 2099)
+
+
+def test_1234_lies_inside_the_year_window_and_is_equated() -> None:
+    # The plan names 1234 as digits-only, but 1234 lies inside YEAR_RANGE and
+    # the must-have equates every year from 1100 to 2099 (D-04-11); the
+    # digits-only rule holds outside the window (test above, 2345).
+    assert numbers.recognize(["1234"]) == [numbers.NumberSpan(start=0, stop=1, value=1234, ordinal=False)]
+    assert "zwölfhundertvierunddreißig" in numbers.variants(1234, ordinal=False)
+
+
 def test_spans_inside_a_longer_query_are_greedy_and_positioned() -> None:
     words = ["am", "zwölften", "März", "um", "vingt", "et", "un", "Uhr", "12"]
 
@@ -181,9 +264,13 @@ def test_spans_inside_a_longer_query_are_greedy_and_positioned() -> None:
     ]
 
 
-def test_a_span_never_reaches_beyond_five_words() -> None:
-    assert numbers.MAX_SPAN_WORDS == 5
-    # "quatre vingt dix neuf" is four words and still one number.
+def test_a_span_never_reaches_beyond_seven_words() -> None:
+    # Plan 04-01 needed five ("soixante et onze"); the years of plan 04-06 need
+    # seven ("mille neuf cent quatre-vingt-dix-neuf" folds to seven words).
+    assert numbers.MAX_SPAN_WORDS == 7
     assert numbers.recognize(["quatre", "vingt", "dix", "neuf", "chaises"]) == [
         numbers.NumberSpan(start=0, stop=4, value=99, ordinal=False)
+    ]
+    assert numbers.recognize(["mille", "neuf", "cent", "quatre", "vingt", "dix", "neuf", "chaises"]) == [
+        numbers.NumberSpan(start=0, stop=7, value=1999, ordinal=False)
     ]

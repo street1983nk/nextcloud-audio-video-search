@@ -27,6 +27,11 @@ SEGMENTS = {
     11: "Der Markt ist heute voll",
     12: "the twelfth of March",
     13: "le 12e jour",
+    # Plan 04-06 (D-04-11): grouped thousands and years.
+    14: "30.000 gepflegte Hirsche",
+    15: "im Jahr neunzehnhundertvierzig",
+    16: "it happened in nineteen sixty three",
+    17: "vingt-deux chaises",
 }
 
 TWELVE = {1, 2, 3, 4, 5, 6, 8, 12, 13}
@@ -78,13 +83,14 @@ def test_a_stop_word_drops_out_instead_of_emptying_the_query(search_index: Searc
     assert _ids(search_index, "ein 12") == TWELVE
 
 
-@pytest.mark.parametrize(("term", "expected"), [("März", [5, 6]), ("jour", [13])])
+@pytest.mark.parametrize(("term", "expected"), [("März", {5, 6}), ("jour", {13})])
 def test_a_short_term_without_a_number_keeps_hits_order_and_scores(
-    search_index: SearchIndex, term: str, expected: list[int]
+    search_index: SearchIndex, term: str, expected: set[int]
 ) -> None:
     # Since plan 04-06 only a term made of words below PREFIX_MIN_CHARS keeps
     # the legacy way of phases 1 to 3 byte for byte (D-04-14). The reference is
-    # tantivy itself, not a second call of the new code.
+    # tantivy itself, not a second call of the new code; it pins order and
+    # scores, the set only names the documents (a tie may order either way).
     reference_query = search_index._index.parse_query(term, list(BODY_FIELDS), conjunction_by_default=True)
     searcher = search_index._index.searcher()
     reference = [
@@ -94,7 +100,7 @@ def test_a_short_term_without_a_number_keeps_hits_order_and_scores(
 
     hits = search_index.search(term, 50)
 
-    assert [hit.media_id for hit in hits] == expected
+    assert {hit.media_id for hit in hits} == expected
     assert [(hit.media_id, hit.score) for hit in hits] == reference
 
 
@@ -106,6 +112,26 @@ def test_a_longer_term_takes_the_prefix_way_and_keeps_its_hits(
     # 04-06 (D-04-14): the hits and their order from phase 3 stay, only the
     # scores shift by the constant share of the regex clause.
     assert [hit.media_id for hit in search_index.search(term, 50)] == expected
+
+
+@pytest.mark.parametrize("term", ["dreißigtausend Hirsche", "30000", "30.000", "30 000", "thirty thousand"])
+def test_grouped_thousands_meet_the_word_and_every_digit_spelling(search_index: SearchIndex, term: str) -> None:
+    # "30.000", "30,000" and "30 000" tokenize as 30|000, and the phrase
+    # variant "30 000" covers them all; "dreißigtausend" is the same number.
+    assert _ids(search_index, term) == {14}
+
+
+def test_a_year_is_found_in_any_spelling(search_index: SearchIndex) -> None:
+    assert _ids(search_index, "1940") == {15}
+    assert _ids(search_index, "neunzehnhundertvierzig") == {15}
+    assert _ids(search_index, "1963") == {16}
+    assert _ids(search_index, "nineteen sixty three") == {16}
+
+
+def test_known_limit_vingt_et_un_meets_every_vingt(search_index: SearchIndex) -> None:
+    # The stop words et and un leave only "vingt" in the phrase, so 21 also
+    # meets "vingt-deux" (04-RESEARCH limit 2, accepted catch).
+    assert 17 in _ids(search_index, "vingt et un")
 
 
 def _words(text: str, start_ms: int = 0) -> list[Word]:
