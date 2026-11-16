@@ -168,8 +168,9 @@ def _dump(path: Path) -> list[str]:
         return list(conn.iterdump())
 
 
-def test_the_schema_version_is_three() -> None:
-    assert SCHEMA_VERSION == 3
+def test_the_schema_version_is_current() -> None:
+    # The one fixed place: every other test compares against SCHEMA_VERSION.
+    assert SCHEMA_VERSION == 4
 
 
 def test_a_v1_file_is_lifted_past_v2_without_loss(tmp_path: Path) -> None:
@@ -179,7 +180,7 @@ def test_a_v1_file_is_lifted_past_v2_without_loss(tmp_path: Path) -> None:
 
     store = Store.open(path)
     try:
-        assert store.schema_version() == 3
+        assert store.schema_version() == SCHEMA_VERSION
         sample_ref = store.file_ref(42)
         sample_media = store.sample_media(42)
         other = store.file_ref(43)
@@ -197,15 +198,15 @@ def test_a_v1_file_is_lifted_past_v2_without_loss(tmp_path: Path) -> None:
         assert conn.execute("SELECT COUNT(*) FROM file_ref").fetchone()[0] == 0
     for table in KEPT:
         assert _rows(path, table) == before[table], table
-    assert _rows(path, "media") == [(5, 0, 100, None, None)]
-    assert _columns(path, "media")[-2:] == ["head_sha256", "orphaned_at"]
+    assert _rows(path, "media") == [(5, 0, 100, None, None, None)]
+    assert _columns(path, "media")[-3:] == ["head_sha256", "orphaned_at", "language"]
     with closing(sqlite3.connect(path)) as conn:
         storage_type = {row[1]: row[2] for row in conn.execute("PRAGMA table_info(file_ref)")}["storage_id"]
         indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
     assert storage_type == "INTEGER"
     assert {"file_ref_media", "file_ref_storage", "file_ref_prefilter", "file_ref_stage"} <= indexes
-    assert meta == {"schema_version": "3", "index_generation": "3", "index_schema_version": "1"}
+    assert meta == {"schema_version": str(SCHEMA_VERSION), "index_generation": "3", "index_schema_version": "1"}
 
 
 def test_the_sample_still_finds_its_file_after_the_migration(tmp_path: Path) -> None:
@@ -250,10 +251,10 @@ def test_a_newer_schema_is_refused_with_a_clear_message(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     _make_v1(path)
     with closing(sqlite3.connect(path)) as conn, conn:
-        conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+        conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
     before = _dump(path)
 
-    with pytest.raises(RuntimeError, match="unsupported store schema version 4"):
+    with pytest.raises(RuntimeError, match="unsupported store schema version 5"):
         Store.open(path)
 
     assert _dump(path) == before
@@ -275,7 +276,7 @@ def test_a_fresh_file_has_the_v2_columns_at_once(tmp_path: Path) -> None:
     Store.open(path).close()
 
     assert "proved_at" in _columns(path, "file_ref")
-    assert _columns(path, "media")[-2:] == ["head_sha256", "orphaned_at"]
+    assert _columns(path, "media")[-3:] == ["head_sha256", "orphaned_at", "language"]
 
 
 def test_a_fresh_file_and_a_migrated_file_have_the_same_schema(tmp_path: Path) -> None:

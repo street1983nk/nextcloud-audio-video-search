@@ -219,15 +219,12 @@ def _statement(name: str, keyword: str) -> str:
     return match.group(0)
 
 
-def test_the_schema_version_is_three() -> None:
-    assert SCHEMA_VERSION == 3
-
-
 def test_a_fresh_file_has_the_preview_job_table_and_its_order(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     Store.open(path).close()
 
-    assert _columns(path, "preview_job") == PREVIEW_COLUMNS
+    # Schema v4 appends the language counters behind the v3 columns.
+    assert _columns(path, "preview_job") == [*PREVIEW_COLUMNS, "words_de", "words_en", "words_fr"]
     assert _columns(path, "file_ref")[-1] == "origin"
     with closing(sqlite3.connect(path)) as conn:
         order = conn.execute(
@@ -235,11 +232,14 @@ def test_a_fresh_file_has_the_preview_job_table_and_its_order(tmp_path: Path) ->
         ).fetchone()
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
     assert order == ("preview_job",)
-    assert meta["schema_version"] == "3"
+    assert meta["schema_version"] == str(SCHEMA_VERSION)
 
 
 def test_the_migration_constants_are_the_statements_of_schema_sql() -> None:
-    assert _normalized(migrate.PREVIEW_JOB_V3) == _normalized(_statement("preview_job", "TABLE"))
+    # Schema v4 appends the word counters behind updated_at; up to there the
+    # v3 constant and schema.sql stay identical.
+    v3_prefix = _normalized(migrate.PREVIEW_JOB_V3).rstrip(")")
+    assert _normalized(_statement("preview_job", "TABLE")).startswith(v3_prefix)
     assert _normalized(migrate.PREVIEW_JOB_ORDER_V3) == _normalized(_statement("preview_job_order", "INDEX"))
     assert _normalized(migrate.FILE_REF_ORIGIN_V3) in _normalized(_statement("file_ref", "TABLE"))
 
@@ -250,7 +250,7 @@ def test_a_v2_file_is_lifted_to_v3_and_seeds_one_job_per_active_content(tmp_path
 
     store = Store.open(path)
     try:
-        assert store.schema_version() == 3
+        assert store.schema_version() == SCHEMA_VERSION
     finally:
         store.close()
 
@@ -266,7 +266,7 @@ def test_a_v2_file_is_lifted_to_v3_and_seeds_one_job_per_active_content(tmp_path
         updated = conn.execute("SELECT updated_at FROM preview_job").fetchone()[0]
     assert origins == [("crawl",)]
     assert refs == 6
-    assert meta == {"schema_version": "3", "index_generation": "4", "index_schema_version": "1"}
+    assert meta == {"schema_version": str(SCHEMA_VERSION), "index_generation": "4", "index_schema_version": "1"}
     assert updated > 0
 
 
@@ -277,9 +277,10 @@ def test_the_migration_logs_counts_only(tmp_path: Path, caplog: pytest.LogCaptur
     with caplog.at_level(logging.INFO, logger=migrate.__name__):
         Store.open(path).close()
 
+    # A v2 file runs on to v4 in the same open, so two migrations log.
     done = [record for record in caplog.records if record.getMessage() == "store migrated"]
-    assert len(done) == 1
-    assert (done[0].__dict__["from"], done[0].__dict__["to"], done[0].__dict__["preview_jobs"]) == (2, 3, 1)
+    assert [(record.__dict__["from"], record.__dict__["to"]) for record in done] == [(2, 3), (3, 4)]
+    assert done[0].__dict__["preview_jobs"] == 1
 
 
 def test_a_fresh_file_and_a_migrated_v2_file_have_the_same_schema(tmp_path: Path) -> None:
@@ -396,10 +397,10 @@ def test_a_newer_schema_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     _make_v2(path)
     with closing(sqlite3.connect(path)) as conn, conn:
-        conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+        conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
     before = _dump(path)
 
-    with pytest.raises(RuntimeError, match="unsupported store schema version 4"):
+    with pytest.raises(RuntimeError, match="unsupported store schema version 5"):
         Store.open(path)
 
     assert _dump(path) == before

@@ -9,7 +9,7 @@ import pytest
 
 from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import SAMPLE_MODEL_SHA256, Level, Provenance
-from audio_video_search_backend.store.repo import STATE_REASONS, Store
+from audio_video_search_backend.store.repo import SCHEMA_VERSION, STATE_REASONS, Store
 
 TABLES = {
     "meta",
@@ -92,10 +92,10 @@ def _count(path: Path, table: str, media_id: int) -> int:
 
 
 def test_fresh_database_has_meta_marks(store: Store, tmp_path: Path) -> None:
-    assert store.schema_version() == 3
+    assert store.schema_version() == SCHEMA_VERSION
     with _raw(tmp_path / "state.db") as conn:
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    assert meta["schema_version"] == "3"
+    assert meta["schema_version"] == str(SCHEMA_VERSION)
     assert "index_generation" in meta
 
 
@@ -135,7 +135,7 @@ def test_open_twice_is_idempotent(tmp_path: Path) -> None:
     first.close()
     second = Store.open(tmp_path / "state.db")
     try:
-        assert second.schema_version() == 3
+        assert second.schema_version() == SCHEMA_VERSION
         assert second.media_for_file_sha256(SHA_A) == media_id
     finally:
         second.close()
@@ -151,7 +151,7 @@ def test_read_only_store_refuses_writes(store: Store, tmp_path: Path) -> None:
     del store
     reader = Store.open(tmp_path / "state.db", read_only=True)
     try:
-        assert reader.schema_version() == 3
+        assert reader.schema_version() == SCHEMA_VERSION
         with pytest.raises(sqlite3.OperationalError):
             reader.media_for_file_sha256(SHA_A)
     finally:

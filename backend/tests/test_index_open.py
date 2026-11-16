@@ -26,6 +26,7 @@ from audio_video_search_backend.index.publish import SearchIndex, Segment
 from audio_video_search_backend.index.schema import FIELD_BODY_DE, FIELD_BODY_EN, FIELD_BODY_FR, SCHEMA_VERSION
 from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import SAMPLE_MODEL_SHA256, Level, Provenance
+from audio_video_search_backend.store.repo import SCHEMA_VERSION as STORE_SCHEMA_VERSION
 from audio_video_search_backend.store.repo import Store
 from tests.conftest import BACKEND_ROOT
 
@@ -209,5 +210,5 @@ def test_set_meta_refuses_the_stores_own_marks_and_odd_keys(store: Store, key: s
     with pytest.raises(ValueError, match="key"):
         store.set_meta(key, "1")
 
-    assert store.schema_version() == 3
+    assert store.schema_version() == STORE_SCHEMA_VERSION
     assert store.index_generation() == 0
