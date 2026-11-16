@@ -368,7 +368,7 @@ Grundmatrix "6": Breiten 375, 768, 1280 px, je hell und dunkel. Sprache DE; FR z
 | E2 | zweiter Klick: Kollision | 6 + FR 375 + Hochkontrast | T22a/T22b mit Name; vorhandene Datei byte-gleich (sha256 vor/nach); Fokus auf dem Banner |
 | E3 bis E7 | Fehlerfälle provoziert (Recht nach Seitenaufbau entzogen, Sperre nach Seitenaufbau gesetzt, überlanger Name, Rate-Limit, Container gestoppt) | je 1280 hell | richtiger Text, kein roher Statuscode, keine JSON-Ausgabe |
 | T1 | Spur im Player (Video, Chromium und Firefox) | 1280 hell | Spurmenü zeigt T31 ("Deutsch, Untertitel-Entwurf"), Spur standardmäßig aus, nach Einschalten erscheint Text zur richtigen Zeit (Toleranz 100 ms) |
-| S6 | Unified Search mit Datumsfilter und mit Personenfilter (SRCH-06) | 1280 hell + dunkel | Gruppe "Audio & Video Search" im Hauptteil, nicht unter "Partial matches"; Trefferbild gleich S1 aus Phase 3 |
+| S6 | Unified Search mit Datumsfilter und mit Personenfilter (SRCH-06) | 1280 hell + dunkel | Gruppe mit dem Providernamen des Produkts ("Audio and video", deutsch "Audio und Video", französisch "Audio et vidéo"; Owner 16.11.2026) im Hauptteil, nicht unter "Partial matches"; Trefferbild gleich S1 aus Phase 3 |
 | S7 | Suche "zwölf"/"12"/"twelve"/"douze", "Häuser", "Haushalt", "12:30" | 1280 hell | Treffer laut Erfolgskriterium 1; "12:30" ohne Fehler |
 
 **Kontrast-Gate** (axe-core plus berechneter Kontrast im Playwright-Lauf, hell, dunkel, Hochkontrast):
