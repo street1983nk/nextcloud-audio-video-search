@@ -17,3 +17,7 @@
 ## Aus Plan 04-14 (16.11.2026)
 
 - Wortform-Lücke, gemessen bei der S7-Vorabmessung (Wegwerf-Index mit echter ngerman-Liste, `scripts/research/phase4/measure_s7_sentences.py`): "Fischart" findet ein Transkript mit "Fischarten" nicht, "Fischarten" und der Kopf "Fisch" schon. Vermutlich zerlegt der Splitter "fischarten" anders als "fischart" (fisch|arten gegen fisch|art) oder der Stamm der Zerlegungsteile weicht ab. Nicht von 04-14 verursacht (Analyzer und Präfix-Klausel unverändert); der Kandidat wurde deshalb nicht gewählt. Vor Phase-Abschluss bewerten: als bekannte Grenze benennen oder im Analyzer (Stemming der Zerlegungsteile) nachziehen, mit Messung.
+
+## Aus Plan 04-16 (16.11.2026)
+
+- **Backlog (Owner-Entscheid 16.11.2026, nicht in Phase 4):** Trefferzeilen der Unified Search (S6/S7, Trefferbild aus Phase 3) schneiden den Ausschnitt so ab, dass das gesuchte Wort meist nicht sichtbar ist (Beispiel S7 "Seitenverhältnis": "Das Seitenverhältnis ... geteilt durc..."). Belegt in allen 16 S7-Bildern und den vier S6-Bildern des Laufs 43942105866. Lösung später: Ausschnitt um den ersten Treffer zentrieren (Fenster um die Trefferposition statt Satzanfang), mit Test, dass das Suchwort in der Zeile steht; Phase 3 bzw. eine spätere Phase entscheidet.

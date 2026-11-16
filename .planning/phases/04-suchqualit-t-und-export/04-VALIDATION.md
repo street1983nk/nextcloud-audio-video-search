@@ -76,6 +76,7 @@ created: 2026-11-16
 | 04-15-02 | 15 | 7 | alle | T-04-55, T-04-56 | main/ghcr unverändert, ein Beobachter | CI | `gh run list --branch phase-04 --commit "$SHA" ...` (siehe Plan) | ✅ | ⬜ pending |
 | 04-16-01 | 16 | 8 | EXP-01, EXP-03, EXP-04, SRCH-04, SRCH-06 | T-04-57 | Lücken markiert | gate | `cd backend && uv run pytest tests/test_trilingual.py tests/test_public_texts.py tests/test_ui_assets.py -x -q` | ✅ | ⬜ pending |
 | 04-16-02 | 16 | 8 | wie oben | T-04-57, T-04-58 | Owner-Abnahme | checkpoint | `cd backend && uv run pytest tests/test_trilingual.py tests/test_ui_assets.py -x -q` | ✅ | ⬜ pending |
+| 04-16-03 | 16 | 8 | SRCH-04 | keine (Bedien-Hürde, Owner 16.11.2026) | X3: Medium mit `controlslist="nodownload"` fail-closed bei jedem Urteil außer erlaubt, X1 ohne | unit (CI) + gate + e2e | `cd backend && uv run pytest tests/test_ui_assets.py -k no_download -x -q` + PlayControllerTest (CI) + X1/X3 in `export.spec.ts` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
