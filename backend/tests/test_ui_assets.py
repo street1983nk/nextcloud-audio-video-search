@@ -29,7 +29,7 @@ SCRIPTS = PHP_ROOT / "js"
 STYLES = PHP_ROOT / "css"
 
 ALLOWED_SERVER_CLASSES = frozenset(
-    {"section", "settings-hint", "checkbox", "primary", "icon-loading-small", "hidden-visually"}
+    {"section", "settings-hint", "checkbox", "primary", "icon-loading-small", "hidden-visually", "button"}
 )
 CLASS_PREFIX = "avs-"
 
@@ -181,13 +181,89 @@ def test_the_playback_page_keeps_its_contract() -> None:
     assert "playsinline" in template
     assert 'id="avs-play-state"' in template
     assert 'id="avs-jump"' in template
-    assert template.count('role="alert" tabindex="-1"') == 1
+    # One loop renders the banners of the page, one the error banners of the
+    # sidecar (04-UI-SPEC E2 to E7).
+    assert template.count('role="alert" tabindex="-1"') == 2
     assert "loadedmetadata" in script
     assert script.count("method: 'HEAD'") == 1
     assert "credentials: 'same-origin'" in script
     assert ".play(" not in script
     assert "max-height: 70vh" in style
     assert "pointer: coarse" in style
+
+
+EXPORT_SECTION = re.compile(r'<section class="avs-export".*?</section>', re.DOTALL)
+EXPORT_LINK = re.compile(r'<a class="button avs-export__download"[^>]*>')
+TRACK_ELEMENT = re.compile(r"<track\b[^>]*>")
+SIDECAR_BANNERS = tuple(f"avs-sidecar-e{number}" for number in range(1, 8))
+PRIMARY_ACCENT = "--color-primary"
+
+
+def export_rules(style: str) -> list[tuple[str, str]]:
+    """Every rule of style whose selector names an avs-export class, as (selector, body), comments removed."""
+    blocks = re.findall(r"([^{}]+)\{([^{}]*)\}", re.sub(r"/\*.*?\*/", "", style, flags=re.DOTALL))
+    return [(head.strip(), body) for head, body in blocks if "avs-export" in head]
+
+
+def test_the_export_section_follows_the_ui_spec() -> None:
+    template = (TEMPLATES / "play.php").read_text(encoding="utf-8")
+    style = (STYLES / "play.css").read_text(encoding="utf-8")
+    sections = EXPORT_SECTION.findall(template)
+    assert len(sections) == 1
+    section = sections[0]
+
+    # The section comes after the excerpt block, the formats in their fixed
+    # order SRT, VTT, TXT, as real links without a download attribute.
+    assert template.index('<section class="avs-excerpt"') < template.index('<section class="avs-export"')
+    order = [template.index(f"$l->t('Download {name}')") for name in ("SRT", "VTT", "TXT")]
+    assert order == sorted(order)
+    links = EXPORT_LINK.findall(section)
+    assert len(links) == 1, "one link in the loop over the three formats"
+    assert all(" download" not in link for link in links)
+    assert 'role="group" aria-labelledby="avs-export-title"' in section
+    assert 'id="avs-export-title"' in section
+
+    # The draft track: a subtitle track without default, inside the medium.
+    tracks = TRACK_ELEMENT.findall(template)
+    assert len(tracks) == 1
+    assert 'kind="subtitles"' in tracks[0]
+    assert "default" not in tracks[0]
+    assert template.index("<track") > template.index('id="avs-media"')
+
+    # X3: the blocked hint is a branch of its own before any link or button.
+    blocked = section.index("$exportState === 'blocked'")
+    assert blocked < section.index("avs-export__download")
+    assert blocked < section.index('id="avs-sidecar"')
+
+    # The sidecar button is hidden until play.js runs, with seven result banners.
+    assert re.search(r'<button type="button" id="avs-sidecar" class="avs-export__save" [^\n]*? hidden>', section)
+    # E1 stands in the section, E2 to E7 are the keys of the list its loop renders.
+    for banner in SIDECAR_BANNERS:
+        assert template.count(banner) == 1, banner
+    assert 'id="avs-sidecar-e1"' in section
+    assert "foreach ($sidecarErrors as $id => $error)" in section
+    assert section.count('role="status"') == 1
+
+    # The new rules carry the prefix and never the accent colour.
+    rules = export_rules(style)
+    assert len(rules) >= 7
+    for head, body in rules:
+        for selector in head.split(","):
+            classes = re.findall(r"\.([\w-]+)", selector)
+            assert all(name.startswith("avs-") for name in classes), selector
+        assert PRIMARY_ACCENT not in body, head
+    coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", style, re.DOTALL)
+    assert coarse is not None
+    assert ".avs-export__download" in coarse.group(1)
+    assert ".avs-export__save" in coarse.group(1)
+
+
+def test_self_export_rules_find_the_accent() -> None:
+    style = ".avs-export__download {\n\tcolor: var(--color-primary-element);\n}\n.other { color: x; }\n"
+    rules = export_rules(style)
+    assert rules == [(".avs-export__download", "\n\tcolor: var(--color-primary-element);\n")]
+    assert PRIMARY_ACCENT in rules[0][1]
+    assert TRACK_ELEMENT.findall('<track kind="subtitles" default>') == ['<track kind="subtitles" default>']
 
 
 EXCERPT_NOTE_RULE = (

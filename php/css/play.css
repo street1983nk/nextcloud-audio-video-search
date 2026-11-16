@@ -235,12 +235,73 @@
 	overflow-wrap: anywhere;
 }
 
+/* -- export section (04-UI-SPEC) -------------------------------------------------- */
+
+/* No surface of its own: the section lies on the page ground, below the grey
+   excerpt block. The buttons take shape, colour, hover and focus ring from
+   the server (a.button has the button shape in NC 33, 34 and 35), never the
+   accent. */
+.avs-export {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.avs-export__title {
+	margin: 0;
+	font-size: var(--default-font-size);
+	font-weight: 700;
+	line-height: var(--default-line-height);
+}
+
+.avs-export__note,
+.avs-export__hint {
+	margin: 0;
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+/* Main text colour: up to where the transcript reaches matters. */
+.avs-export__partial {
+	margin: 0;
+	font-size: var(--default-font-size);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+.avs-export__downloads {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.avs-export__download,
+.avs-export__save {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--default-grid-baseline);
+	min-height: var(--default-clickable-area);
+	margin: 0;
+}
+
+.avs-export__sidecar {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: calc(var(--default-grid-baseline) * 2);
+	margin-block-start: calc(var(--default-grid-baseline) * 2);
+}
+
 /* -- touch ------------------------------------------------------------------------ */
 
 @media (pointer: coarse) {
 	.avs-play__jump,
 	.avs-play__files,
-	.avs-banner__action {
+	.avs-banner__action,
+	.avs-export__download,
+	.avs-export__save {
 		min-height: calc(var(--default-grid-baseline) * 11);
 	}
 }

@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 /**
  * The playback page: heading, start line, state banners, the medium, the
- * action row and the excerpt, in this order (UI-SPEC, surface 2).
+ * action row, the excerpt and the export section, in this order (UI-SPEC,
+ * surface 2; 04-UI-SPEC for the export section and the subtitle track).
  *
  * Everything is rendered here with the real values of the request, so the
  * page plays from the time mark with JavaScript switched off: the fragment on
@@ -30,6 +31,10 @@ $icons = [
 	'error' => 'M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z',
 	'warning' => 'M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16',
 	'info' => 'M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z',
+	// Checked against Templarian/MaterialDesign-SVG on 2026-11-16 (04-UI-SPEC).
+	'download' => 'M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z',
+	'file-plus' => 'M14 2H6C4.89 2 4 2.89 4 4V20C4 21.11 4.89 22 6 22H13.81C13.28 21.09 13 20.05 13 19C13 15.69 15.69 13 19 13C19.34 13 19.67 13.03 20 13.08V8L14 2M13 9V3.5L18.5 9H13M23 20H20V23H18V20H15V18H18V15H20V18H23V20Z',
+	'check-circle-outline' => 'M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M12 20C7.59 20 4 16.41 4 12S7.59 4 12 4 20 7.59 20 12 16.41 20 12 20M16.59 7.58L10 14.17L7.41 11.59L6 13L10 17L18 9L16.59 7.58Z',
 ];
 
 // The parameters, read defensively.
@@ -49,6 +54,20 @@ $excerptHours = is_int($_['excerptHours'] ?? null) ? $_['excerptHours'] : 0;
 $filesUrl = is_string($_['filesUrl'] ?? null) ? $_['filesUrl'] : '';
 $downloadAllowed = ($_['downloadAllowed'] ?? false) === true;
 
+// The export section (04-UI-SPEC, X1 to X4). A state outside the closed list
+// is X4, and X1/X2 without all three addresses is X4 as well: no button may
+// point nowhere.
+$exportState = in_array($_['exportState'] ?? null, ['available', 'partial', 'blocked', 'none'], true) ? $_['exportState'] : 'none';
+$exportUntilClock = is_string($_['exportUntilClock'] ?? null) ? $_['exportUntilClock'] : '';
+$exportUntilIso = is_string($_['exportUntilIso'] ?? null) ? $_['exportUntilIso'] : '';
+$exportUrls = is_array($_['exportUrls'] ?? null) ? $_['exportUrls'] : [];
+$sidecarAllowed = ($_['sidecarAllowed'] ?? false) === true;
+$sidecarName = is_string($_['sidecarName'] ?? null) ? $_['sidecarName'] : '';
+$sidecarUrl = is_string($_['sidecarUrl'] ?? null) ? $_['sidecarUrl'] : '';
+$trackUrl = is_string($_['trackUrl'] ?? null) ? $_['trackUrl'] : '';
+$trackLang = in_array($_['trackLang'] ?? null, ['de', 'en', 'fr'], true) ? $_['trackLang'] : '';
+$trackLabel = is_string($_['trackLabel'] ?? null) ? $_['trackLabel'] : '';
+
 $ready = $state === 'ready' && $src !== '';
 // A missing file and a forbidden one look the same: no name anywhere.
 $heading = $state === 'unavailable' ? $l->t('Playback') : $fileName;
@@ -58,6 +77,49 @@ $heading = $state === 'unavailable' ? $l->t('Playback') : $fileName;
 // the language puts the placeholder.
 $marker = "\u{E000}";
 $startParts = explode($marker, $l->t('Starts at %s', [$marker]), 2) + ['', ''];
+
+// The three formats in their fixed order (D-04-02): SRT, VTT, TXT.
+$exportFormats = [
+	'srt' => $l->t('Download SRT'),
+	'vtt' => $l->t('Download VTT'),
+	'txt' => $l->t('Download TXT'),
+];
+$exportOpen = in_array($exportState, ['available', 'partial'], true);
+foreach (array_keys($exportFormats) as $format) {
+	if (!is_string($exportUrls[$format] ?? null) || $exportUrls[$format] === '') {
+		$exportOpen = false;
+	}
+}
+if (!$exportOpen && $exportState !== 'blocked') {
+	$exportState = 'none';
+}
+// The draft track only on a video, never in X3 (D-04-18), never as default.
+$track = $exportOpen && $ready && $mediaTag === 'video' && $trackUrl !== '' && $trackLang !== '' && $trackLabel !== '';
+$sidecar = $exportOpen && $sidecarAllowed && $sidecarUrl !== '';
+
+// The sentences that name a file split around the placeholder, like the
+// start line: the name sits in a span of its own, which play.js fills with
+// the name the server checked.
+$untilParts = explode($marker, $l->t('Transcript up to %s, the file is still being processed.', [$marker]), 2) + ['', ''];
+$sidecarHint = $sidecarName !== ''
+	? explode($marker, $l->t('Saves %s in the same folder as the recording. An existing file is never overwritten.', [$marker]), 2) + ['', '']
+	: [$l->t('Saves the subtitles as a VTT file in the same folder as the recording. An existing file is never overwritten.')];
+$savedParts = explode($marker, $l->t('%s is now in the same folder as the recording.', [$marker]), 2) + ['', ''];
+$notSaved = $l->t('The subtitles were not saved');
+
+// The answers of the sidecar route that are no success (E2 to E7), all
+// rendered hidden; play.js shows exactly one of them and focuses it.
+$sidecarErrors = [
+	'avs-sidecar-e2' => [
+		'title' => $l->t('File already exists'),
+		'parts' => explode($marker, $l->t('The folder already contains a file named %s. It is not overwritten. To save again, delete or rename the existing file first.', [$marker]), 2) + ['', ''],
+	],
+	'avs-sidecar-e3' => ['title' => $notSaved, 'parts' => [$l->t('Files cannot be created in this folder. Downloading still works.')]],
+	'avs-sidecar-e4' => ['title' => $notSaved, 'parts' => [$l->t('This share does not allow downloads. Subtitles and transcript can therefore neither be downloaded nor saved.')]],
+	'avs-sidecar-e5' => ['title' => $notSaved, 'parts' => [$l->t('The name of the subtitle file would be too long. Rename the recording to a shorter name and try again.')]],
+	'avs-sidecar-e6' => ['title' => $notSaved, 'parts' => [$l->t('Too many attempts in a short time. Try again a little later.')]],
+	'avs-sidecar-e7' => ['title' => $notSaved, 'parts' => [$l->t('The subtitle draft cannot be created right now. Playback works regardless. Try again later.')]],
+];
 
 // Every banner of the state table. The server shows the one that fits its
 // own verdict; the ones only the browser can detect (a medium that fails to
@@ -195,7 +257,9 @@ if ($excerptHours >= 1) {
 	</div>
 
 	<?php if ($ready) { ?>
-		<<?php p($mediaTag); ?> id="avs-media" class="avs-media avs-media--<?php p($mediaTag); ?>" controls preload="metadata" playsinline src="<?php p($mediaSrc); ?>" data-start="<?php p($startSeconds); ?>" aria-label="<?php p($l->t('Playback: %s', [$fileName])); ?>"></<?php p($mediaTag); ?>>
+		<<?php p($mediaTag); ?> id="avs-media" class="avs-media avs-media--<?php p($mediaTag); ?>" controls preload="metadata" playsinline src="<?php p($mediaSrc); ?>" data-start="<?php p($startSeconds); ?>" aria-label="<?php p($l->t('Playback: %s', [$fileName])); ?>"><?php if ($track) { ?>
+			<track kind="subtitles" src="<?php p($trackUrl); ?>" srclang="<?php p($trackLang); ?>" label="<?php p($trackLabel); ?>">
+		<?php } ?></<?php p($mediaTag); ?>>
 
 		<div class="avs-play__actions">
 			<?php if ($startMs > 0) { ?>
@@ -221,6 +285,61 @@ if ($excerptHours >= 1) {
 				<p class="avs-excerpt__hint"><?php p($l->t('The excerpt cannot be loaded right now. Playback works regardless.')); ?></p>
 			<?php } ?>
 		</section>
+
+		<?php if ($exportState !== 'none') { ?>
+			<section class="avs-export" aria-labelledby="avs-export-title">
+				<h3 id="avs-export-title" class="avs-export__title"><?php p($l->t('Subtitle draft')); ?></h3>
+				<?php if ($exportState === 'blocked') { ?>
+					<p class="avs-export__hint"><?php p($l->t('This share does not allow downloads. Subtitles and transcript can therefore neither be downloaded nor saved.')); ?></p>
+				<?php } else { ?>
+					<p class="avs-export__note"><?php p($l->t('Created automatically and not reviewed. SRT and VTT contain time marks, TXT only the text.')); ?></p>
+					<?php if ($exportState === 'partial' && $exportUntilClock !== '') { ?>
+						<p class="avs-export__partial"><?php p($untilParts[0]); ?><time class="avs-play__time" datetime="<?php p($exportUntilIso); ?>"><?php p($exportUntilClock); ?></time><?php p($untilParts[1]); ?></p>
+					<?php } ?>
+					<div class="avs-export__downloads" role="group" aria-labelledby="avs-export-title">
+						<?php foreach ($exportFormats as $format => $label) { ?>
+							<a class="button avs-export__download" href="<?php p($exportUrls[$format]); ?>"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="<?php p($icons['download']); ?>"/></svg><?php p($label); ?></a>
+						<?php } ?>
+					</div>
+					<div class="avs-export__sidecar">
+						<?php if ($sidecar) { ?>
+							<?php if (count($sidecarHint) === 2) { ?>
+								<p class="avs-export__hint"><?php p($sidecarHint[0]); ?><span class="avs-export__name"><?php p($sidecarName); ?></span><?php p($sidecarHint[1]); ?></p>
+							<?php } else { ?>
+								<p class="avs-export__hint"><?php p($sidecarHint[0]); ?></p>
+							<?php } ?>
+							<button type="button" id="avs-sidecar" class="avs-export__save" data-url="<?php p($sidecarUrl); ?>" hidden><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="<?php p($icons['file-plus']); ?>"/></svg><?php p($l->t('Save next to the file')); ?></button>
+							<div id="avs-sidecar-result">
+								<div id="avs-sidecar-e1" class="avs-banner avs-banner--success" role="status" hidden>
+									<span class="avs-banner__icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="<?php p($icons['check-circle-outline']); ?>"/></svg></span>
+									<div class="avs-banner__body">
+										<p class="avs-banner__title"><?php p($savedParts[0]); ?><span class="avs-export__name"><?php p($sidecarName); ?></span><?php p($savedParts[1]); ?></p>
+										<?php if ($filesUrl !== '') { ?>
+											<a class="avs-banner__action" href="<?php p($filesUrl); ?>"><?php p($l->t('Show in Files')); ?></a>
+										<?php } ?>
+									</div>
+								</div>
+								<?php foreach ($sidecarErrors as $id => $error) { ?>
+									<div id="<?php p($id); ?>" class="avs-banner avs-banner--error" role="alert" tabindex="-1" hidden>
+										<span class="avs-banner__icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path fill="currentColor" d="<?php p($icons['error']); ?>"/></svg></span>
+										<div class="avs-banner__body">
+											<p class="avs-banner__title"><?php p($error['title']); ?></p>
+											<?php if (count($error['parts']) === 2) { ?>
+												<p class="avs-banner__text"><?php p($error['parts'][0]); ?><span class="avs-export__name"><?php p($sidecarName); ?></span><?php p($error['parts'][1]); ?></p>
+											<?php } else { ?>
+												<p class="avs-banner__text"><?php p($error['parts'][0]); ?></p>
+											<?php } ?>
+										</div>
+									</div>
+								<?php } ?>
+							</div>
+						<?php } else { ?>
+							<p class="avs-export__hint"><?php p($l->t('Files cannot be created in this folder. Downloading still works.')); ?></p>
+						<?php } ?>
+					</div>
+				<?php } ?>
+			</section>
+		<?php } ?>
 	<?php } ?>
 
 </div>

@@ -1221,6 +1221,72 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame([], $this->exportMetaCalls);
 	}
 
+	/** The page as the template renders it, without the layout around it. */
+	private static function page(TemplateResponse $response): string {
+		$blank = new TemplateResponse($response->getApp(), $response->getTemplateName(), $response->getParams(), TemplateResponse::RENDER_AS_BLANK);
+
+		return $blank->render();
+	}
+
+	public function testTheRenderedSectionOfAFinishedVideoHasTheLinksTheButtonAndTheTrack(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$html = self::page($this->response(7));
+
+		self::assertSame(3, substr_count($html, 'class="button avs-export__download"'));
+		self::assertLessThan(strpos($html, 'format=vtt'), strpos($html, 'format=srt'));
+		self::assertLessThan(strpos($html, 'format=txt'), strpos($html, 'format=vtt'));
+		self::assertStringContainsString('id="avs-sidecar"', $html);
+		self::assertSame(1, preg_match('#<track kind="subtitles" src="[^"]*audio_video_search\.export\.track[^"]*" srclang="de" label="German, subtitle draft">#', $html));
+		self::assertStringNotContainsString(' default', $html);
+		for ($number = 1; $number <= 7; $number++) {
+			self::assertStringContainsString('id="avs-sidecar-e' . $number . '"', $html);
+		}
+	}
+
+	public function testAnAudioFileGetsTheSectionButNoTrack(): void {
+		$this->file(7, 'Sitzung.mp3', 'audio/mpeg');
+
+		$html = self::page($this->response(7));
+
+		self::assertStringContainsString('avs-export__download', $html);
+		self::assertStringNotContainsString('<track', $html);
+	}
+
+	public function testTheRenderedBlockedSectionHasTheHintOnlyAndNoAddressOfTheExport(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+
+		$html = self::page($this->response(4));
+
+		self::assertStringContainsString('class="avs-export"', $html);
+		self::assertStringContainsString('avs-export__hint', $html);
+		foreach (['avs-export__download', 'avs-sidecar', '<track', 'audio_video_search.export', '/export/', '/track/', '/sidecar/'] as $absent) {
+			self::assertStringNotContainsString($absent, $html);
+		}
+	}
+
+	public function testAPageWithoutASectionRendersTheSameBytesForExcludedAndUnknown(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$this->excerpt = self::unknownFile();
+		$this->exportMeta = ['known' => false];
+		$unknown = self::page($this->response(7));
+		self::assertStringNotContainsString('avs-export', $unknown);
+
+		// Positive control: a file with a transcript renders the section.
+		$this->exportMeta = self::meta();
+		self::assertStringContainsString('avs-export', self::page($this->response(7)));
+
+		$this->excludedUsers = [self::UID];
+		$this->excerpt = self::found(['reason' => 'no_speech']);
+		$this->exportNeverAsked = true;
+		$this->containerNeverAsked = true;
+		$excluded = self::page($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+	}
+
 	// -- the route ----------------------------------------------------------------------
 
 	public function testTheRouteNeedsASessionButNoAdminAndNoToken(): void {
