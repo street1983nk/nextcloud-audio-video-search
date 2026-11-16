@@ -31,6 +31,7 @@ Nothing here logs a word, a term or a path; only ids and counts.
 """
 
 import logging
+import re
 import shutil
 import threading
 from collections.abc import Sequence
@@ -40,6 +41,7 @@ from typing import Final
 
 from tantivy import Document, Index, IndexWriter, Occur, Query
 
+from audio_video_search_backend.index import numbers
 from audio_video_search_backend.index.analyzer import (
     cached_german_analyzer,
     english_analyzer,
@@ -69,6 +71,10 @@ WRITER_HEAP_BYTES: Final = 20_000_000
 GENERATION_PREFIX: Final = "gen-"
 # Upper bound for the key listing of reconcile; far above what phase 1 holds.
 _MAX_KEYS: Final = 1_000_000
+# A word of the query: the same border as Tokenizer.simple (anything not
+# alphanumeric splits). A point right after digits stays as the German ordinal
+# mark ("am 12. März"), unless a letter or digit follows ("1.000").
+_WORD: Final = re.compile(r"[^\W_]+(?:(?<=\d)\.(?![^\W_]))?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,14 +271,70 @@ class SearchIndex:
         _LOG.info("index documents retired", extra={"media": len(marked)})
         return len(marked)
 
+    def _parse(self, form: str) -> Query | None:
+        try:
+            return self._index.parse_query(form, list(BODY_FIELDS))
+        except ValueError:
+            return None
+
+    def _carries_meaning(self, word: str) -> bool:
+        # The same text stands in all three fields, so a German article such
+        # as "ein" still reaches the English field as a term. A stop word of
+        # any of the three languages drops out of the word by word query.
+        return all(chain.analyze(word) for chain in self._chains)
+
+    def _word_query(self, words: Sequence[str]) -> Query | None:
+        """The query word by word: each number a group of its spellings, all groups required.
+
+        A stop word of any chain (an article such as "ein") drops out instead
+        of emptying the query; a spelling the parser refuses is
+        left out. Words are lower case, so AND, OR and NOT stay plain words.
+        """
+        spans = {span.start: span for span in numbers.recognize(words)}
+        groups: dict[tuple[str, ...], Query] = {}
+        position = 0
+        while position < len(words):
+            span = spans.get(position)
+            if span is not None:
+                literal = " ".join(word.rstrip(".") for word in words[span.start : span.stop]).lower()
+                literal = f'"{literal}"' if " " in literal else literal
+                forms = tuple(dict.fromkeys((literal, *numbers.variants(span.value, span.ordinal))))
+                position = span.stop
+            else:
+                word = words[position].rstrip(".").lower()
+                forms = (word,) if self._carries_meaning(word) else ()
+                position += 1
+            if not forms or forms in groups:
+                continue
+            parts = [part for part in (self._parse(form) for form in forms) if part is not None]
+            if len(parts) == 1:
+                groups[forms] = parts[0]
+            elif parts:
+                groups[forms] = Query.boolean_query([(Occur.Should, part) for part in parts])
+        if not groups:
+            return None
+        return Query.boolean_query([(Occur.Must, group) for group in groups.values()])
+
     def search(self, term: str, limit: int) -> list[IndexHit]:
-        """Candidates for a term over the three body fields; a broken query is an empty list."""
+        """Candidates for a term over the three body fields; a query without any word is an empty list.
+
+        A term without a number goes to the parser as before (phases 1 to 3).
+        A term with a number, or one the parser refuses ("12:30"), takes the
+        word by word way of :meth:`_word_query` (plan 04-01, T-04-03).
+        """
         text = normalize(term[:MAX_TERM_CHARS]).strip()
         if not text or limit <= 0:
             return []
-        try:
-            query = self._index.parse_query(text, list(BODY_FIELDS), conjunction_by_default=True)
-        except ValueError:
+        words = _WORD.findall(text)
+        query: Query | None = None
+        if not numbers.recognize(words):
+            try:
+                query = self._index.parse_query(text, list(BODY_FIELDS), conjunction_by_default=True)
+            except ValueError:
+                query = None
+        if query is None:
+            query = self._word_query(words)
+        if query is None:
             return []
         searcher = self._index.searcher()
         hits: list[IndexHit] = []
@@ -291,9 +353,18 @@ class SearchIndex:
         return hits
 
     def first_match_ms(self, term: str, words: Sequence[Word]) -> int | None:
-        """The start of the first word that shares a token with the term in any chain."""
+        """The start of the first word that shares a token with the term in any chain.
+
+        A number in the term brings the tokens of all its spellings; a phrase
+        spelling counts with every part, so "vingt et un" meets a "vingt".
+        """
         text = normalize(term[:MAX_TERM_CHARS])
         wanted = [set(chain.analyze(text)) for chain in self._chains]
+        for span in numbers.recognize(_WORD.findall(text)):
+            for form in numbers.variants(span.value, span.ordinal):
+                plain = form.strip('"')
+                for chain, tokens in zip(self._chains, wanted, strict=True):
+                    tokens.update(chain.analyze(plain))
         if not any(wanted):
             return None
         for word in words:

@@ -5,7 +5,6 @@ expected ids are written by hand from the segment texts.
 """
 
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -33,9 +32,11 @@ SEGMENTS = {
 TWELVE = {1, 2, 3, 4, 5, 6, 8, 12, 13}
 
 
-@pytest.fixture
-def search_index(tmp_path: Path) -> Iterator[SearchIndex]:
-    opened = SearchIndex.open(tmp_path / "idx", constituents=CONSTITUENTS)
+@pytest.fixture(scope="module")
+def search_index(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SearchIndex]:
+    # One index for the module: the tests only read, and thirteen commits per
+    # test made Windows refuse a rename of tantivy now and then (os error 5).
+    opened = SearchIndex.open(tmp_path_factory.mktemp("numbers") / "idx", constituents=CONSTITUENTS)
     try:
         for media_id, text in SEGMENTS.items():
             opened.publish(
