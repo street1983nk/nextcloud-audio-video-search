@@ -296,12 +296,15 @@
 
 /* -- touch ------------------------------------------------------------------------ */
 
+/* Behind the id: the server rule "button:not(.button-vue, [class^=vs__])"
+   sets min-height to --default-clickable-area and outranks one class, so the
+   buttons among these (jump, sidecar, reload) stayed at 34 px on a phone. */
 @media (pointer: coarse) {
-	.avs-play__jump,
-	.avs-play__files,
-	.avs-banner__action,
-	.avs-export__download,
-	.avs-export__save {
+	#app-content.avs-play .avs-play__jump,
+	#app-content.avs-play .avs-play__files,
+	#app-content.avs-play .avs-banner__action,
+	#app-content.avs-play .avs-export__download,
+	#app-content.avs-play .avs-export__save {
 		min-height: calc(var(--default-grid-baseline) * 11);
 	}
 }

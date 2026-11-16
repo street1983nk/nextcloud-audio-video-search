@@ -256,6 +256,12 @@ def test_the_export_section_follows_the_ui_spec() -> None:
     assert coarse is not None
     assert ".avs-export__download" in coarse.group(1)
     assert ".avs-export__save" in coarse.group(1)
+    # Every selector of the touch rule sits behind the id: one class loses
+    # against the server rule "button:not(.button-vue, ...)" (CI 16.11.2026).
+    coarse_head = coarse.group(1).split("{", 1)[0]
+    selectors = [part.strip() for part in coarse_head.split(",")]
+    assert selectors
+    assert all(part.startswith("#app-content.avs-play ") for part in selectors), selectors
 
 
 def test_the_sidecar_button_posts_with_the_token_and_shows_one_banner() -> None:
