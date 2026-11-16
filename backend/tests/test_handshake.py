@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from audio_video_search_backend import companion, main, nc, settings
+from audio_video_search_backend.store.repo import SCHEMA_VERSION
 from tests.conftest import signed_headers
 
 CONTENT = b"RIFF fake media bytes " * 100
@@ -281,7 +282,7 @@ def test_status_reports_the_fields_of_the_admin_section(api: TestClient) -> None
         "appVersion": "0.1.0",
         "companion": "ok",
         "companionVersion": "0.1.0",
-        "schemaVersion": 3,
+        "schemaVersion": SCHEMA_VERSION,
         "sampleCount": 0,
         "settings": {"processing_enabled": "0"},
     }

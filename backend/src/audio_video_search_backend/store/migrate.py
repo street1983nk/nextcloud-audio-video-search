@@ -19,10 +19,16 @@ tell apart any more), ``sort_mtime`` the newest mtime of its active
 references and ``epoch`` the one of its media item. References in the trash,
 unreadable ones and samples (D-02-15) give no job (T-03-09).
 
+v3 to v4 (phase 4, plan 04-05): ``preview_job`` counts the kept words per text
+language (``words_de``, ``words_en``, ``words_fr``) and ``media.language``
+holds the majority language of a file, only de, en, fr or NULL and never
+``und`` (D-04-15, T-04-13). The stock keeps counters of zero and no language;
+file_language.detect determines it on the first export.
+
 Every statement runs inside ``BEGIN IMMEDIATE``; any failure rolls the whole
 file back to the version it had, so an interrupted update never leaves a half
-migrated store (T-02-05, T-03-07). The steps are module constants on purpose:
-the tests insert a failing statement between them.
+migrated store (T-02-05, T-03-07, T-04-12). The steps are module constants on
+purpose: the tests insert a failing statement between them.
 """
 
 import logging
@@ -137,6 +143,22 @@ V2_TO_V3_STEPS: tuple[str, ...] = (
     "UPDATE meta SET value = '3' WHERE key = 'schema_version'",
 )
 
+# Must stay identical to the column definitions in schema.sql; the test checks
+# them against the statements there. The ALTER TABLE appends, so schema.sql
+# carries them as the last columns of their tables.
+PREVIEW_WORDS_V4: Final[tuple[str, ...]] = (
+    "words_de INTEGER NOT NULL DEFAULT 0",
+    "words_en INTEGER NOT NULL DEFAULT 0",
+    "words_fr INTEGER NOT NULL DEFAULT 0",
+)
+MEDIA_LANGUAGE_V4: Final = "language TEXT CHECK (language IS NULL OR language IN ('de', 'en', 'fr'))"
+
+V3_TO_V4_STEPS: tuple[str, ...] = (
+    *(f"ALTER TABLE preview_job ADD COLUMN {column}" for column in PREVIEW_WORDS_V4),
+    f"ALTER TABLE media ADD COLUMN {MEDIA_LANGUAGE_V4}",
+    "UPDATE meta SET value = '4' WHERE key = 'schema_version'",
+)
+
 _GET_VERSION: Final = "SELECT value FROM meta WHERE key = 'schema_version'"
 _HAS_META: Final = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
 
@@ -177,3 +199,17 @@ def migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
         raise
     connection.execute("COMMIT")
     _LOG.info("store migrated", extra={"from": 2, "to": 3, "preview_jobs": jobs})
+
+
+def migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+    """Lift a v3 file to v4 in one transaction; on any error the file stays v3."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        for step in V3_TO_V4_STEPS:
+            connection.execute(step)
+    except BaseException:
+        connection.execute("ROLLBACK")
+        _LOG.error("store migration failed, the file stays at version 3", extra={"from": 3, "to": 4})
+        raise
+    connection.execute("COMMIT")
+    _LOG.info("store migrated", extra={"from": 3, "to": 4})

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from audio_video_search_backend import config, main, nc, settings
 from audio_video_search_backend.models import catalog, procure
+from audio_video_search_backend.store.repo import SCHEMA_VERSION
 from tests.conftest import signed_headers
 
 
@@ -78,7 +79,7 @@ def test_a_signed_status_request_answers_with_versions_state_and_settings(
         "appVersion": "0.1.0",
         "companion": "ok",
         "companionVersion": "0.1.0",
-        "schemaVersion": 3,
+        "schemaVersion": SCHEMA_VERSION,
         "sampleCount": 0,
         "settings": {"processing_enabled": "0", "max_duration_hours": "12"},
     }

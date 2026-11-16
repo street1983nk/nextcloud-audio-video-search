@@ -17,6 +17,13 @@
 -- the column file_ref.origin. A file of version 2 is lifted by store/migrate.py
 -- in one transaction, a file of version 1 runs through both steps; this script
 -- describes version 3 for a new file.
+--
+-- Schema version 4 (phase 4, plan 04-05, D-04-15): the kept words per text
+-- language of a preview (preview_job.words_de/en/fr) and the majority language
+-- of a media item (media.language, only de/en/fr or NULL, never 'und'). An
+-- older file runs through the steps up to here; this script describes version 4
+-- for a new file. The new columns are the last ones of their tables because the
+-- migration adds them with ALTER TABLE.
 
 -- Version marks: schema_version, index_generation. Open names, so a later mark
 -- needs no migration.
@@ -35,12 +42,18 @@ CREATE TABLE IF NOT EXISTS meta (
 -- before it may attach (read proof, D-02-01a). orphaned_at is set when the last
 -- reference went away (trash, deleted user, D-02-09 and D-02-13); the content is
 -- forgotten later, so a copy that turns up again keeps its transcript.
+--
+-- language (schema v4, D-04-15) is the language of the file: the majority the
+-- worker counted, or the fallback file_language.detect determined for the
+-- stock. It reaches a file name later, so the CHECK is the hard line: only
+-- de, en, fr or NULL, never 'und' (T-04-13).
 CREATE TABLE IF NOT EXISTS media (
     media_id    INTEGER PRIMARY KEY,
     epoch       INTEGER NOT NULL DEFAULT 0 CHECK (epoch >= 0),
     created_at  INTEGER NOT NULL,
     head_sha256 TEXT,
-    orphaned_at INTEGER
+    orphaned_at INTEGER,
+    language    TEXT CHECK (language IS NULL OR language IN ('de', 'en', 'fr'))
 );
 
 -- Content keys pointing at a media item (decision 3). Phase 1 writes only
@@ -214,6 +227,11 @@ CREATE TABLE IF NOT EXISTS index_outbox (
 -- were kept or dropped and why (script, language, confidence), speech_ms how
 -- much speech the VAD found. attempts and next_try_at belong to retries;
 -- second_pass is 1 once the second VAD pass is done (D-03-16).
+--
+-- words_de/en/fr (schema v4, D-04-15) count the kept words per text language
+-- of the windows; the verdict transcript stores their majority at
+-- media.language. The way back of a too long job clears them with its other
+-- progress.
 CREATE TABLE IF NOT EXISTS preview_job (
     media_id      INTEGER PRIMARY KEY REFERENCES media (media_id),
     epoch         INTEGER NOT NULL,
@@ -233,7 +251,10 @@ CREATE TABLE IF NOT EXISTS preview_job (
     attempts      INTEGER NOT NULL DEFAULT 0,
     next_try_at   INTEGER,
     second_pass   INTEGER NOT NULL DEFAULT 0,
-    updated_at    INTEGER NOT NULL
+    updated_at    INTEGER NOT NULL,
+    words_de      INTEGER NOT NULL DEFAULT 0,
+    words_en      INTEGER NOT NULL DEFAULT 0,
+    words_fr      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS preview_job_order
     ON preview_job (state, CASE origin WHEN 'event' THEN 0 ELSE 1 END, sort_mtime DESC, media_id);

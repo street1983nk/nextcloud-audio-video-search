@@ -33,11 +33,16 @@ from typing import Final, Literal
 from audio_video_search_backend.model import overlay
 from audio_video_search_backend.model.overlay import Correction, Word
 from audio_video_search_backend.model.provenance import Level, Provenance, validate
-from audio_video_search_backend.store.migrate import migrate_v1_to_v2, migrate_v2_to_v3, stored_version
+from audio_video_search_backend.store.migrate import (
+    migrate_v1_to_v2,
+    migrate_v2_to_v3,
+    migrate_v3_to_v4,
+    stored_version,
+)
 
 _LOG: Final = logging.getLogger(__name__)
 
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
 _SCHEMA_FILE: Final = Path(__file__).with_name("schema.sql")
 _BUSY_TIMEOUT_MS: Final = 5000
 
@@ -56,6 +61,11 @@ STATES: Final = frozenset({"active", "unreadable", "vanished", "trashed"})
 # user or the crawl over a storage. event always wins over crawl, at the
 # reference and at the preview job of its content, never the other way round.
 ORIGINS: Final = frozenset({"event", "crawl"})
+# The language of a file (schema v4, D-04-15): the majority the worker counted
+# or the fallback of file_language.detect, never "und" (that is the language of
+# a preview version, worker/preview.py). A tuple on purpose: the order is the
+# tie break, de before en before fr.
+FILE_LANGUAGES: Final = ("de", "en", "fr")
 # stage: where the discovery of this file stands.
 STAGES: Final = frozenset({"pending", "probing", "fetching", "keyed", "failed"})
 STATE_REASONS: Final = frozenset(
@@ -609,7 +619,8 @@ _CHUNK_JOB: Final = """
 UPDATE preview_job SET next_start_ms = :next, chunks_done = chunks_done + 1, version_id = :v,
     kept_words = kept_words + :kept, drop_script = drop_script + :script,
     drop_language = drop_language + :language, drop_conf = drop_conf + :conf,
-    speech_ms = speech_ms + :speech, second_pass = MAX(second_pass, :second), updated_at = :now
+    speech_ms = speech_ms + :speech, second_pass = MAX(second_pass, :second),
+    words_de = words_de + :de, words_en = words_en + :en, words_fr = words_fr + :fr, updated_at = :now
 WHERE media_id = :m AND state = 'running' AND epoch = :e
 """
 _SETTLE_JOB: Final = """
@@ -630,7 +641,7 @@ LIMIT 1
 # given the chance as well. A job that comes back starts at the beginning.
 _REQUEUE_TOO_LONG: Final = """
 UPDATE preview_job SET state = 'queued', reason = NULL, next_start_ms = 0, chunks_done = 0, attempts = 0,
-    next_try_at = NULL, updated_at = :now
+    next_try_at = NULL, words_de = 0, words_en = 0, words_fr = 0, updated_at = :now
 WHERE state = 'skipped' AND reason = 'too_long' AND (duration_ms IS NULL OR duration_ms <= :max_ms)
 """
 # What the play page may learn of a file (D-03-13): only through an active
@@ -640,6 +651,29 @@ SELECT p.state, p.reason, p.chunks_done, p.next_start_ms, c.level
 FROM file_ref f JOIN preview_job p ON p.media_id = f.media_id
 LEFT JOIN current c ON c.media_id = f.media_id
 WHERE f.file_id = ? AND f.state = 'active'
+"""
+# The language of a file (schema v4, D-04-15): the stored majority first,
+# otherwise the counters of a running preview (a part is better than nothing,
+# D-04-17), otherwise unknown.
+_MEDIA_LANGUAGE: Final = "SELECT language FROM media WHERE media_id = ?"
+_JOB_WORD_COUNTS: Final = "SELECT words_de, words_en, words_fr FROM preview_job WHERE media_id = ?"
+# The first determination wins: the fallback of the export never overwrites a
+# language that is already there.
+_SET_LANGUAGE_ONCE: Final = "UPDATE media SET language = :language WHERE media_id = :m AND language IS NULL"
+# The verdict transcript stores the majority of the counters. Ties go to the
+# first of FILE_LANGUAGES (de before en before fr); a sum of zero changes
+# nothing, so a file without a kept word keeps no language.
+_SET_LANGUAGE_MAJORITY: Final = """
+UPDATE media SET language = (
+    SELECT CASE
+        WHEN words_de >= words_en AND words_de >= words_fr THEN 'de'
+        WHEN words_en >= words_fr THEN 'en'
+        ELSE 'fr'
+    END
+    FROM preview_job WHERE media_id = media.media_id
+)
+WHERE media_id = :m
+  AND (SELECT words_de + words_en + words_fr FROM preview_job WHERE media_id = media.media_id) > 0
 """
 
 
@@ -805,6 +839,12 @@ class ChunkCounters:
     drop_language: int
     drop_conf: int
     speech_ms: int
+    # The kept words per text language of the windows (schema v4, D-04-15).
+    # Defaults keep existing callers valid; the sum may be below kept_words
+    # because a window outside the three languages still keeps its words.
+    words_de: int = 0
+    words_en: int = 0
+    words_fr: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,13 +949,12 @@ class Store:
     def open(cls, path: Path, *, read_only: bool = False) -> "Store":
         """Open the database; the writer migrates, applies the schema and the version marks.
 
-        A file of version 2 is lifted to version 3 in one transaction before
-        the schema script runs, a file of version 1 first to version 2 and then
-        on to 3, each step in a transaction of its own (store/migrate.py): a
-        failure in the second step leaves a file of version 2, which the next
-        start lifts again. A reader never migrates, and
-        a version this code does not know is refused before anything is
-        written.
+        A file of version 3 is lifted to version 4 in one transaction before
+        the schema script runs; an older file runs through the steps 1 to 2,
+        2 to 3 and 3 to 4, each in a transaction of its own (store/migrate.py):
+        a failure in one step leaves the file at the version it reached, which
+        the next start lifts again. A reader never migrates, and a version this
+        code does not know is refused before anything is written.
         """
         connection = _connect(path, read_only=read_only)
         try:
@@ -927,6 +966,9 @@ class Store:
                     found = 2
                 if found == 2:
                     migrate_v2_to_v3(connection)
+                    found = 3
+                if found == 3:
+                    migrate_v3_to_v4(connection)
                 elif found not in (0, SCHEMA_VERSION):
                     raise RuntimeError(f"unsupported store schema version {found}")
                 connection.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
@@ -1773,6 +1815,9 @@ class Store:
             counters.drop_language,
             counters.drop_conf,
             counters.speech_ms,
+            counters.words_de,
+            counters.words_en,
+            counters.words_fr,
         )
         if not all(_is_count(value) for value in tally):
             raise ValueError("invalid preview field: counters")
@@ -1805,6 +1850,9 @@ class Store:
                         "conf": counters.drop_conf,
                         "speech": counters.speech_ms,
                         "second": 1 if second_pass else 0,
+                        "de": counters.words_de,
+                        "en": counters.words_en,
+                        "fr": counters.words_fr,
                         "now": _now(),
                     },
                 )
@@ -1827,8 +1875,14 @@ class Store:
         retry_at: int | None = None,
         bump: bool = False,
         now: int | None = None,
+        majority_language: bool = False,
     ) -> bool:
-        """Move a running job of its epoch to ``state``; False when stale."""
+        """Move a running job of its epoch to ``state``; False when stale.
+
+        With ``majority_language`` the same transaction stores the majority of
+        the job's language counters at the media item (D-04-15); a stale job
+        stores nothing.
+        """
         values = {
             "m": job.media_id,
             "e": job.epoch,
@@ -1841,6 +1895,8 @@ class Store:
         }
         with self._transaction():
             changed = self._conn.execute(_SETTLE_JOB, values).rowcount == 1
+            if changed and majority_language:
+                self._conn.execute(_SET_LANGUAGE_MAJORITY, {"m": job.media_id})
         if changed:
             _LOG.info("preview job settled", extra={"media_id": job.media_id, "state": state, "reason": reason})
         return changed
@@ -1848,11 +1904,14 @@ class Store:
     def finish_preview(self, job: PreviewJob, verdict: str, now: int | None = None) -> bool:
         """The verdict of a file after its last piece (engine/catch.py file_verdict); False when stale.
 
-        transcript completes the job; no_speech and unsupported_language skip
-        it with that reason and leave the current version alone.
+        transcript completes the job and stores the majority of its language
+        counters at the media item (ties go de before en before fr, a sum of
+        zero stores nothing, D-04-15); no_speech and unsupported_language skip
+        it with that reason and leave the current version and the language
+        alone.
         """
         if verdict == _TRANSCRIPT_VERDICT:
-            return self._settle(job, "complete", now=now)
+            return self._settle(job, "complete", now=now, majority_language=True)
         if verdict not in _TEXTLESS_VERDICTS:
             raise ValueError("invalid preview field: verdict")
         return self._settle(job, "skipped", reason=verdict, now=now)
@@ -1872,6 +1931,43 @@ class Store:
         if not _is_count(retry_at):
             raise ValueError("invalid preview field: next_try_at")
         return self._settle(job, "waiting", reason=reason, retry_at=retry_at, now=now)
+
+    def file_language(self, media_id: int) -> str | None:
+        """The language of a file: the stored majority, else the counters of a running preview, else None.
+
+        The counters of a part are better than nothing (D-04-17); a content
+        without a kept word in de, en or fr has no language. Never ``und``
+        (D-04-15).
+        """
+        stored = self._conn.execute(_MEDIA_LANGUAGE, (media_id,)).fetchone()
+        if stored is not None and stored[0] is not None:
+            return str(stored[0])
+        counts = self._conn.execute(_JOB_WORD_COUNTS, (media_id,)).fetchone()
+        if counts is None:
+            return None
+        best: str | None = None
+        most = 0
+        for language, count in zip(FILE_LANGUAGES, counts, strict=True):
+            if int(count) > most:
+                best, most = language, int(count)
+        return best
+
+    def set_file_language(self, media_id: int, language: str) -> bool:
+        """Store the first determined language of a file (D-04-15); False when one is stored already.
+
+        Only de, en or fr; everything else, ``und`` included, is refused before
+        anything is written (T-04-13). The first determination wins: a stored
+        language is never overwritten here, only the verdict of a finished
+        transcript replaces it (finish_preview).
+        """
+        if language not in FILE_LANGUAGES:
+            raise ValueError("invalid media field: language")
+        with self._transaction():
+            stored = self._conn.execute(_SET_LANGUAGE_ONCE, {"m": media_id, "language": language}).rowcount == 1
+        if stored:
+            # Only the id: no language with a name in the log (T-04-15).
+            _LOG.info("file language stored", extra={"media_id": media_id})
+        return stored
 
     def retry_preview(self, job: PreviewJob, *, retry_at: int, count: bool, now: int | None = None) -> bool:
         """Let a running job wait without a reason until ``retry_at``; ``count`` adds an attempt. False when stale."""
