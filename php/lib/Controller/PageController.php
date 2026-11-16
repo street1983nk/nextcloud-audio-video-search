@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\Controller;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Search\Provider;
+use OCA\AudioVideoSearch\Service\DownloadPolicy;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\FileAccess;
@@ -16,7 +17,6 @@ use OCP\AppFramework\Http\TemplateResponse;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
-use OCP\Files\Storage\ISharedStorage;
 use OCP\IAppConfig;
 use OCP\IL10N;
 use OCP\IRequest;
@@ -108,6 +108,7 @@ final class PageController extends Controller {
 		private ReaderContext $readerContext,
 		private LoggerInterface $logger,
 		private ExclusionService $exclusions,
+		private DownloadPolicy $downloadPolicy,
 	) {
 		parent::__construct(Application::APP_ID, $request);
 	}
@@ -131,7 +132,7 @@ final class PageController extends Controller {
 
 		[$userFolder, $file, $uid] = $found;
 		$mediaTag = self::mediaTag((string)$file->getMimetype());
-		$downloadAllowed = $this->downloadAllowed($file, $fileId);
+		$downloadAllowed = $this->downloadPolicy->allowsPlayback($file, $fileId);
 
 		$state = self::STATE_READY;
 		if ($mediaTag === '') {
@@ -241,31 +242,6 @@ final class PageController extends Controller {
 			]);
 
 			return null;
-		}
-	}
-
-	/**
-	 * False when the file sits in a received share whose download switch is
-	 * off. Mirrors the server: Share::canDownload and the ViewOnlyPlugin of
-	 * WebDAV read the same attribute. When this cannot be decided, the page
-	 * plays and play.js maps a 403 of WebDAV to the same notice.
-	 */
-	private function downloadAllowed(File $file, int $fileId): bool {
-		try {
-			$storage = $file->getStorage();
-			if (!$storage->instanceOfStorage(ISharedStorage::class)) {
-				return true;
-			}
-
-			/** @var ISharedStorage $storage */
-			return $storage->getShare()->getAttributes()?->getAttribute('permissions', 'download') !== false;
-		} catch (\Throwable $e) {
-			$this->logger->info('Audio & Video Search: the share rules of a file could not be read', [
-				'fileId' => $fileId,
-				'class' => $e::class,
-			]);
-
-			return true;
 		}
 	}
 

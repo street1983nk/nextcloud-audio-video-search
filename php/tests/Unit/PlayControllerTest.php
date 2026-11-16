@@ -6,6 +6,7 @@ namespace OCA\AudioVideoSearch\Tests\Unit;
 
 use OCA\AudioVideoSearch\AppInfo\Application;
 use OCA\AudioVideoSearch\Controller\PageController;
+use OCA\AudioVideoSearch\Service\DownloadPolicy;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
@@ -204,6 +205,8 @@ final class PlayControllerTest extends TestCase {
 			return in_array($fileId, $this->rulesInForce()['files'], true);
 		});
 
+		$logger = $this->logger();
+
 		return new PageController(
 			$request,
 			$root,
@@ -213,8 +216,9 @@ final class PlayControllerTest extends TestCase {
 			$l10n,
 			$exApp,
 			new ReaderContext($session, $this->createMock(IUserManager::class)),
-			$this->logger(),
+			$logger,
 			$this->realExclusions ?? $exclusions,
+			new DownloadPolicy($logger),
 		);
 	}
 
