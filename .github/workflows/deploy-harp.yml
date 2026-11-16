@@ -81,8 +81,11 @@ jobs:
     # adds the speech models (0.67 GB on a cache miss), the preview of about
     # 20 test files (03-15 measured 3.5 to 7.4 s per file with the start of the
     # engine child, the 40 min speech file needs a few minutes) and the step
-    # @preview with its own limit of 45 min below: 120 min in all.
-    timeout-minutes: 120
+    # @preview with its own limit of 45 min below: 120 min in all. Plan 04-14
+    # adds the step @phase4 (two short speech clips, the search and export
+    # specs, limit 30 min) and the download proof with its uv environment:
+    # 150 min until a green run measures it.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -245,6 +248,10 @@ jobs:
             echo "AVS_SPEECH_TR=${RUNNER_TEMP}/avs-speech/speech_tr.wav"
             echo "AVS_SPEECH_WORD=${WORD}"
           } >> "$GITHUB_ENV"
+          # Plan 04-14: the paths of the S7 clips and their measured target forms
+          # (AVS_SPEECH_S7_*, AVS_S7_TARGETS) for the seed and search-quality.spec.ts;
+          # exit 3 when a clip is missing.
+          python3 -I app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech" --s7-env >> "$GITHUB_ENV"
 
       # The air gap way of plan 03-07: the files lie in the persistent storage
       # before the app is installed. HaRP reuses an existing volume of this name
@@ -410,6 +417,7 @@ jobs:
           FILEIDS_ENV: ${{ github.workspace }}/app-src/ci/fileids.env
           SERVER_VERSION: ${{ matrix.server-version }}
           AVS_PHASE3_MEDIA: '1'
+          AVS_PHASE4_MEDIA: '1'
         run: |
           bash app-src/ci/seed.sh
           cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
@@ -471,7 +479,7 @@ jobs:
 
       - name: Playwright on the running instance
         working-directory: app-src/ci/playwright
-        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug|@drift|@patch|@missing|@preview"
+        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug|@drift|@patch|@missing|@preview|@phase4"
 
       # Phase 3 (plan 03-18): the core path (upload, preliminary hit within
       # minutes, the click lands on the word) and the states of the search and
@@ -527,6 +535,85 @@ jobs:
             exit 1
           fi
           echo "EXCERPT LEAK PROBE PASS"
+
+      # Phase 4 (plan 04-14): the search quality of UI-SPEC 04 (S6, S7, SRCH-04)
+      # in search-quality.spec.ts and the export, sidecar and track specs of
+      # plan 04-17, all tagged @phase4, which the main run leaves out. The S7
+      # forms come from AVS_S7_TARGETS (step "Check the speech clips"); the
+      # browser saves every download into AVS_DOWNLOADS_DIR for the parser proof
+      # after it, the pictures go to screenshots/phase4 for phase4-screens.
+      - name: Playwright, search quality and export of phase 4
+        id: phase4
+        working-directory: app-src/ci/playwright
+        timeout-minutes: 30
+        env:
+          AVS_OCC: ${{ github.workspace }}/occ
+          AVS_MEDIA_DIR: ${{ runner.temp }}/testdata
+          AVS_DOWNLOADS_DIR: ${{ runner.temp }}/avs-downloads
+          AVS_SCREENSHOT_DIR: screenshots/phase4
+        run: AVS_PHASE4_E2E=1 npx playwright test --grep @phase4
+
+      # The download proof decodes with the ffmpeg the image ships (same BtbN
+      # release, asset and checksum as the ffmpeg stage of the Dockerfile, for
+      # the architecture of the leg; tests/test_workflows.py holds them in step).
+      # Its path goes to the test only, not into GITHUB_ENV, so no later step
+      # picks it up by accident.
+      - name: Install the pinned LGPL ffmpeg for the download proof
+        if: ${{ !cancelled() && steps.phase4.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          FFMPEG_RELEASE=autobuild-2026-10-31-12-59
+          FFMPEG_BUILD=ffmpeg-n8.1.3-27-g8dca1586f4
+          FFMPEG_AMD64_SHA256=a64f3171e6ad1f7d358d28890a907ee478c331d1177ec696a93418f79ac3f1f3
+          FFMPEG_ARM64_SHA256=2ea30086a637e3f0ad0f49a1b38db34121422b85e93cc82df2e01d9ee5200809
+          case "$(uname -m)" in
+            x86_64) FFMPEG_ARCH=linux64-lgpl-8.1; FFMPEG_SHA256="${FFMPEG_AMD64_SHA256}" ;;
+            aarch64) FFMPEG_ARCH=linuxarm64-lgpl-8.1; FFMPEG_SHA256="${FFMPEG_ARM64_SHA256}" ;;
+            *) echo "no pinned ffmpeg for $(uname -m)"; exit 1 ;;
+          esac
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/btbn-ffmpeg.tar.xz" \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/${FFMPEG_BUILD}-${FFMPEG_ARCH}.tar.xz"
+          echo "${FFMPEG_SHA256}  $RUNNER_TEMP/btbn-ffmpeg.tar.xz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/btbn-ffmpeg"
+          tar -C "$RUNNER_TEMP/btbn-ffmpeg" --strip-components=2 -xJf "$RUNNER_TEMP/btbn-ffmpeg.tar.xz" \
+            "${FFMPEG_BUILD}-${FFMPEG_ARCH}/bin/ffmpeg"
+          "$RUNNER_TEMP/btbn-ffmpeg/ffmpeg" -version
+
+      - name: Install uv for the download proof
+        if: ${{ !cancelled() && steps.phase4.outcome != 'skipped' }}
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.11.7'
+          enable-cache: true
+          cache-dependency-glob: app-src/backend/uv.lock
+
+      # EXP-01, EXP-02, EXP-04 on the files the browser really downloaded: SRT
+      # and VTT through webvtt-py, srt and ffmpeg, line 2 of a TXT is T35, no
+      # file says BITV. With AVS_DOWNLOADS_DIR set an empty or missing folder
+      # fails (T-04-59), and under CI=true a missing ffmpeg fails as well.
+      - name: The parsers on the real downloads of phase 4
+        if: ${{ !cancelled() && steps.phase4.outcome != 'skipped' }}
+        working-directory: app-src/backend
+        env:
+          CI: 'true'
+          AVS_DOWNLOADS_DIR: ${{ runner.temp }}/avs-downloads
+          AVS_FFMPEG: ${{ runner.temp }}/btbn-ffmpeg/ffmpeg
+        run: |
+          uv sync --frozen
+          uv run pytest tests/test_downloaded_subtitles.py -q -rs
+
+      # Synthetic media and FLEURS speech (CC-BY-4.0) on a throwaway instance:
+      # nothing in here is private (T-04-53).
+      - name: Upload the pictures and downloads of phase 4
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phase4-screens-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: |
+            app-src/ci/playwright/screenshots/phase4/
+            ${{ runner.temp }}/avs-downloads/
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Playwright with the backend disabled
         working-directory: app-src/ci/playwright
@@ -700,7 +787,7 @@ jobs:
         run: |
           docker logs "${EXAPP_CONTAINER}" > exapp-check.log 2>&1
           touch data/nextcloud.log
-          if grep -nE 'tone-90s|broken\.webm|locked\.webm|speech_de\.wav|stille-60s|kaputt\.mp3|geschuetzt\.m4a|lang-12h01|lang-40min|viele-stellen|zwei-stellen|tuerkisch\.wav|ohne-ton\.mp4' data/nextcloud.log exapp-check.log; then
+          if grep -nE 'tone-90s|broken\.webm|locked\.webm|speech_de\.wav|stille-60s|kaputt\.mp3|geschuetzt\.m4a|lang-12h01|lang-40min|viele-stellen|zwei-stellen|tuerkisch\.wav|ohne-ton\.mp4|s7-zahlwort|s7-ziffer' data/nextcloud.log exapp-check.log; then
             echo "a test file name reached a log"
             exit 1
           fi

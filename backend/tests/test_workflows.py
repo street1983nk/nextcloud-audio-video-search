@@ -754,3 +754,164 @@ def test_the_phase_3_rule_fires_on_a_leak_probe_without_control_and_a_seed_witho
         "the seed does not bring the media of phase 3",
         'the leak probe lacks "${control_count}" -lt 1',
     ]
+
+
+# -- phase 4 in deploy-harp (plan 04-14) ------------------------------------------
+#
+# The step @phase4 runs search-quality.spec.ts and the specs of plan 04-17 after
+# the main run, which leaves @phase4 out; the parser proof on the real downloads
+# runs with AVS_DOWNLOADS_DIR, CI=true and the ffmpeg of the image; pictures and
+# downloads go into phase4-screens. The catch count of the prefix clause has to
+# run in the container only while 04-06-SUMMARY still names it open: 04-06
+# closed it with the real ngerman list (its table "ngerman-Einträge mit
+# Stamm-Präfix"), so the step stays optional, and when it is there it must not
+# be softened.
+
+PHASE4_RUN = "AVS_PHASE4_E2E=1 npx playwright test --grep @phase4"
+PHASE4_STEP = "Playwright, search quality and export of phase 4"
+PHASE4_FFMPEG_STEP = "Install the pinned LGPL ffmpeg for the download proof"
+DOWNLOADS_STEP = "The parsers on the real downloads of phase 4"
+PHASE4_UPLOAD_STEP = "Upload the pictures and downloads of phase 4"
+SEED_STEP = "Seed users, team folder, shares, media and test results"
+PREFIX_SUMMARY = REPO_ROOT / ".planning" / "phases" / "04-suchqualit-t-und-export" / "04-06-SUMMARY.md"
+PREFIX_DONE_MARK = "ngerman-Einträge mit Stamm-Präfix"
+DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
+_FFMPEG_PIN = re.compile(r"\b(FFMPEG_RELEASE|FFMPEG_BUILD|FFMPEG_AMD64_SHA256|FFMPEG_ARM64_SHA256)=([\w.-]+)")
+
+
+def prefix_catch_open(summary: str) -> bool:
+    """Whether 04-06-SUMMARY leaves the catch count against ngerman open (no table with numbers)."""
+    return PREFIX_DONE_MARK not in summary
+
+
+def ffmpeg_pin_values(text: str) -> dict[str, str]:
+    return dict(_FFMPEG_PIN.findall(text))
+
+
+def phase4_findings(source: str, summary: str, dockerfile: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the proofs of phase 4."""
+    findings: list[str] = []
+    job = job_text(source, "deploy-harp")
+    steps = dict(steps_of(job))
+    names = step_names(job)
+    main_run = re.search(r'npx playwright test --grep-invert "([^"]*)"', steps.get(MAIN_RUN_STEP, ""))
+    if main_run is None or "@phase4" not in main_run.group(1).split("|"):
+        findings.append("the main Playwright run does not leave out @phase4")
+    phase4 = steps.get(PHASE4_STEP, "")
+    if PHASE4_RUN not in phase4:
+        findings.append("no step runs @phase4 with AVS_PHASE4_E2E=1")
+    elif names.index(PHASE4_STEP) < names.index(MAIN_RUN_STEP):
+        findings.append("the step @phase4 runs before the main Playwright run")
+    for variable in ("AVS_OCC:", "AVS_DOWNLOADS_DIR:", "AVS_SCREENSHOT_DIR:"):
+        if variable not in phase4:
+            findings.append(f"the step @phase4 lacks {variable[:-1]}")
+    if "--s7-env" not in steps.get(HARP_CLIP_STEP, ""):
+        findings.append("the S7 clips and their forms are not handed to the tests (--s7-env)")
+    if "AVS_PHASE4_MEDIA: '1'" not in steps.get(SEED_STEP, ""):
+        findings.append("the seed does not bring the media of phase 4")
+    downloads = steps.get(DOWNLOADS_STEP, "")
+    if "uv run pytest tests/test_downloaded_subtitles.py" not in downloads:
+        findings.append("no step runs tests/test_downloaded_subtitles.py")
+    for part in ("AVS_DOWNLOADS_DIR:", "CI: 'true'", "AVS_FFMPEG:"):
+        if part not in downloads:
+            findings.append(f"the download proof lacks {part.rstrip(':')}")
+    if DOWNLOADS_STEP in names and PHASE4_STEP in names and names.index(DOWNLOADS_STEP) < names.index(PHASE4_STEP):
+        findings.append("the download proof runs before the step @phase4")
+    upload = steps.get(PHASE4_UPLOAD_STEP, "")
+    if "name: phase4-screens" not in upload or "avs-downloads" not in upload:
+        findings.append("the pictures and downloads of phase 4 are not uploaded as phase4-screens")
+    pins = ffmpeg_pin_values(steps.get(PHASE4_FFMPEG_STEP, ""))
+    wanted = ffmpeg_pin_values(dockerfile)
+    findings += [
+        f"the ffmpeg of the download proof differs from the Dockerfile in {key}"
+        for key in sorted(wanted)
+        if pins.get(key) != wanted[key]
+    ]
+    prefix_steps = [(name, text) for name, text in steps_of(job) if "measure_prefix.py" in text]
+    if prefix_catch_open(summary) and not prefix_steps:
+        findings.append("04-06 leaves the catch count open and no step runs measure_prefix.py in the container")
+    for name, text in prefix_steps:
+        if "continue-on-error" in text or "|| true" in text:
+            findings.append(f"the catch count in '{name}' may fail without failing the run")
+    for name in (PHASE4_STEP, DOWNLOADS_STEP):
+        if "continue-on-error" in steps.get(name, ""):
+            findings.append(f"'{name}' may fail without failing the run")
+    return findings
+
+
+def _phase4_inputs() -> tuple[str, str, str]:
+    return harp_source(), PREFIX_SUMMARY.read_text(encoding="utf-8"), DOCKERFILE.read_text(encoding="utf-8")
+
+
+def test_deploy_harp_holds_the_proofs_of_phase_4() -> None:
+    assert phase4_findings(*_phase4_inputs()) == []
+
+
+def test_04_06_closed_the_catch_count_with_numbers() -> None:
+    """The reason the container step is optional: 04-06 holds the ngerman table (plan 04-14 SUMMARY names it)."""
+    _source, summary, _dockerfile = _phase4_inputs()
+
+    assert not prefix_catch_open(summary)
+
+
+def test_the_phase_4_rule_fires_when_the_main_run_takes_phase4_or_the_switch_is_gone() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    broken = source.replace("|@preview|@phase4", "|@preview").replace(PHASE4_RUN, "npx playwright test --grep @phase4")
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the main Playwright run does not leave out @phase4",
+        "no step runs @phase4 with AVS_PHASE4_E2E=1",
+    ]
+
+
+def test_the_phase_4_rule_fires_on_a_download_proof_without_ci_and_without_the_s7_forms() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    broken = source.replace("          CI: 'true'\n          AVS_DOWNLOADS_DIR", "          AVS_DOWNLOADS_DIR").replace(
+        "--s7-env", "--s7"
+    )
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the S7 clips and their forms are not handed to the tests (--s7-env)",
+        "the download proof lacks CI: 'true'",
+    ]
+
+
+def test_the_phase_4_rule_fires_on_another_ffmpeg_and_a_lost_artifact() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    arm64 = ffmpeg_pin_values(dockerfile)["FFMPEG_ARM64_SHA256"]
+    broken = source.replace(f"FFMPEG_ARM64_SHA256={arm64}", "FFMPEG_ARM64_SHA256=" + "0" * 64).replace(
+        "name: phase4-screens", "name: phase4-pictures"
+    )
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the pictures and downloads of phase 4 are not uploaded as phase4-screens",
+        "the ffmpeg of the download proof differs from the Dockerfile in FFMPEG_ARM64_SHA256",
+    ]
+
+
+def test_the_phase_4_rule_asks_for_the_catch_count_while_04_06_leaves_it_open() -> None:
+    source, _summary, dockerfile = _phase4_inputs()
+
+    assert phase4_findings(source, "Beifang: offen, Plan 04-14", dockerfile) == [
+        "04-06 leaves the catch count open and no step runs measure_prefix.py in the container"
+    ]
+
+
+def test_the_phase_4_rule_fires_on_a_softened_catch_count_step() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    step = (
+        "      - name: The catch count of the prefix clause in the container\n"
+        "        continue-on-error: true\n"
+        '        run: docker exec "${EXAPP_CONTAINER}" python -I /tmp/measure_prefix.py'
+        " --wordlist /usr/share/dict/ngerman\n"
+        "\n"
+    )
+    broken = source.replace(f"      - name: {DOWNLOADS_STEP}\n", step + f"      - name: {DOWNLOADS_STEP}\n")
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the catch count in 'The catch count of the prefix clause in the container' may fail without failing the run"
+    ]
