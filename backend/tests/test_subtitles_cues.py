@@ -31,10 +31,11 @@ from tests.subtitle_checkers import read_srt_subtitles
 
 # Schwelle für die FAST-Fixture (D-04-16): wortgetreuer Text bei 4,5 Wörtern/s
 # ohne Pausen braucht rund 28 Zeichen/s, eine Dehnung ist physisch unmöglich;
-# der Anteil der cps-Überschreitungen wird nach der ersten Messung auf den
-# gemessenen Wert, auf den nächsten 5-%-Schritt aufgerundet, gesetzt.
-# Platzhalter bis zur Messung; gemessen am <Datum> folgt mit dem Messwert.
-FAST_SPEECH_MAX_OVER_CPS_SHARE: Final = 1.0
+# nur der letzte Cue kann sich frei dehnen. Gemessen am 2026-11-16: 0,9762
+# (41 von 42 Cues über 20 Zeichen/s). Der 5-%-Schritt des Plans wäre 1,00 und
+# damit kein Gate mehr; deshalb auf den nächsten 1-%-Schritt aufgerundet, so
+# schlägt der Test an, sobald auch der letzte Cue die Rate reißt.
+FAST_SPEECH_MAX_OVER_CPS_SHARE: Final = 0.98
 
 _LETTERS: Final = "abcdefghijklmnopqrstuvwxyz"
 _SEED: Final = 20261116
@@ -312,7 +313,7 @@ def test_backwards_times_are_repaired_into_monotone_cues() -> None:
 def test_normal_speech_keeps_every_limit() -> None:
     cues = build_cues(_normal_words())
 
-    assert len(cues) >= 20
+    assert len(cues) >= 20, f"NORMAL-Cues: {len(cues)}"
     assert count_overruns(cues) == Overruns(0, 0, 0, 0, 0)
 
 
