@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-17-PLAN.md (axe offen, Paketfreigabe)
-last_updated: "2026-11-16T20:30:00.000Z"
+stopped_at: Completed 04-17-PLAN.md (axe und D2-Fix nachgezogen)
+last_updated: "2026-11-16T22:00:00.000Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 16 of 17 (offen: 04-15 Push-Tor, 04-16 UI-Abnahme; axe aus 04-17 wartet auf Paketfreigabe)
+Plan: 16 of 17 (offen: 04-15 Push-Tor, 04-16 UI-Abnahme)
 Status: Ready to execute
 Last activity: 2026-11-16
 
@@ -152,6 +152,9 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-11: sidecarAllowed nur in X1/X2 gefragt (X4 byte-gleich); Zielname über 255 Bytes ergibt T20b und beim Klick E5
 - [Phase 04]: 04-17: Seed mit Video S7-Übung.webm (S7_DE-Sprache, an review) und Ordner Ablage an carol (Rechte 15) für X5/E3/E4, weil eine Datei-Freigabe im Home der Empfängerin immer anlegen darf; X2 mit lang-40min-x2.ogg (eigene Bytes gegen Dedup)
 - [Phase 04]: 04-17: E5 im Stack unerreichbar (Dateiname max. 250 Bytes, Nebendateiname max. 3 Bytes länger), Seitenteil per page.route; Kombifall/X4 über Nutzer-Regel, occ hat keine Datei-Regel
+- [Phase 04]: 04-17 (Owner 16.11.): axe über @axe-core/playwright 4.14.0 exakt gepinnt (axe-core 4.14.0 im Lockfile, --before=2026-11-01, weil axe-core 4.14.1 erst am 16.11. erschien), Bereich #app-content.avs-play, WCAG 2.x A/AA, Filter serious/critical, Selbsttest
+- [Phase 04]: 04-17 (Owner 16.11.): Export-Links tragen ?t= aus dem geprüften startMs (seconds(), unter 0,1 s keins), D2 prüft den Rückweg über den Link echt
+- [Phase 04]: 04-17 (Owner 16.11.): Nebendatei bei Datei-Freigabe landet weiter im Home der Empfängerin
 
 ### Pending Todos
 
@@ -163,7 +166,7 @@ Recent decisions affecting current work:
 - 02-12: Push 5 Owner-Freigabe 09.11. ("Go", Claude Code Terminal): 10 Commits 02-11 und 02-12 auf phase-02; Owner bestätigt beide Auslegungen (Klassifikationspflicht nur für externe Speicher; prefilter_key aus sha256(share_key)); CI ist der erste PHPUnit-Beleg für 02-12
 - 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10) per Owner 07.11. in Plan 13 Task 3
 - 02-12: PHPUnit und php -l der neuen PHP-Dateien (StorageClassifier, StorageStateMapper, 7 Testdateien) lokal nicht gelaufen; Beleg erst in CI beim nächsten freigegebenen Push
-- 04-17: axe-Prüfung (X1 bis X5, E1 bis E7, D2) nicht gebaut, braucht npm-Paket (Vorschlag @axe-core/playwright), Installation nur nach Owner-Prüfung (blocking-human); Befund D2: Export-Links ohne ?t=, Rückweg der Fehlerseite verliert die Zeitmarke (deferred-items.md)
+- 04-17: axe-Prüfung und D2-Fix gebaut (16.11.), Beleg erst im Push-Tor 04-15 (PHPUnit PlayControllerTest und @phase4/@axe nur in CI)
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -178,6 +181,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T20:30:00.000Z
-Stopped at: Completed 04-17-PLAN.md (axe offen)
+Last session: 2026-11-16T22:00:00.000Z
+Stopped at: Completed 04-17-PLAN.md (axe und D2-Fix nachgezogen)
 Resume file: None

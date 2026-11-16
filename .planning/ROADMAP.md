@@ -201,7 +201,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [x] 04-17-PLAN.md: E2E Export-Zustände, Fehlerseite, Ablage, Spur, Kontrast und axe (axe offen: Paketfreigabe)
+- [x] 04-17-PLAN.md: E2E Export-Zustände, Fehlerseite, Ablage, Spur, Kontrast und axe; Export-Links mit ?t= (D2-Fix)
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
