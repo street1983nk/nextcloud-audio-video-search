@@ -84,8 +84,11 @@ jobs:
     # @preview with its own limit of 45 min below: 120 min in all. Plan 04-14
     # adds the step @phase4 (two short speech clips, the search and export
     # specs, limit 30 min) and the download proof with its uv environment:
-    # 150 min until a green run measures it.
-    timeout-minutes: 150
+    # 150 min. Plan 04-17 adds the export and sidecar specs to that step (the
+    # partial window of a second 40 min file, two stops of the container,
+    # Firefox for the track) and raises its limit to 60 min: 180 min until a
+    # green run measures it.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -542,10 +545,15 @@ jobs:
       # forms come from AVS_S7_TARGETS (step "Check the speech clips"); the
       # browser saves every download into AVS_DOWNLOADS_DIR for the parser proof
       # after it, the pictures go to screenshots/phase4 for phase4-screens.
+      # export.spec.ts and sidecar.spec.ts (plan 04-17) change shares, the
+      # view-without-download switch and an exclusion only inside finally
+      # blocks, and stop the container of the backend with docker and
+      # EXAPP_CONTAINER (D2, E7), starting it again in finally; the track also
+      # runs in the project firefox-w1280-light.
       - name: Playwright, search quality and export of phase 4
         id: phase4
         working-directory: app-src/ci/playwright
-        timeout-minutes: 30
+        timeout-minutes: 60
         env:
           AVS_OCC: ${{ github.workspace }}/occ
           AVS_MEDIA_DIR: ${{ runner.temp }}/testdata
@@ -787,7 +795,7 @@ jobs:
         run: |
           docker logs "${EXAPP_CONTAINER}" > exapp-check.log 2>&1
           touch data/nextcloud.log
-          if grep -nE 'tone-90s|broken\.webm|locked\.webm|speech_de\.wav|stille-60s|kaputt\.mp3|geschuetzt\.m4a|lang-12h01|lang-40min|viele-stellen|zwei-stellen|tuerkisch\.wav|ohne-ton\.mp4|s7-zahlwort|s7-ziffer' data/nextcloud.log exapp-check.log; then
+          if grep -nE 'tone-90s|broken\.webm|locked\.webm|speech_de\.wav|stille-60s|kaputt\.mp3|geschuetzt\.m4a|lang-12h01|lang-40min|viele-stellen|zwei-stellen|tuerkisch\.wav|ohne-ton\.mp4|s7-zahlwort|s7-ziffer|s7-video|s7-ablage|S7-.{1,12}bung' data/nextcloud.log exapp-check.log; then
             echo "a test file name reached a log"
             exit 1
           fi

@@ -3,7 +3,9 @@
 // position, the screenshots, occ of the test instance and the contrast
 // measurement of plan 03-18, and the pieces of phase 4 (plan 04-14): the admin
 // switch for viewing without download, sha256 of a file over WebDAV, a
-// download into a folder, the export as text and the measured S7 forms.
+// download into a folder, the export as text and the measured S7 forms; and
+// for plan 04-17 the approved texts of 04-UI-SPEC, shares, the exclusion of a
+// user, the stop and start of the backend container and the cue readers.
 //
 // No fixed waits anywhere: web-first assertions, waitForResponse and
 // expect.poll only.
@@ -68,6 +70,12 @@ export const fileIds = {
 	// (SRCH-04, X3), s7DeDigit with carol read only with download (X5).
 	s7De: (): string => env('FILEID_S7_DE'),
 	s7DeDigit: (): string => env('FILEID_S7_DE_DIGIT'),
+	// Plan 04-17: S7-Übung.webm, a video with the speech of S7_DE, shared with
+	// the group "review" with download (X1, D1 with an umlaut, sidecar, track),
+	// and Ablage/s7-ablage.wav in alice's folder Ablage, shared with carol
+	// with the right to create files (X5, E3, E4 change that share for a moment).
+	s7Video: (): string => env('FILEID_S7_VIDEO'),
+	ablage: (): string => env('FILEID_ABLAGE'),
 };
 
 export function isHighContrast(testInfo: TestInfo): boolean {
@@ -460,18 +468,40 @@ export function contrastRatio(fg: string | Rgba, bg: string | Rgba): number {
  * annotation, so a surprise is visible in the report.
  */
 export async function excerptNoteContrast(page: Page): Promise<{ ratio: number; fg: string; backgrounds: string[] }> {
-	const colours = await page.locator('section.avs-excerpt p.avs-excerpt__note').evaluate((note) => {
+	return textContrast(page.locator('section.avs-excerpt p.avs-excerpt__note'));
+}
+
+/**
+ * The contrast of the text of one element after the same rule as
+ * excerptNoteContrast: its text colour against the background colours from
+ * the element up to the root, laid over each other on a white canvas.
+ */
+export async function textContrast(locator: Locator): Promise<{ ratio: number; fg: string; backgrounds: string[] }> {
+	const colours = await locator.evaluate((node) => {
 		const backgrounds: string[] = [];
-		for (let element: Element | null = note; element !== null; element = element.parentElement) {
+		for (let element: Element | null = node; element !== null; element = element.parentElement) {
 			backgrounds.push(getComputedStyle(element).backgroundColor);
 		}
-		return { fg: getComputedStyle(note).color, backgrounds };
+		return { fg: getComputedStyle(node).color, backgrounds };
 	});
 	let background = parseColor('#ffffff');
 	for (const layer of [...colours.backgrounds].reverse()) {
 		background = composite(parseColor(layer), background);
 	}
 	return { ratio: contrastRatio(colours.fg, background), ...colours };
+}
+
+/**
+ * The measurement passes its self test first (T-03-60): black on white is
+ * 21:1, #767676 on white is just above 4.5:1 and #999999 on white below.
+ */
+export function expectContrastSelfTest(): void {
+	expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 6);
+	const justEnough = contrastRatio('#767676', '#ffffff');
+	expect(justEnough).toBeGreaterThanOrEqual(4.5);
+	expect(justEnough).toBeLessThanOrEqual(4.6);
+	expect(contrastRatio('#999999', '#ffffff')).toBeLessThan(4.5);
+	expect(contrastRatio('rgb(255, 255, 255)', 'rgb(0, 0, 0)')).toBeCloseTo(21, 6);
 }
 
 // -- phase 4 (plan 04-14) ------------------------------------------------------------
@@ -485,7 +515,8 @@ export function toggleViewWithoutDownload(on: boolean): void {
 	occ('config:app:set', 'core', 'shareapi_allow_view_without_download', `--value=${on ? 'yes' : 'no'}`, '--type=boolean');
 }
 
-async function apiAs(user: User): Promise<APIRequestContext> {
+/** A request context that signs in as the user with basic auth on every request. */
+export async function apiAs(user: User): Promise<APIRequestContext> {
 	return request.newContext({
 		baseURL: process.env.NC_URL ?? 'http://localhost:8080',
 		httpCredentials: { username: user.name, password: user.password, send: 'always' },
@@ -601,4 +632,415 @@ export function foldedTokens(text: string): Set<string> {
 /** One token folded like foldedTokens. */
 export function fold(word: string): string {
 	return word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// -- phase 4, export and sidecar (plan 04-17) ------------------------------------------
+
+/** The name alice gave the video of the seed (with an umlaut, D1), and the folder of the sidecar share. */
+export const S7_VIDEO_NAME = 'S7-Übung.webm';
+export const ABLAGE_FOLDER = 'Ablage';
+export const ABLAGE_FILE = 's7-ablage.wav';
+/** The transcript language of both: the speech of S7_DE and S7_DE_DIGIT is German (fetch_speech.py). */
+export const S7_LANGUAGE = 'de';
+
+export type Language = 'en' | 'de' | 'fr';
+export type Texts = Record<Language, string>;
+
+// The texts of 04-UI-SPEC (Copywriting Contract, approved by the owner on
+// 2026-11-16) and the stock key it names, copied from its tables, never
+// written here: the test has to see what the owner approved. The catalogues
+// themselves (php/l10n) are held to the same wording by the backend gates.
+export const EXPORT_TEXTS = {
+	T13: { de: 'Untertitel-Entwurf', en: 'Subtitle draft', fr: 'Brouillon de sous-titres' },
+	T14: {
+		de: 'Automatisch erstellt und nicht geprüft. SRT und VTT enthalten Zeitmarken, TXT nur den Text.',
+		en: 'Created automatically and not reviewed. SRT and VTT contain time marks, TXT only the text.',
+		fr: 'Créé automatiquement et non vérifié. SRT et VTT contiennent des repères temporels, TXT uniquement le texte.',
+	},
+	T15: {
+		de: 'Transkript bis %s, Datei wird noch verarbeitet.',
+		en: 'Transcript up to %s, the file is still being processed.',
+		fr: "Transcription jusqu'à %s, le fichier est encore en cours de traitement.",
+	},
+	T16: { de: 'SRT herunterladen', en: 'Download SRT', fr: 'Télécharger le SRT' },
+	T17: { de: 'VTT herunterladen', en: 'Download VTT', fr: 'Télécharger le VTT' },
+	T18: { de: 'TXT herunterladen', en: 'Download TXT', fr: 'Télécharger le TXT' },
+	T19: { de: 'Neben die Datei legen', en: 'Save next to the file', fr: 'Enregistrer à côté du fichier' },
+	T20: {
+		de: 'Legt %s in denselben Ordner wie die Aufnahme. Eine vorhandene Datei wird nie überschrieben.',
+		en: 'Saves %s in the same folder as the recording. An existing file is never overwritten.',
+		fr: "Enregistre %s dans le même dossier que l'enregistrement. Un fichier existant n'est jamais remplacé.",
+	},
+	T21: {
+		de: '%s liegt jetzt im selben Ordner wie die Aufnahme.',
+		en: '%s is now in the same folder as the recording.',
+		fr: "%s se trouve maintenant dans le même dossier que l'enregistrement.",
+	},
+	T22a: { de: 'Datei existiert bereits', en: 'File already exists', fr: 'Le fichier existe déjà' },
+	T22b: {
+		de: 'Im Ordner liegt schon eine Datei namens %s. Sie wird nicht überschrieben. Für eine neue Ablage die vorhandene Datei zuerst löschen oder umbenennen.',
+		en: 'The folder already contains a file named %s. It is not overwritten. To save again, delete or rename the existing file first.',
+		fr: "Le dossier contient déjà un fichier nommé %s. Il n'est pas remplacé. Pour enregistrer à nouveau, supprimez ou renommez d'abord le fichier existant.",
+	},
+	T23: {
+		de: 'In diesem Ordner dürfen keine Dateien angelegt werden. Herunterladen geht trotzdem.',
+		en: 'Files cannot be created in this folder. Downloading still works.',
+		fr: "Il n'est pas possible de créer des fichiers dans ce dossier. Le téléchargement reste possible.",
+	},
+	T24: {
+		de: 'Diese Freigabe erlaubt keine Downloads. Untertitel und Transkript lassen sich deshalb weder herunterladen noch ablegen.',
+		en: 'This share does not allow downloads. Subtitles and transcript can therefore neither be downloaded nor saved.',
+		fr: "Ce partage n'autorise pas les téléchargements. Les sous-titres et la transcription ne peuvent donc être ni téléchargés ni enregistrés.",
+	},
+	T25: {
+		de: 'Der Untertitel-Entwurf lässt sich gerade nicht erstellen. Die Wiedergabe funktioniert trotzdem. Später erneut versuchen.',
+		en: 'The subtitle draft cannot be created right now. Playback works regardless. Try again later.',
+		fr: 'Le brouillon de sous-titres ne peut pas être créé pour le moment. La lecture fonctionne quand même. Réessayez plus tard.',
+	},
+	T26: {
+		de: 'Der Name der Untertiteldatei wäre zu lang. Nach einer Umbenennung der Aufnahme in einen kürzeren Namen erneut versuchen.',
+		en: 'The name of the subtitle file would be too long. Rename the recording to a shorter name and try again.',
+		fr: "Le nom du fichier de sous-titres serait trop long. Renommez l'enregistrement avec un nom plus court et réessayez.",
+	},
+	T27: {
+		de: 'Zu viele Versuche in kurzer Zeit. Etwas später erneut versuchen.',
+		en: 'Too many attempts in a short time. Try again a little later.',
+		fr: 'Trop de tentatives en peu de temps. Réessayez un peu plus tard.',
+	},
+	T29: {
+		de: 'Der Untertitel-Entwurf konnte nicht erstellt werden',
+		en: 'The subtitle draft could not be created',
+		fr: "Le brouillon de sous-titres n'a pas pu être créé",
+	},
+	T29b: { de: 'Die Untertitel wurden nicht abgelegt', en: 'The subtitles were not saved', fr: "Les sous-titres n'ont pas été enregistrés" },
+	T30: { de: 'Zurück zur Wiedergabe', en: 'Back to playback', fr: 'Retour à la lecture' },
+	T31: { de: '%s, Untertitel-Entwurf', en: '%s, subtitle draft', fr: '%s, brouillon de sous-titres' },
+	T32: { de: 'Deutsch', en: 'German', fr: 'Allemand' },
+	T35: {
+		de: 'Untertitel-Entwurf, automatisch erstellt und nicht geprüft.',
+		en: 'Subtitle draft, created automatically and not reviewed.',
+		fr: 'Brouillon de sous-titres, créé automatiquement et non vérifié.',
+	},
+	// Stock key "Show in Files" with the wording of the catalogues (04-UI-SPEC, owner answer).
+	SHOW_IN_FILES: { de: 'In Dateien anzeigen', en: 'Show in Files', fr: 'Afficher dans Fichiers' },
+	// Stock text A5 (04-UI-SPEC, "Unverändert weiterverwendete Texte"): no transcript, and every exclusion.
+	A5: {
+		de: 'Für diese Datei gibt es noch kein Transkript.',
+		en: 'There is no transcript for this file yet.',
+		fr: "Il n'y a pas encore de transcription pour ce fichier.",
+	},
+} as const satisfies Record<string, Texts>;
+
+/** A text with its one placeholder %s filled. */
+export function fill(text: string, value: string): string {
+	return text.replace('%s', value);
+}
+
+/**
+ * The user and display language of a project for the specs of plan 04-17:
+ * the basic matrix of 04-UI-SPEC is German (elke, de_DE), the French project
+ * reads as fleur, high contrast as dora (English). All three are in the group
+ * "review", which receives S7-Übung.webm and s7-zahlwort.wav.
+ */
+export function phase4User(testInfo: TestInfo): { user: User; language: Language } {
+	if (isHighContrast(testInfo)) {
+		return { user: users.dora(), language: 'en' };
+	}
+	if (testInfo.project.metadata?.language === 'fr') {
+		return { user: users.fleur(), language: 'fr' };
+	}
+	return { user: users.elke(), language: 'de' };
+}
+
+/** The name of the export of a file: last extension cut, then language and format (D-04-04). */
+export function exportName(fileName: string, format: ExportFormat, language = S7_LANGUAGE): string {
+	const dot = fileName.lastIndexOf('.');
+	const base = dot <= 0 ? fileName : fileName.slice(0, dot);
+	return `${base}.${language}.${format}`;
+}
+
+/** The playback page of a file at a time mark. */
+export function playAt(fileId: string, seconds: number): string {
+	return `${APP_PATH}/play/${fileId}?t=${seconds}`;
+}
+
+/** The export, track and sidecar addresses of a file, built like the routes of ExportController. */
+export function exportRoutes(fileId: string): { srt: string; vtt: string; txt: string; track: string; sidecar: string } {
+	return {
+		srt: `${APP_PATH}/export/${fileId}/srt`,
+		vtt: `${APP_PATH}/export/${fileId}/vtt`,
+		txt: `${APP_PATH}/export/${fileId}/txt`,
+		track: `${APP_PATH}/track/${fileId}`,
+		sidecar: `${APP_PATH}/sidecar/${fileId}`,
+	};
+}
+
+/** A transcript can take minutes after the seed; the export answers 200 once it is there. */
+export const TRANSCRIPT_WITHIN_MS = 15 * 60_000;
+
+/** Wait until the export of the file answers 200 for the user: there is a transcript to export. */
+export async function expectTranscript(user: User, fileId: string): Promise<void> {
+	await expect
+		.poll(async () => (await exportResponse(user, fileId, 'txt')).status, {
+			message: `file ${fileId} has no transcript for ${user.name} after ${TRANSCRIPT_WITHIN_MS / 60_000} min`,
+			timeout: TRANSCRIPT_WITHIN_MS,
+			intervals: [10_000],
+		})
+		.toBe(200);
+}
+
+/** The request token of the page, the way play.js reads it for the POST of the sidecar. */
+export async function requestToken(page: Page): Promise<string> {
+	return page.evaluate(() => document.head.dataset.requesttoken ?? '');
+}
+
+/** A width and a colour scheme: one picture of a page without loading it again. */
+export type Variant = readonly [number, 'light' | 'dark'];
+export const ALL_VARIANTS: readonly Variant[] = [
+	[375, 'light'],
+	[375, 'dark'],
+	[768, 'light'],
+	[768, 'dark'],
+	[1280, 'light'],
+	[1280, 'dark'],
+];
+
+/**
+ * Pictures of the page as it stands in the given widths and schemes (the
+ * pattern of preview.spec.ts shots()), waiting for the anchor before each; the
+ * page goes back to 1280 px light afterwards.
+ */
+export async function screenshotVariants(page: Page, name: string, testInfo: TestInfo, variants: readonly Variant[], anchor: Locator): Promise<void> {
+	for (const [width, colorScheme] of variants) {
+		await page.setViewportSize({ width, height: 900 });
+		await page.emulateMedia({ colorScheme });
+		await expect(anchor).toBeVisible();
+		await screenshot(page, name, testInfo, `w${width}-${colorScheme}`);
+	}
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.emulateMedia({ colorScheme: 'light' });
+}
+
+/** Sign in as another user in the same page; leave the app first, so its background requests start no new session. */
+export async function switchUser(page: Page, user: User): Promise<void> {
+	await page.goto('about:blank');
+	await page.context().clearCookies();
+	await login(page, user);
+}
+
+/** WebDAV DELETE of a file of the user; answers the status (204 deleted, 404 not there). */
+export async function deleteFile(user: User, path: string): Promise<number> {
+	const api = await apiAs(user);
+	try {
+		const encoded = path.split('/').map(encodeURIComponent).join('/');
+		const response = await api.delete(`/remote.php/dav/files/${encodeURIComponent(user.name)}/${encoded}`);
+		return response.status();
+	} finally {
+		await api.dispose();
+	}
+}
+
+/** Upload a file by WebDAV into a folder of the user (made when missing) and answer its file id. */
+export async function uploadTo(user: User, folder: string, name: string, data: Buffer, contentType: string): Promise<string> {
+	const api = await apiAs(user);
+	try {
+		const base = `/remote.php/dav/files/${encodeURIComponent(user.name)}/${encodeURIComponent(folder)}`;
+		const made = await api.fetch(base, { method: 'MKCOL' });
+		// 201 created, 405 when the folder is already there.
+		expect([201, 405]).toContain(made.status());
+		const target = `${base}/${encodeURIComponent(name)}`;
+		const put = await api.put(target, { data, headers: { 'Content-Type': contentType }, timeout: 120_000 });
+		expect([201, 204]).toContain(put.status());
+		const found = await api.fetch(target, {
+			method: 'PROPFIND',
+			headers: { Depth: '0', 'Content-Type': 'application/xml' },
+			data:
+				'<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">' +
+				'<d:prop><oc:fileid/></d:prop></d:propfind>',
+		});
+		expect(found.status()).toBe(207);
+		const fileId = /<oc:fileid>(\d+)<\/oc:fileid>/.exec(await found.text())?.[1];
+		expect(fileId, 'PROPFIND answers oc:fileid').toBeDefined();
+		return fileId as string;
+	} finally {
+		await api.dispose();
+	}
+}
+
+// -- shares of the owner, over the sharing API ------------------------------------------
+
+const SHARES_API = '/ocs/v2.php/apps/files_sharing/api/v1/shares';
+const OCS_HEADERS = { 'OCS-APIRequest': 'true', Accept: 'application/json' };
+
+/** The id of the share of path to shareWith that the owner made, or null. */
+export async function findShare(owner: User, path: string, shareWith: string): Promise<string | null> {
+	const api = await apiAs(owner);
+	try {
+		const response = await api.get(`${SHARES_API}?path=${encodeURIComponent(path)}`, { headers: OCS_HEADERS });
+		expect(response.status(), `shares of ${path}`).toBe(200);
+		const body = await response.json();
+		const shares: Array<{ id: string | number; share_with: string }> = body.ocs.data;
+		const share = shares.find((item) => item.share_with === shareWith);
+		return share === undefined ? null : String(share.id);
+	} finally {
+		await api.dispose();
+	}
+}
+
+/** The share of path to shareWith, made by the owner when it is not there yet; answers its id. */
+export async function ensureShare(owner: User, path: string, shareWith: string, shareType: 0 | 1, permissions: number): Promise<string> {
+	const found = await findShare(owner, path, shareWith);
+	if (found !== null) {
+		return found;
+	}
+	const api = await apiAs(owner);
+	try {
+		const response = await api.post(SHARES_API, {
+			headers: OCS_HEADERS,
+			form: { path, shareWith, shareType: String(shareType), permissions: String(permissions) },
+		});
+		expect(response.status(), `share of ${path} with ${shareWith}`).toBe(200);
+		const body = await response.json();
+		return String(body.ocs.data.id);
+	} finally {
+		await api.dispose();
+	}
+}
+
+/** Change one share of the owner: permissions and/or the download attribute (OCS PUT). */
+export async function updateShare(owner: User, id: string, change: { permissions?: number; download?: boolean }): Promise<void> {
+	const form: Record<string, string> = {};
+	if (change.permissions !== undefined) {
+		form.permissions = String(change.permissions);
+	}
+	if (change.download !== undefined) {
+		form.attributes = JSON.stringify([{ scope: 'permissions', key: 'download', value: change.download }]);
+	}
+	const api = await apiAs(owner);
+	try {
+		const response = await api.put(`${SHARES_API}/${encodeURIComponent(id)}`, { headers: OCS_HEADERS, form });
+		expect(response.status(), `update of share ${id}`).toBe(200);
+	} finally {
+		await api.dispose();
+	}
+}
+
+/** Read, update, create, delete: the right of carol on alice's folder Ablage from ci/seed.sh. */
+export const ABLAGE_PERMISSIONS = 15;
+export const READ_ONLY = 1;
+
+/** The share of alice's folder Ablage with carol from ci/seed.sh. */
+export async function ablageShare(): Promise<string> {
+	const id = await findShare(users.alice(), `/${ABLAGE_FOLDER}`, 'carol');
+	expect(id, 'ci/seed.sh shared the folder Ablage with carol').not.toBeNull();
+	return id as string;
+}
+
+/** Exclude a user from the app by occ, or take the rule away again (T-04-52: always in finally). */
+export function excludeUser(uid: string, on: boolean): void {
+	occ('audio_video_search:exclude', `--user=${uid}`, ...(on ? [] : ['--remove']));
+}
+
+// -- the container of the backend (the way of the @unreachable step) ---------------------
+
+const HARP_URL = process.env.AVS_HARP_URL ?? 'http://localhost:8090';
+const BACKEND_APP_ID = process.env.BACKEND_APP_ID ?? 'audio_video_search_backend';
+/** The container is back within this time, or the run fails (the @unreachable step waits 120 s). */
+const CONTAINER_BACK_MS = 3 * 60_000;
+
+/** Stop the container of the backend; docker stop returns once it is down. */
+export function stopContainer(): void {
+	execFileSync('docker', ['stop', env('EXAPP_CONTAINER')], { encoding: 'utf8', timeout: 120_000 });
+}
+
+/**
+ * Start the container again and wait for its heartbeat: the status route of
+ * HaRP answers 200 once AppAPI reaches the backend (the loop of the
+ * @unreachable step of deploy-harp.yml, as expect.poll instead of sleep).
+ */
+export async function startContainer(): Promise<void> {
+	execFileSync('docker', ['start', env('EXAPP_CONTAINER')], { encoding: 'utf8', timeout: 120_000 });
+	const admin = users.admin();
+	const api = await request.newContext({
+		baseURL: HARP_URL,
+		httpCredentials: { username: admin.name, password: admin.password, send: 'always' },
+	});
+	try {
+		await expect
+			.poll(
+				async () => {
+					try {
+						return (await api.get(`/exapps/${BACKEND_APP_ID}/status`)).status();
+					} catch {
+						return 0;
+					}
+				},
+				{ message: 'the backend container did not come back', timeout: CONTAINER_BACK_MS, intervals: [2_000] },
+			)
+			.toBe(200);
+	} finally {
+		await api.dispose();
+	}
+}
+
+/**
+ * Run body with the container stopped and start it again in finally (T-04-52),
+ * then wait until the export of a file answers 200 again, so the next test
+ * meets a backend that serves.
+ */
+export async function withContainerStopped(body: () => Promise<void>, readyAs: User, readyFileId: string): Promise<void> {
+	stopContainer();
+	try {
+		await body();
+	} finally {
+		await startContainer();
+		await expect
+			.poll(async () => (await exportResponse(readyAs, readyFileId, 'txt')).status, {
+				message: 'the export did not answer again after the container came back',
+				timeout: CONTAINER_BACK_MS,
+				intervals: [2_000],
+			})
+			.toBe(200);
+	}
+}
+
+/**
+ * The HTML of the playback column from the excerpt block on (the excerpt
+ * block and everything after it, text nodes included) and the tail after the
+ * excerpt block alone: X4 compares these byte for byte.
+ */
+export async function columnFromExcerpt(page: Page): Promise<{ fromExcerpt: string; tail: string }> {
+	return page.locator('section.avs-excerpt').evaluate((excerpt) => {
+		let tail = '';
+		for (let node = excerpt.nextSibling; node !== null; node = node.nextSibling) {
+			tail += node.nodeType === Node.ELEMENT_NODE ? (node as Element).outerHTML : (node.textContent ?? '');
+		}
+		return { fromExcerpt: excerpt.outerHTML + tail, tail };
+	});
+}
+
+/** The first cue of a WebVTT text: start in seconds and text, after the header and the NOTE block. */
+export function firstCue(vtt: string): { start: number; text: string } {
+	const blocks = vtt.replace(/\r\n/g, '\n').split(/\n{2,}/);
+	for (const block of blocks) {
+		const lines = block.split('\n');
+		const timing = lines.findIndex((line) => line.includes('-->'));
+		if (timing === -1) {
+			continue;
+		}
+		const start = /^\s*(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})\s+-->/.exec(lines[timing]);
+		if (start === null) {
+			throw new Error(`cue timing not readable: ${lines[timing]}`);
+		}
+		const seconds = Number(start[1] ?? '0') * 3600 + Number(start[2]) * 60 + Number(start[3]) + Number(start[4]) / 1000;
+		return { start: seconds, text: lines.slice(timing + 1).join('\n') };
+	}
+	throw new Error('the VTT holds no cue');
+}
+
+/** The lines of the NOTE block of a WebVTT text (empty without one). */
+export function noteLines(vtt: string): string[] {
+	const blocks = vtt.replace(/\r\n/g, '\n').split(/\n{2,}/);
+	const note = blocks.find((block) => block.startsWith('NOTE'));
+	return note === undefined ? [] : note.split('\n').slice(1);
 }

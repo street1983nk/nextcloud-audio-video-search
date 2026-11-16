@@ -40,8 +40,12 @@
 #            and s7-ziffer.wav (S7_DE_DIGIT: Parakeet writes the number as a
 #            digit); s7-zahlwort.wav goes to the group "review" with the
 #            download switched off (SRCH-04 here, X3 in plan 04-17),
-#            s7-ziffer.wav to carol read only with download (X5 in plan
-#            04-17, and the person of the person filter of S6)
+#            s7-ziffer.wav to carol read only with download (the person of
+#            the person filter of S6)
+#   alice    owns S7-Übung.webm (the S7_DE speech as a video, plan 04-17),
+#            shared with the group "review" with download, and the folder
+#            Ablage with s7-ablage.wav, shared with carol with the right to
+#            create files (X5, E3 and E4 change that share for a moment)
 #
 # The passwords come out of the job variables of the throwaway instance, never
 # out of repository secrets. The file ids land in fileids.env for the later
@@ -51,6 +55,8 @@
 #        CAROL_PASS=... MALLORY_PASS=... DORA_PASS=... ELKE_PASS=...
 #        FLEUR_PASS=... [AVS_PHASE3_MEDIA=1 OSKAR_PASS=...
 #        [AVS_PHASE4_MEDIA=1 AVS_SPEECH_S7_DE=... AVS_SPEECH_S7_DE_DIGIT=...]] ci/seed.sh
+# (AVS_PHASE4_MEDIA=1 also needs s7-video.webm and lang-40min-x2.ogg in
+# MEDIA_DIR: ci/make-testmedia.sh makes them when AVS_SPEECH_S7_DE is set)
 set -euo pipefail
 
 : "${NC_URL:?NC_URL is required}"
@@ -328,11 +334,31 @@ upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE_DIGIT}" s7-ziffer.wav
 share --data-urlencode 'path=/s7-zahlwort.wav' --data-urlencode "shareWith=${REVIEW_GROUP}" 	--data-urlencode 'shareType=1' --data-urlencode 'permissions=1' 	--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
 share --data-urlencode 'path=/s7-ziffer.wav' --data-urlencode 'shareWith=carol' 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
 
+# Plan 04-17: the video with speech under a name with an umlaut (D1), shared
+# with the group "review" with download (X1, track, sidecar of the review
+# users), and the folder Ablage with a copy of the digit clip, shared with
+# carol with the right to create files: her sidecar lands in a folder whose
+# rights the specs can take away for a moment (X5, E3, E4). A file share would
+# not do for that: the parent of a shared file is the home of the recipient,
+# where the recipient may always create files. 17 + 2 = 19 of the 20 shares.
+for name in s7-video.webm lang-40min-x2.ogg; do
+	test -s "${MEDIA_DIR}/${name}" || { echo "${name} is missing in MEDIA_DIR (ci/make-testmedia.sh with AVS_SPEECH_S7_DE)"; exit 1; }
+done
+# "S7-Übung.webm", percent encoded for the WebDAV address.
+S7_VIDEO_DAV='S7-%C3%9Cbung.webm'
+upload alice "${ALICE_PASS}" "${MEDIA_DIR}/s7-video.webm" "${S7_VIDEO_DAV}"
+curl -sfS -u "alice:${ALICE_PASS}" -X MKCOL "$(dav alice Ablage)" > /dev/null
+upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE_DIGIT}" Ablage/s7-ablage.wav
+share --data-urlencode 'path=/S7-Übung.webm' --data-urlencode "shareWith=${REVIEW_GROUP}" 	--data-urlencode 'shareType=1' --data-urlencode 'permissions=1'
+share --data-urlencode 'path=/Ablage' --data-urlencode 'shareWith=carol' 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=15'
+
 occ files:scan --all > /dev/null
 
 declare -A PHASE4_IDS=(
 	[FILEID_S7_DE]="$(file_id s7-zahlwort.wav)"
 	[FILEID_S7_DE_DIGIT]="$(file_id s7-ziffer.wav)"
+	[FILEID_S7_VIDEO]="$(file_id "${S7_VIDEO_DAV}")"
+	[FILEID_ABLAGE]="$(file_id Ablage/s7-ablage.wav)"
 )
 for key in "${!PHASE4_IDS[@]}"; do
 	[[ "${PHASE4_IDS[${key}]}" =~ ^[0-9]+$ ]] || { echo "the file id ${key} could not be read"; exit 1; }

@@ -29,7 +29,10 @@
 #   ohne-ton.mp4       a picture only, MPEG-4 part 2, no audio   A11 other reason
 #                                                                (no_audio)
 #
-# usage: [AVS_SPEECH_DE=... AVS_SPEECH_TR=...] ci/make-testmedia.sh [target directory, default testdata]
+# Phase 4 (plan 04-17): with AVS_SPEECH_S7_DE set as well, a video with speech
+# and a second 40 min file with other bytes (see the section at the end).
+#
+# usage: [AVS_SPEECH_DE=... AVS_SPEECH_TR=... [AVS_SPEECH_S7_DE=...]] ci/make-testmedia.sh [target directory, default testdata]
 set -euo pipefail
 
 target="${1:-testdata}"
@@ -108,3 +111,42 @@ grep -q schm "${target}/geschuetzt.m4a" || { echo "geschuetzt.m4a carries no pro
 sha256sum "${target}"/stille-60s.ogg "${target}"/geschuetzt.m4a "${target}"/lang-12h01.flac \
 	"${target}"/lang-40min.ogg "${target}"/viele-stellen.ogg "${target}"/zwei-stellen.ogg \
 	"${target}"/tuerkisch.wav "${target}"/ohne-ton.mp4
+
+# -- phase 4 (plan 04-17) ---------------------------------------------------------
+#
+# With AVS_SPEECH_S7_DE set as well (the S7 clip of fetch_speech.py --s7-env):
+#
+#   s7-video.webm      the S7_DE clip under a grey picture, VP9 +   X1 video, the
+#                      Opus: the one video with speech, for the     subtitle track,
+#                      track in the player; seeded as               D1 with an umlaut
+#                      "S7-Übung.webm"
+#   lang-40min-x2.ogg  lang-40min.ogg with its own title tag: the   X2, uploaded by
+#                      same speech, other bytes, so the container   export.spec.ts
+#                      cannot take the finished transcript of the
+#                      phase 3 copy (media_key file_sha256)
+
+speech_s7="${AVS_SPEECH_S7_DE:-}"
+if [ -z "${speech_s7}" ]; then
+	echo "AVS_SPEECH_S7_DE is not set: no media of phase 4"
+	exit 0
+fi
+test -s "${speech_s7}"
+
+ff -f lavfi -i color=c=gray:s=320x180:r=10 -i "${speech_s7}" \
+	-map 0:v -map 1:a \
+	-c:v libvpx-vp9 -b:v 0 -crf 40 -deadline realtime \
+	-c:a libopus -b:a 48k \
+	-shortest "${target}/s7-video.webm"
+
+ff -stream_loop -1 -i "${speech_de}" -t "${PARTIAL_SECONDS}" -c:a libopus -b:a 24k \
+	-metadata title=phase4-x2 "${target}/lang-40min-x2.ogg"
+
+for name in s7-video.webm lang-40min-x2.ogg; do
+	test -s "${target}/${name}" || { echo "${name} was not made"; exit 1; }
+done
+# Same bytes as the phase 3 copy would give X2 the finished transcript at once.
+if cmp -s "${target}/lang-40min.ogg" "${target}/lang-40min-x2.ogg"; then
+	echo "lang-40min-x2.ogg has the bytes of lang-40min.ogg"
+	exit 1
+fi
+sha256sum "${target}"/s7-video.webm "${target}"/lang-40min-x2.ogg
