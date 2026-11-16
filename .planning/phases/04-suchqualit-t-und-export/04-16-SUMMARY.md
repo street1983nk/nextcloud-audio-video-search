@@ -124,3 +124,34 @@ SRCH-04, SRCH-05, SRCH-06 und EXP-01 bis EXP-04 abgehakt (Belege 04-15-SUMMARY: 
 ## Self-Check: PASSED
 
 - 42c0cae und 52e8da1 im Log, Dateien vorhanden (play.php, PageController.php, PlayControllerTest.php, test_ui_assets.py, export.spec.ts, 04-UI-SPEC.md, 04-VALIDATION.md, deferred-items.md).
+
+## Push 4 (CI-Beleg des nodownload-Fixes)
+
+Push mit Owner-Freigabe: `phase-04` e5a2479..f7bb9da (42c0cae, 52e8da1, c2896a8, f7bb9da). Nur Push-Läufe, kein Discovery-Dispatch mit `legs=all`. `main` unverändert: `git ls-remote origin refs/heads/main` per `cmp` identisch mit `approvals/main-before-f7bb9dafe0bf0d5a5fa82017c6cb400a286944b6` (ea97b58).
+
+| Workflow | Lauf | Ergebnis |
+|---|---|---|
+| PHP gates | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43955067820 | grün, PHPUnit `OK (923 tests, 11531 assertions)`, darunter die zwei neuen Fälle in `PlayControllerTest` (`testOnlyAClearAllowedLeavesTheDownloadEntryOfThePlayer`, `testTheRenderedMediumOfABlockedShareCarriesNoDownloadAndAnOpenOneDoesNot`) |
+| Python gates | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43955067741 | grün (inkl. Gate `test_ui_assets`) |
+| Discovery acceptance (Push-Lauf) | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43955067760 | grün |
+| Deploy through HaRP | https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43955067783 | grün nach Versuch 2 (alle sechs deploy-Beine und vier upgrade-Beine) |
+
+**HaRP Versuch 1:** fünf deploy-Beine grün; `deploy-harp stable35 ubuntu-24.04` mit einem Fehler in "Playwright on the running instance" (131 passed, 1 failed): `[w375-light] play.spec.ts:194 Suchtreffer für die Abnahme @screenshot`, Login blieb auf `/index.php/login` (`helpers.ts:121`, `not.toHaveURL` nach 5 s). Kein Bezug zum Fix, derselbe Test in allen anderen Projekten und Beinen grün: Flake, einmal `gh run rerun --failed`. **Versuch 2:** Bein grün, Job 133630300374, "Playwright on the running instance" 132 passed.
+
+**@phase4 je Bein** (Schritt "Playwright, search quality and export of phase 4"): 50 passed, 157 skipped in allen sechs Beinen (stable33/34/35 je amd64 und arm64; stable35 amd64 aus Versuch 2). Phase-3-Schritt je Bein 46 passed, Parser der echten Downloads 11 passed.
+
+**X3 (Attribut vorhanden) und X1 (kein Attribut), PASS-Zeilen** (je Bein 11 X1/X3-Treffer grün), Beispiel stable35 amd64, Versuch 2:
+
+```
+✓    5 [w375-light] › export.spec.ts:471:1 › X3 Freigabe mit Download-Sperre, Ansehen erlaubt: nur T13 und T24, Export, Spur und Ablage 403 @phase4 @axe @screenshot (3.9s)
+✓    1 [w375-light] › export.spec.ts:258:1 › X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, Spur ohne default @phase4 @axe @screenshot (4.3s)
+```
+
+und stable33 arm64, Versuch 1:
+
+```
+✓  129 [w1280-light] › export.spec.ts:471:1 › X3 Freigabe mit Download-Sperre, Ansehen erlaubt: nur T13 und T24, Export, Spur und Ablage 403 @phase4 @axe @screenshot (6.6s)
+✓  125 [w1280-light] › export.spec.ts:258:1 › X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, Spur ohne default @phase4 @axe @screenshot (5.7s)
+```
+
+X3 prüft `toHaveAttribute('controlslist', 'nodownload')` an `#avs-media`, X1 `#avs-media[controlslist]` mit Anzahl 0 (Diff 42c0cae in `ci/playwright/export.spec.ts`).
