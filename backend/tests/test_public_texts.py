@@ -187,3 +187,80 @@ def test_the_plural_forms_of_a_catalogue_are_read_too() -> None:
 def test_the_dash_rule_fires() -> None:
     assert dash_and_emoji_findings("s", "a \u2014 b \u2013 c \U0001f600") == ["s: em dash", "s: en dash", "s: emoji"]
     assert dash_and_emoji_findings("s", "a - b, c: d") == []
+
+
+# -- EXP-04: the subtitles are a draft, never a BITV claim ------------------------
+
+# Spelled loosely: any case, a hyphen or white space between the words.
+BITV_CLAIMS = re.compile(
+    r"(?i)\bbitv[\s-]*(?:konform|compliant)\b|\bconformes?\s+(?:(?:a|à)\s+la\s+)?bitv\b|\bbarrierefrei[\s-]+gepr(?:ü|ue)ft\b"
+)
+SUBTITLE_DRAFT = {"de": "Untertitel-Entwurf", "en": "Subtitle draft", "fr": "Brouillon de sous-titres"}
+# T15 and T35 end up in the NOTE block of a VTT file; "-->" or a line break would break it.
+VTT_NOTE_KEYS = (
+    "Transcript up to %s, the file is still being processed.",
+    "Subtitle draft, created automatically and not reviewed.",
+)
+
+
+def bitv_claim_findings(name: str, source: str) -> list[str]:
+    return [f"{name}: {match.group(0)!r} claims BITV conformity" for match in BITV_CLAIMS.finditer(source)]
+
+
+def public_text_files() -> list[Path]:
+    """Catalogues, templates, READMEs, user documents and store texts of both apps."""
+    files = [*sorted((REPO_ROOT / "php" / "l10n").glob("*.json")), *sorted((BACKEND_ROOT / "l10n").glob("*.json"))]
+    files += sorted((REPO_ROOT / "php" / "templates").glob("*.php"))
+    files += sorted(REPO_ROOT.glob("README*.md")) + sorted((REPO_ROOT / "docs").glob("*.md"))
+    files += [REPO_ROOT / "php" / "appinfo" / "info.xml", BACKEND_ROOT / "appinfo" / "info.xml"]
+    return files
+
+
+def test_no_text_claims_bitv_conformity_for_drafts() -> None:
+    files = public_text_files()
+    assert len(files) >= 14
+
+    findings = [
+        finding
+        for path in files
+        for finding in bitv_claim_findings(path.relative_to(REPO_ROOT).as_posix(), path.read_text(encoding="utf-8"))
+    ]
+
+    assert findings == []
+
+
+def test_every_catalogue_names_the_subtitle_draft() -> None:
+    for language in ("de", "de_DE", "en", "fr"):
+        catalogue = json.loads((REPO_ROOT / "php" / "l10n" / f"{language}.json").read_text(encoding="utf-8"))
+        translations = catalogue["translations"]
+        assert translations["Subtitle draft"] == SUBTITLE_DRAFT[language[:2]], language
+        for key in VTT_NOTE_KEYS:
+            assert "-->" not in translations[key], (language, key)
+            assert "\n" not in translations[key], (language, key)
+            assert "\r" not in translations[key], (language, key)
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        "Die Untertitel sind BITV-konform.",
+        "bitv konform",
+        "Subtitles are BITV compliant.",
+        "BITV-Compliant",
+        "Sous-titres conformes BITV",
+        "conforme BITV",
+        "conforme à la BITV",
+        "Barrierefrei geprüft",
+        "barrierefrei-geprüft",
+    ],
+)
+def test_the_bitv_rule_fires(sample: str) -> None:
+    assert len(bitv_claim_findings("sample", sample)) == 1
+
+
+@pytest.mark.parametrize(
+    "sample",
+    ["Untertitel-Entwurf", "Subtitle draft", "Brouillon de sous-titres", "WCAG 2.1 AA (BITV-relevant)"],
+)
+def test_the_bitv_rule_leaves_the_draft_alone(sample: str) -> None:
+    assert bitv_claim_findings("sample", sample) == []

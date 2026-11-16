@@ -1,7 +1,7 @@
 ---
 phase: 4
 slug: suchqualit-t-und-export
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-11-16
@@ -270,7 +270,7 @@ Text-Gate (EXP-04): "BITV-konform", "BITV compliant", "conforme BITV" (jede Schr
 
 ## Copywriting Contract
 
-**Status aller neuen Texte: ENTWURF, Owner-Review vor dem Bau (UI-Abnahme-Regel).**
+**Status aller neuen Texte: FREIGEGEBEN 2026-11-16 (Owner, ohne Änderungen am Wortlaut; siehe "Owner-Freigabe Phase 4").**
 
 Regeln (aus 01- und 03-UI-SPEC.md): `de` und `de_DE` inhaltsgleich, **unpersönlich** (weder du noch Sie). Französisch in Vous- bzw. unpersönlicher Form, U+00A0 vor `:` `;` `?` `!` (die Entwürfe enthalten keines dieser Zeichen). Echte Umlaute, keine Gedankenstriche, keine Emojis, kein Ausrufezeichen. Englischer Text = l10n-Schlüssel. Platzhalter `%s` (Zeit oder Dateiname).
 
@@ -286,7 +286,7 @@ Regeln (aus 01- und 03-UI-SPEC.md): `de` und `de_DE` inhaltsgleich, **unpersönl
 | Error state | Kollision (E2): "Datei existiert bereits" / "Im Ordner liegt schon eine Datei namens %s. Sie wird nicht überschrieben. Für eine neue Ablage die vorhandene Datei zuerst löschen oder umbenennen." |
 | Destructive confirmation | keine: Phase 4 hat keine zerstörende Aktion (Ablage überschreibt nie, Download verändert nichts) |
 
-### Neue Texte DE / EN / FR (Entwurf)
+### Neue Texte DE / EN / FR (freigegeben 2026-11-16)
 
 | Nr. | Verwendung | DE | EN | FR |
 |-----|------------|----|----|----|
@@ -420,7 +420,7 @@ Keine neuen Frontend-Pakete, kein npm, keine Vue-Komponenten. (webvtt-py und srt
 
 ## Owner-Freigabe Phase 4
 
-**Stand: vorgelegt 2026-11-16, Antwort offen.** Owner-Änderungen werden wörtlich in die Copywriting-Tabelle und hier übernommen. Vor der Antwort werden keine Kataloge geschrieben.
+**Stand: vorgelegt und freigegeben 2026-11-16.** Owner-Änderungen werden wörtlich in die Copywriting-Tabelle und hier übernommen. Vor der Antwort werden keine Kataloge geschrieben.
 
 ### 1. Texte T13 bis T35 (T28 frei)
 
@@ -484,4 +484,4 @@ DE "Transkript bis %s, Datei wird noch verarbeitet." übernimmt den Owner-Wortla
 
 ### Owner-Antwort
 
-(offen)
+**Freigegeben am 16.11.2026:** Texte T13 bis T35 wie vorgelegt, ohne Änderungen am Wortlaut (T15 wie D-04-17). Gestaltungsfragen O1 bis O10 alle mit der Empfehlung (ja). X3-Lesart wie vorgelegt: zwei getrennte Zustände; bei nicht sicher lesbarem Freigabe-Attribut fehlt der Abschnitt ganz. Kataloge `php/l10n/{de,de_DE,en,fr}.{json,js}` danach geschrieben (Plan 04-03, Task 3).

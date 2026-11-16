@@ -341,6 +341,15 @@ def test_the_php_catalogue_holds_the_texts_of_the_ui_spec() -> None:
     assert catalogues["fr"]["The administrators of this instance can raise the limit."] == (
         "L'administration de cette instance peut relever cette limite."
     )
+    # Phase 4 (04-UI-SPEC.md, T13 to T35, approved by the owner on 2026-11-16).
+    assert catalogues["de"]["Subtitle draft"] == "Untertitel-Entwurf"
+    assert catalogues["fr"]["Subtitle draft"] == "Brouillon de sous-titres"
+    assert catalogues["de"]["Download SRT"] == "SRT herunterladen"
+    assert catalogues["de"]["File already exists"] == "Datei existiert bereits"
+    assert catalogues["de"]["Transcript up to %s, the file is still being processed."] == (
+        "Transkript bis %s, Datei wird noch verarbeitet."
+    )
+    assert catalogues["de"]["%s, subtitle draft"] == "%s, Untertitel-Entwurf"
 
 
 # -- self tests: every rule has to be able to fire ------------------------------
