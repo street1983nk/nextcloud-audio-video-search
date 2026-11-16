@@ -32,13 +32,25 @@
 #   oskar    excluded from the app by occ, receives stille-60s.ogg: the leak
 #            probe P11 opens a file with a reason as an excluded user
 #
+# With AVS_PHASE4_MEDIA=1 as well (deploy-harp, plan 04-14) the S7 clips of
+# ci/media/fetch_speech.py (AVS_SPEECH_S7_DE, AVS_SPEECH_S7_DE_DIGIT, FLEURS,
+# CC-BY-4.0, transcripts measured beforehand) come in:
+#
+#   alice    owns s7-zahlwort.wav (S7_DE: a number word, a plural, a compound)
+#            and s7-ziffer.wav (S7_DE_DIGIT: Parakeet writes the number as a
+#            digit); s7-zahlwort.wav goes to the group "review" with the
+#            download switched off (SRCH-04 here, X3 in plan 04-17),
+#            s7-ziffer.wav to carol read only with download (X5 in plan
+#            04-17, and the person of the person filter of S6)
+#
 # The passwords come out of the job variables of the throwaway instance, never
 # out of repository secrets. The file ids land in fileids.env for the later
 # steps; this file is the only place that pairs an id with a test file.
 #
 # usage: NC_URL=... OCC=./occ MEDIA_DIR=... ALICE_PASS=... BOB_PASS=...
 #        CAROL_PASS=... MALLORY_PASS=... DORA_PASS=... ELKE_PASS=...
-#        FLEUR_PASS=... [AVS_PHASE3_MEDIA=1 OSKAR_PASS=...] ci/seed.sh
+#        FLEUR_PASS=... [AVS_PHASE3_MEDIA=1 OSKAR_PASS=...
+#        [AVS_PHASE4_MEDIA=1 AVS_SPEECH_S7_DE=... AVS_SPEECH_S7_DE_DIGIT=...]] ci/seed.sh
 set -euo pipefail
 
 : "${NC_URL:?NC_URL is required}"
@@ -49,6 +61,16 @@ set -euo pipefail
 PHASE3="${AVS_PHASE3_MEDIA:-0}"
 if [ "${PHASE3}" = "1" ]; then
 	: "${OSKAR_PASS:?OSKAR_PASS is required with AVS_PHASE3_MEDIA=1}"
+fi
+PHASE4="${AVS_PHASE4_MEDIA:-0}"
+if [ "${PHASE4}" = "1" ]; then
+	# Phase 4 builds on the review group of phase 3; a clip that is missing is a
+	# broken job, never a smaller proof.
+	[ "${PHASE3}" = "1" ] || { echo "AVS_PHASE4_MEDIA=1 needs AVS_PHASE3_MEDIA=1"; exit 1; }
+	: "${AVS_SPEECH_S7_DE:?AVS_SPEECH_S7_DE is required with AVS_PHASE4_MEDIA=1}"
+	: "${AVS_SPEECH_S7_DE_DIGIT:?AVS_SPEECH_S7_DE_DIGIT is required with AVS_PHASE4_MEDIA=1}"
+	test -s "${AVS_SPEECH_S7_DE}" || { echo "AVS_SPEECH_S7_DE is empty or missing"; exit 1; }
+	test -s "${AVS_SPEECH_S7_DE_DIGIT}" || { echo "AVS_SPEECH_S7_DE_DIGIT is empty or missing"; exit 1; }
 fi
 FILEIDS_ENV="${FILEIDS_ENV:-$(dirname "$0")/fileids.env}"
 SERVER_VERSION="${SERVER_VERSION:-}"
@@ -288,4 +310,31 @@ declare -A PHASE3_IDS=(
 for key in "${!PHASE3_IDS[@]}"; do
 	[[ "${PHASE3_IDS[${key}]}" =~ ^[0-9]+$ ]] || { echo "the file id ${key} could not be read"; exit 1; }
 	echo "${key}=${PHASE3_IDS[${key}]}" >> "${FILEIDS_ENV}"
+done
+
+# -- phase 4 (plan 04-14) -------------------------------------------------------
+
+if [ "${PHASE4}" != "1" ]; then
+	exit 0
+fi
+
+# The WAV clips as they are: the container transcribes them like any upload,
+# and search-quality.spec.ts waits for the transcript before it searches.
+upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE}" s7-zahlwort.wav
+upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE_DIGIT}" s7-ziffer.wav
+
+# Two more shares of alice: 15 of phase 1 and 3 plus these 2 stay under the 20
+# of SHARE_LIMIT; count_share inside share() checks it.
+share --data-urlencode 'path=/s7-zahlwort.wav' --data-urlencode "shareWith=${REVIEW_GROUP}" 	--data-urlencode 'shareType=1' --data-urlencode 'permissions=1' 	--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
+share --data-urlencode 'path=/s7-ziffer.wav' --data-urlencode 'shareWith=carol' 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
+
+occ files:scan --all > /dev/null
+
+declare -A PHASE4_IDS=(
+	[FILEID_S7_DE]="$(file_id s7-zahlwort.wav)"
+	[FILEID_S7_DE_DIGIT]="$(file_id s7-ziffer.wav)"
+)
+for key in "${!PHASE4_IDS[@]}"; do
+	[[ "${PHASE4_IDS[${key}]}" =~ ^[0-9]+$ ]] || { echo "the file id ${key} could not be read"; exit 1; }
+	echo "${key}=${PHASE4_IDS[${key}]}" >> "${FILEIDS_ENV}"
 done

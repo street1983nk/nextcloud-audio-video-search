@@ -9,6 +9,7 @@ taken, a wrong hash is refused, and a member ``../evil`` is never written.
 import hashlib
 import importlib.util
 import io
+import json
 import re
 import sys
 import tarfile
@@ -223,3 +224,40 @@ def test_missing_ffmpeg_exits_2(fs: ModuleType, tmp_path: Path, monkeypatch: pyt
     with pytest.raises(SystemExit) as stop:
         fs.main([str(tmp_path), "--ffmpeg", str(tmp_path / "no-such-ffmpeg")])
     assert stop.value.code == 2
+
+
+def test_s7_env_names_each_clip_and_its_forms(
+    fs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    """Plan 04-14: deploy-harp.yml writes these lines into GITHUB_ENV; nothing is fetched, ffmpeg is not needed."""
+    monkeypatch.delenv("AVS_FFMPEG", raising=False)
+    monkeypatch.setenv("PATH", "")
+    for clip in fs.S7_CLIPS:
+        (tmp_path / clip.name).write_bytes(b"RIFF")
+
+    assert fs.main([str(tmp_path), "--s7-env"]) == 0
+
+    lines = capsysbinary.readouterr().out.decode("utf-8").splitlines()
+    assert lines[:2] == [
+        f"AVS_SPEECH_S7_DE={tmp_path / 'speech_s7_de.wav'}",
+        f"AVS_SPEECH_S7_DE_DIGIT={tmp_path / 'speech_s7_de_digit.wav'}",
+    ]
+    assert lines[2].startswith("AVS_S7_TARGETS=")
+    assert len(lines) == 3
+    targets = json.loads(lines[2].removeprefix("AVS_S7_TARGETS="))
+    assert [item["key"] for item in targets] == ["S7_DE", "S7_DE_DIGIT"]
+    assert targets[0]["number_forms"] == ["20", "zwanzig", "twenty", "vingt"]
+    assert targets[1]["number_forms"] == ["12", "zwölf", "twelve", "douze"]
+    assert targets[0]["plural"] == "Polizisten"
+    assert targets[1]["plural"] is None
+
+
+def test_s7_env_without_the_clips_exits_3(fs: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "speech_s7_de.wav").write_bytes(b"RIFF")
+    (tmp_path / "speech_s7_de_digit.wav").write_bytes(b"")
+
+    assert fs.main([str(tmp_path), "--s7-env"]) == 3
+
+    captured = capsys.readouterr()
+    assert "speech_s7_de_digit.wav is missing" in captured.err
+    assert captured.out == ""

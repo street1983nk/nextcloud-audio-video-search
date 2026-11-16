@@ -1,6 +1,7 @@
 """Gepinnte Sprachclips für CI, Modelltests und Abnahme laden (plan 03-02).
 
 python -I ci/media/fetch_speech.py OUTDIR [--ffmpeg PFAD]
+python -I ci/media/fetch_speech.py OUTDIR --s7-env   (lädt nichts, Zeilen für GITHUB_ENV, Plan 04-14)
 ffmpeg kommt aus --ffmpeg, sonst aus der Umgebungsvariable AVS_FFMPEG, sonst aus PATH.
 
 Quelle und Lizenz: FLEURS, Google, CC-BY-4.0 (Hugging Face google/fleurs, feste Revision unten).
@@ -15,6 +16,7 @@ Audiodaten gehören nie ins Repo; OUTDIR liegt außerhalb.
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -23,7 +25,7 @@ import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import IO
 
@@ -46,9 +48,11 @@ class S7Targets:
 
     number_word, plural und compound stehen so im gemessenen Parakeet-Transkript (gefaltet
     verglichen); number_forms sind Ziffer, DE, EN und FR derselben Zahl, singular und head die
-    Suchbegriffe, die über Wortform beziehungsweise Präfix-Klausel auf die Datei führen.
+    Suchbegriffe, die über Wortform beziehungsweise Präfix-Klausel auf die Datei führen. key
+    benennt den Clip in der Umgebung der E2E-Schritte (AVS_SPEECH_<key>, FILEID_<key>).
     """
 
+    key: str
     number_word: str
     number_forms: tuple[str, str, str, str]
     compound: str
@@ -123,6 +127,7 @@ SPEECH_S7_DE = Clip(
         "tötete zwei Polizisten und verwundete über zwanzig weitere Menschen."
     ),
     s7=S7Targets(
+        key="S7_DE",
         number_word="zwanzig",
         number_forms=("20", "zwanzig", "twenty", "vingt"),
         compound="Polizeipräsidium",
@@ -145,6 +150,7 @@ SPEECH_S7_DE_DIGIT = Clip(
         "erhalten, wird daher als 3 zu 2 bezeichnet."
     ),
     s7=S7Targets(
+        key="S7_DE_DIGIT",
         number_word="12",
         number_forms=("12", "zwölf", "twelve", "douze"),
         compound="Seitenverhältnis",
@@ -271,11 +277,40 @@ def fetch(clip: Clip, out_dir: Path, ff: str) -> bool:
     return True
 
 
+def s7_env_lines(clip_dir: Path) -> list[str]:
+    """Die Zeilen für GITHUB_ENV: Pfad je S7-Clip und die Zielformen als eine JSON-Zeile (Plan 04-14)."""
+    lines: list[str] = []
+    targets: list[dict[str, object]] = []
+    for clip in S7_CLIPS:
+        if clip.s7 is None:
+            raise PinError(f"{clip.name} has no S7 targets")
+        path = clip_dir / clip.name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise PinError(f"{clip.name} is missing in {clip_dir}; fetch the clips first")
+        lines.append(f"AVS_SPEECH_{clip.s7.key}={path}")
+        targets.append(asdict(clip.s7))
+    lines.append("AVS_S7_TARGETS=" + json.dumps(targets, ensure_ascii=False, separators=(",", ":")))
+    return lines
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Fetch the pinned FLEURS speech clips (" + ATTRIBUTION + ").")
     parser.add_argument("outdir")
     parser.add_argument("--ffmpeg")
+    parser.add_argument(
+        "--s7-env",
+        action="store_true",
+        help="fetch nothing; print the S7 clip paths under OUTDIR and their target forms for GITHUB_ENV",
+    )
     args = parser.parse_args(argv)
+    if args.s7_env:
+        try:
+            lines = s7_env_lines(Path(args.outdir))
+        except PinError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_PIN
+        sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))
+        return 0
     ff = ffmpeg_binary(args.ffmpeg)
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -1,13 +1,17 @@
 // Shared pieces of the end-to-end specs: the users and file ids of ci/seed.sh,
 // the login, the OCS search as a user, the Unified Search dialog, the media
 // position, the screenshots, occ of the test instance and the contrast
-// measurement of plan 03-18.
+// measurement of plan 03-18, and the pieces of phase 4 (plan 04-14): the admin
+// switch for viewing without download, sha256 of a file over WebDAV, a
+// download into a folder, the export as text and the measured S7 forms.
 //
 // No fixed waits anywhere: web-first assertions, waitForResponse and
 // expect.poll only.
 import { execFileSync } from 'node:child_process';
-import { dirname } from 'node:path';
-import { expect, request, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
+import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { expect, request, test, type APIRequestContext, type Locator, type Page, type TestInfo } from '@playwright/test';
 
 export const APP_PATH = '/index.php/apps/audio_video_search';
 export const ADMIN_PATH = '/index.php/settings/admin/audio_video_search';
@@ -59,6 +63,11 @@ export const fileIds = {
 	// bob's two files with speech: four places and two places.
 	viele: (): string => env('FILEID_VIELE'),
 	zwei: (): string => env('FILEID_ZWEI'),
+	// Phase 4 (ci/seed.sh with AVS_PHASE4_MEDIA=1, plan 04-14): alice's S7 clips.
+	// s7De is shared with the group "review" with the download switched off
+	// (SRCH-04, X3), s7DeDigit with carol read only with download (X5).
+	s7De: (): string => env('FILEID_S7_DE'),
+	s7DeDigit: (): string => env('FILEID_S7_DE_DIGIT'),
 };
 
 export function isHighContrast(testInfo: TestInfo): boolean {
@@ -233,7 +242,9 @@ export async function expectPartialContent(page: Page): Promise<void> {
 }
 
 /**
- * A full page picture as screenshots/<name>-<variant>.png. The variant is the
+ * A full page picture as screenshots/<name>-<variant>.png (under
+ * AVS_SCREENSHOT_DIR instead when set: the step @phase4 keeps its pictures
+ * apart for the artifact phase4-screens). The variant is the
  * project name; a test that switches width and colour scheme itself (the
  * single runs of plan 03-18) names the variant it set, e.g. "w375-dark".
  */
@@ -241,7 +252,7 @@ export async function screenshot(page: Page, name: string, testInfo: TestInfo, v
 	// Finite animations end, endless ones (the loading ring of the media controls,
 	// the shimmer of placeholders) stop, so a picture never shows a moment between states.
 	await page.screenshot({
-		path: `screenshots/${name}-${variant ?? testInfo.project.name}.png`,
+		path: `${process.env.AVS_SCREENSHOT_DIR ?? 'screenshots'}/${name}-${variant ?? testInfo.project.name}.png`,
 		fullPage: true,
 		animations: 'disabled',
 		caret: 'hide',
@@ -461,4 +472,133 @@ export async function excerptNoteContrast(page: Page): Promise<{ ratio: number; 
 		background = composite(parseColor(layer), background);
 	}
 	return { ratio: contrastRatio(colours.fg, background), ...colours };
+}
+
+// -- phase 4 (plan 04-14) ------------------------------------------------------------
+
+/**
+ * Switch "allow viewing without download" of the sharing settings. ci/seed.sh
+ * leaves it off (locked shares show the hint instead of the medium); a test that
+ * turns it on puts it back in finally or afterEach (T-04-52).
+ */
+export function toggleViewWithoutDownload(on: boolean): void {
+	occ('config:app:set', 'core', 'shareapi_allow_view_without_download', `--value=${on ? 'yes' : 'no'}`, '--type=boolean');
+}
+
+async function apiAs(user: User): Promise<APIRequestContext> {
+	return request.newContext({
+		baseURL: process.env.NC_URL ?? 'http://localhost:8080',
+		httpCredentials: { username: user.name, password: user.password, send: 'always' },
+	});
+}
+
+/** The sha256 of a file of the user as WebDAV delivers it, path relative to the user's root. */
+export async function sha256OfFile(user: User, path: string): Promise<string> {
+	const api = await apiAs(user);
+	try {
+		const encoded = path.split('/').map(encodeURIComponent).join('/');
+		const response = await api.get(`/remote.php/dav/files/${encodeURIComponent(user.name)}/${encoded}`);
+		expect(response.status(), `WebDAV GET of ${path}`).toBe(200);
+		return createHash('sha256').update(await response.body()).digest('hex');
+	} finally {
+		await api.dispose();
+	}
+}
+
+/**
+ * Click the locator, take the download it starts and keep it in dir under the
+ * name the server suggested; answers the full path and that name. The step
+ * @phase4 points dir at AVS_DOWNLOADS_DIR, which tests/test_downloaded_subtitles.py
+ * checks afterwards.
+ */
+export async function downloadTo(page: Page, locator: Locator, dir: string): Promise<{ path: string; name: string }> {
+	mkdirSync(dir, { recursive: true });
+	const [download] = await Promise.all([page.waitForEvent('download'), locator.click()]);
+	const name = download.suggestedFilename();
+	const path = join(dir, name);
+	await download.saveAs(path);
+	return { path, name };
+}
+
+export type ExportFormat = 'srt' | 'vtt' | 'txt';
+
+/** The export of one file in one format as the user (the owner, as a rule), over the route of the page. */
+export async function exportResponse(user: User, fileId: string, format: ExportFormat): Promise<{ status: number; body: string }> {
+	const api = await apiAs(user);
+	try {
+		const response = await api.get(`${APP_PATH}/export/${fileId}/${format}`);
+		return { status: response.status(), body: await response.text() };
+	} finally {
+		await api.dispose();
+	}
+}
+
+/** The export as text; anything but 200 throws with the status. */
+export async function exportText(user: User, fileId: string, format: ExportFormat): Promise<string> {
+	const { status, body } = await exportResponse(user, fileId, format);
+	if (status !== 200) {
+		throw new Error(`export ${format} of file ${fileId} answered ${status}`);
+	}
+	return body;
+}
+
+/** One S7 clip as ci/media/fetch_speech.py measured it (S7Targets), with its file id from the seed. */
+export type S7Clip = {
+	key: string;
+	fileId: string;
+	numberWord: string;
+	numberForms: readonly string[];
+	compound: string;
+	head: string;
+	plural: string | null;
+	singular: string | null;
+};
+
+function optional(value: unknown): string | null {
+	return value === null || value === undefined ? null : String(value);
+}
+
+/**
+ * The measured S7 forms out of AVS_S7_TARGETS, which deploy-harp.yml writes
+ * with `fetch_speech.py --s7-env`. No sentence of a clip is typed into a spec:
+ * a new measurement changes fetch_speech.py and nothing else.
+ */
+export function s7Expectations(): S7Clip[] {
+	const parsed: unknown = JSON.parse(env('AVS_S7_TARGETS'));
+	if (!Array.isArray(parsed) || parsed.length === 0) {
+		throw new Error('AVS_S7_TARGETS holds no clip');
+	}
+	return parsed.map((item: Record<string, unknown>) => {
+		const key = String(item.key);
+		const forms = item.number_forms;
+		if (!Array.isArray(forms) || forms.length !== 4) {
+			throw new Error(`${key}: number_forms must hold digit, DE, EN and FR`);
+		}
+		return {
+			key,
+			fileId: env(`FILEID_${key}`),
+			numberWord: String(item.number_word),
+			numberForms: forms.map(String),
+			compound: String(item.compound),
+			head: String(item.head),
+			plural: optional(item.plural),
+			singular: optional(item.singular),
+		};
+	});
+}
+
+/** Tokens the way the model test compares them: lower case, letters and digits only. */
+export function foldedTokens(text: string): Set<string> {
+	return new Set(
+		text
+			.toLowerCase()
+			.split(/\s+/u)
+			.map((part) => part.replace(/[^\p{L}\p{N}]/gu, ''))
+			.filter((part) => part !== ''),
+	);
+}
+
+/** One token folded like foldedTokens. */
+export function fold(word: string): string {
+	return word.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 }
