@@ -201,7 +201,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 04-17-PLAN.md: E2E Export-Zustände, Fehlerseite, Ablage, Spur, Kontrast und axe
+- [x] 04-17-PLAN.md: E2E Export-Zustände, Fehlerseite, Ablage, Spur, Kontrast und axe (axe offen: Paketfreigabe)
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
@@ -342,7 +342,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 14/17 | In Progress|  |
+| 4. Suchqualität und Export | 15/17 | In Progress|  |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |
