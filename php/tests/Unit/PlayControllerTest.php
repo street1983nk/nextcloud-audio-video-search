@@ -1151,6 +1151,64 @@ final class PlayControllerTest extends TestCase {
 		self::assertSame([[self::UID, 7]], $this->exportMetaCalls);
 	}
 
+	public function testTheDownloadLinksCarryTheCheckedTimeMarkOfThePage(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '12.5';
+
+		$params = $this->play(7);
+
+		self::assertSame([
+			'srt' => '/nc/route/audio_video_search.export.download?fileId=7&format=srt&t=12.5',
+			'vtt' => '/nc/route/audio_video_search.export.download?fileId=7&format=vtt&t=12.5',
+			'txt' => '/nc/route/audio_video_search.export.download?fileId=7&format=txt&t=12.5',
+		], $params['exportUrls']);
+		// Sidecar and track have no way back; they stay without a mark.
+		self::assertSame('/nc/route/audio_video_search.export.sidecar?fileId=7', $params['sidecarUrl']);
+		self::assertSame('/nc/route/audio_video_search.export.track?fileId=7', $params['trackUrl']);
+
+		// The mark is written anew from the milliseconds, like startSeconds, never copied.
+		$this->t = '754.25';
+		self::assertSame('/nc/route/audio_video_search.export.download?fileId=7&format=srt&t=754.2', $this->play(7)['exportUrls']['srt']);
+		$this->t = '0042';
+		self::assertSame('/nc/route/audio_video_search.export.download?fileId=7&format=srt&t=42.0', $this->play(7)['exportUrls']['srt']);
+	}
+
+	/** @return array<string, array{mixed}> */
+	public static function startsWithoutAMark(): array {
+		return [
+			'none' => [''],
+			'zero' => ['0'],
+			'below a tenth' => ['0.05'],
+			'negative' => ['-1'],
+			'beyond a day' => ['86401'],
+			'markup' => ['1"><script>alert(1)</script>'],
+			'a second parameter' => ['5&format=txt'],
+			'not a string' => [['42']],
+		];
+	}
+
+	#[DataProvider('startsWithoutAMark')]
+	public function testAStartThatIsNoCheckedPositiveMarkLeavesTheDownloadLinksWithoutT(mixed $raw): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = $raw;
+
+		$params = $this->play(7);
+
+		foreach (['srt', 'vtt', 'txt'] as $format) {
+			self::assertSame('/nc/route/audio_video_search.export.download?fileId=7&format=' . $format, $params['exportUrls'][$format]);
+		}
+	}
+
+	public function testTheRenderedDownloadLinksCarryTheMarkEscaped(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '12.5';
+
+		$html = self::page($this->response(7));
+
+		self::assertSame(1, substr_count($html, 'href="/nc/route/audio_video_search.export.download?fileId=7&amp;format=srt&amp;t=12.5"'));
+		self::assertSame(3, substr_count($html, '&amp;t=12.5"'));
+	}
+
 	public function testAPartialTranscriptNamesTheEndOfTheLastFinishedPiece(): void {
 		$this->file(7, 'Sitzung.webm');
 		$this->exportMeta = self::meta(['partial' => true, 'untilMs' => 3723456, 'language' => 'fr']);

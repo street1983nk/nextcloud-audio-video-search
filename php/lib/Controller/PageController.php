@@ -167,7 +167,7 @@ final class PageController extends Controller {
 			$src = $this->davUrl($uid, $userFolder, $file);
 			$mediaSrc = $startMs > 0 ? $src . '#t=' . self::seconds($startMs) : $src;
 			$excerpt = $this->excerpt($uid, $fileId, $startMs);
-			$export = $this->exportState($uid, $file, $fileId, $verdict, $excerpt['excluded']);
+			$export = $this->exportState($uid, $file, $fileId, $verdict, $excerpt['excluded'], $startMs);
 		}
 
 		return $this->render([
@@ -394,10 +394,13 @@ final class PageController extends Controller {
 	 *
 	 * Only checked values leave this method: routes of this app, the language
 	 * out of the closed list of ExAppService, a clock and a name built here.
+	 * The download links carry the time mark of the page (D2): the error page
+	 * of the download leads back to the same place. The mark is the number
+	 * startMs() checked, written anew by seconds(), never the raw ?t=.
 	 *
 	 * @return array<string, mixed>
 	 */
-	private function exportState(string $uid, File $file, int $fileId, string $verdict, bool $excluded): array {
+	private function exportState(string $uid, File $file, int $fileId, string $verdict, bool $excluded, int $startMs): array {
 		if ($verdict === DownloadPolicy::BLOCKED) {
 			return self::exportParams(self::EXPORT_BLOCKED);
 		}
@@ -423,9 +426,11 @@ final class PageController extends Controller {
 			$name = '';
 		}
 
+		// Below a tenth seconds() writes 0.0, the start of the file: no mark then.
+		$mark = $startMs >= 100 ? ['t' => self::seconds($startMs)] : [];
 		$urls = [];
 		foreach (['srt', 'vtt', 'txt'] as $format) {
-			$urls[$format] = $this->urlGenerator->linkToRoute('audio_video_search.export.download', ['fileId' => $fileId, 'format' => $format]);
+			$urls[$format] = $this->urlGenerator->linkToRoute('audio_video_search.export.download', ['fileId' => $fileId, 'format' => $format] + $mark);
 		}
 
 		return [

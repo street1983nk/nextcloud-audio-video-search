@@ -636,7 +636,7 @@ test('D1 Downloads SRT, VTT, TXT: Name mit Sprache, auch mit Umlaut, MIME, TXT-Z
 // ---------------------------------------------------------------------------
 // D2: the error page of the download, with the container stopped.
 
-test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleichem ?t= @phase4', async ({ page }, testInfo) => {
+test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleichem ?t=, auch über den Link der Seite @phase4', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS + 10 * 60_000);
 	const { user, language } = phase4User(testInfo);
@@ -645,7 +645,13 @@ test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleiche
 	await login(page, user);
 	await page.goto(playAt(video, Number(D2_MARK)));
 	await expect(downloadLinks(page)).toHaveCount(3);
-	const srt = (await hrefs(page))[0];
+	// The links carry the checked mark of the page (PageController::exportState).
+	const links = await hrefs(page);
+	expect(links.map(formatOf)).toEqual(['srt', 'vtt', 'txt']);
+	for (const href of links) {
+		expect(new URL(href, 'http://local').searchParams.get('t'), `the export link ${href} carries the mark of the page`).toBe(D2_MARK);
+	}
+	const srt = links[0];
 
 	await withContainerStopped(
 		async () => {
@@ -656,15 +662,10 @@ test('D2 Fehlerseite bei gestopptem Container: T29, T25, T30 zurück mit gleiche
 			const back = await expectErrorPage(page, language);
 			const backUrl = new URL((await back.getAttribute('href')) ?? '', 'http://local');
 			expect(backUrl.pathname).toMatch(new RegExp(`/apps/audio_video_search/play/${video}$`));
-			if (backUrl.searchParams.get('t') !== D2_MARK) {
-				testInfo.annotations.push({
-					type: 'finding',
-					description: `the export links of the page carry no ?t=, so the way back of the error page reached by the link has t=${backUrl.searchParams.get('t') ?? 'none'}`,
-				});
-			}
+			expect(backUrl.searchParams.get('t'), 'the way back of the error page reached by the link keeps the mark of the page').toBe(D2_MARK);
 
-			// The route with the time mark: the way back keeps it.
-			const response = await page.goto(`${srt}?t=${D2_MARK}`);
+			// The route itself, opened again: the way back keeps the mark.
+			const response = await page.goto(srt);
 			expect(response?.status()).toBe(503);
 			const action = await expectErrorPage(page, language);
 			await screenshotVariants(page, 'd2', testInfo, [[1280, 'light'], [1280, 'dark'], [375, 'light']], page.locator('.avs-banner--error'));
