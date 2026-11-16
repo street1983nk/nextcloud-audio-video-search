@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-06-PLAN.md
-last_updated: "2026-11-16T08:37:43.265Z"
+stopped_at: Completed 04-10-PLAN.md
+last_updated: "2026-11-16T09:01:10.256Z"
 last_activity: 2026-11-16
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 81
-  completed_plans: 71
+  completed_plans: 72
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 8 of 17
+Plan: 9 of 17
 Status: Ready to execute
 Last activity: 2026-11-16
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -74,6 +74,7 @@ Progress: [█████████░] 88%
 | Phase 02 P11 | 60 min | 3 tasks | 4 files |
 | Phase 02 P12 | 75 min | 2 tasks | 14 files |
 | Phase 04 P07 | 35min | 1 tasks | 3 files |
+| Phase 04 P10 | 45 min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -133,6 +134,8 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-12: Neuprüfung neu sofort, credentials_missing und session_credentials jeden Lauf, sonst alle 24 h; 60 s Budget je SchedulerJob-Lauf
 - [Phase 04]: 04-07: Cue-Schnitt bei Rang-Gleichstand nach Balance (kleinster Laengenunterschied), verhindert Rest-Cues unter 1 s
 - [Phase 04]: 04-07: FAST-cps-Gate 0,98 statt 5-%-Schritt 1,00 (gemessen 0,9762), damit die Schwelle als Gate wirken kann
+- [Phase 04]: 04-10: UNKNOWN-Freigabe-Attribut sperrt den Export fail-closed mit derselben 403-T24-Seite wie BLOCKED; Wiedergabe bleibt fail-open
+- [Phase 04]: 04-10: Spur-Route entfernt den von DataDisplayResponse gesetzten Content-Disposition-Header per addHeader(null), die Spur traegt keinen
 
 ### Pending Todos
 
@@ -158,6 +161,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T08:36:46.438Z
-Stopped at: Completed 04-06-PLAN.md
+Last session: 2026-11-16T09:01:10.237Z
+Stopped at: Completed 04-10-PLAN.md
 Resume file: None

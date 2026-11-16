@@ -65,7 +65,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 - [x] **SRCH-01**: Nutzer findet gesprochenen Text in der normalen Nextcloud-Suche; Treffer zeigen Dateiname, Zeitmarke und Textausschnitt, mehrere Stellen je Datei
 - [x] **SRCH-02**: Treffer aus einem Vorschau-Transkript sind als vorläufig gekennzeichnet
 - [x] **SRCH-03**: Nutzer sieht nur Treffer aus Dateien, die er gerade lesen darf (Prüfung zur Abfragezeit inkl. Gruppenordner-ACL, Freigaben, entzogene Rechte, Papierkorb)
-- [ ] **SRCH-04**: Freigaben mit Download-Sperre: Suche ja, Export nein
+- [x] **SRCH-04**: Freigaben mit Download-Sperre: Suche ja, Export nein
 - [x] **SRCH-05**: Suche findet Wortformen und Teilwörter in Komposita (DE/EN/FR) sowie Zahlen als Ziffer und als Wort
 - [ ] **SRCH-06**: Die Ergebnisgruppe bleibt sichtbar, wenn Nutzer Datums- oder Personenfilter setzen (unterstützte Filter gemeldet)
 
@@ -76,7 +76,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 
 ### Export (EXP)
 
-- [ ] **EXP-01**: Nutzer lädt je Datei SRT, VTT und TXT herunter
+- [x] **EXP-01**: Nutzer lädt je Datei SRT, VTT und TXT herunter
 - [x] **EXP-02**: Untertitel werden aus Wortzeiten gebildet (höchstens 42 Zeichen je Zeile, 2 Zeilen, 1 bis 7 s, höchstens 20 Zeichen/s, ca. 80 ms Abstand) und bestehen einen unabhängigen SRT/VTT-Parser
 - [ ] **EXP-03**: Nutzer kann die Untertitel als Nebendatei neben das Medium legen (`<Name>.<Sprache>.vtt`); vorhandene Dateien werden nie überschrieben
 - [x] **EXP-04**: Ungeprüfte Exporte heißen "Untertitel-Entwurf"; nirgends wird "BITV-konform" für ungeprüfte Untertitel behauptet
@@ -185,12 +185,12 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | SRCH-01 | Phase 3 | Complete |
 | SRCH-02 | Phase 3 | Complete |
 | SRCH-03 | Phase 3 | Complete |
-| SRCH-04 | Phase 4 | Pending |
+| SRCH-04 | Phase 4 | Complete |
 | SRCH-05 | Phase 4 | Complete |
 | SRCH-06 | Phase 4 | Pending |
 | PLAY-01 | Phase 1 | Complete |
 | PLAY-02 | Phase 1 | Complete |
-| EXP-01 | Phase 4 | Pending |
+| EXP-01 | Phase 4 | Complete |
 | EXP-02 | Phase 4 | Complete |
 | EXP-03 | Phase 4 | Pending |
 | EXP-04 | Phase 4 | Complete |
