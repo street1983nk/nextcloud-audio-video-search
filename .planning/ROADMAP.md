@@ -167,7 +167,7 @@ Plans:
   4. Ein Nutzer legt `<Name>.<Sprache>.vtt` neben das Medium; eine vorhandene Datei gleichen Namens wird nie überschrieben.
   5. Über eine Freigabe mit Download-Sperre findet der Empfänger Treffer, bekommt aber keinen Export und keine Nebendatei.
 
-**Plans:** 6/17 plans executed
+**Plans:** 7/17 plans executed
 
 Plans:
 **Wave 1**
@@ -181,7 +181,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 04-06-PLAN.md: Komposita-Präfix (Haushalt), Zahlenraum Hunderter/Tausender/Jahre, Messung
-- [ ] 04-07-PLAN.md: Cue-Bildung unter den EXP-02-Grenzen (TDD)
+- [x] 04-07-PLAN.md: Cue-Bildung unter den EXP-02-Grenzen (TDD)
 - [ ] 04-10-PLAN.md: Download-Sperre als Dienst, Export- und Spur-Routen, Fehlerseite
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -342,7 +342,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 6/17 | In Progress|  |
+| 4. Suchqualität und Export | 7/17 | In Progress|  |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |

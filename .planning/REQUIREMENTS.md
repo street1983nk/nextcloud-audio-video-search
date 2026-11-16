@@ -77,7 +77,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 ### Export (EXP)
 
 - [ ] **EXP-01**: Nutzer lädt je Datei SRT, VTT und TXT herunter
-- [ ] **EXP-02**: Untertitel werden aus Wortzeiten gebildet (höchstens 42 Zeichen je Zeile, 2 Zeilen, 1 bis 7 s, höchstens 20 Zeichen/s, ca. 80 ms Abstand) und bestehen einen unabhängigen SRT/VTT-Parser
+- [x] **EXP-02**: Untertitel werden aus Wortzeiten gebildet (höchstens 42 Zeichen je Zeile, 2 Zeilen, 1 bis 7 s, höchstens 20 Zeichen/s, ca. 80 ms Abstand) und bestehen einen unabhängigen SRT/VTT-Parser
 - [ ] **EXP-03**: Nutzer kann die Untertitel als Nebendatei neben das Medium legen (`<Name>.<Sprache>.vtt`); vorhandene Dateien werden nie überschrieben
 - [x] **EXP-04**: Ungeprüfte Exporte heißen "Untertitel-Entwurf"; nirgends wird "BITV-konform" für ungeprüfte Untertitel behauptet
 
@@ -191,7 +191,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | PLAY-01 | Phase 1 | Complete |
 | PLAY-02 | Phase 1 | Complete |
 | EXP-01 | Phase 4 | Pending |
-| EXP-02 | Phase 4 | Pending |
+| EXP-02 | Phase 4 | Complete |
 | EXP-03 | Phase 4 | Pending |
 | EXP-04 | Phase 4 | Complete |
 | BITV-01 | Phase 10 | Pending |
