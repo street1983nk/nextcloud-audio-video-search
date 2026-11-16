@@ -167,7 +167,7 @@ Plans:
   4. Ein Nutzer legt `<Name>.<Sprache>.vtt` neben das Medium; eine vorhandene Datei gleichen Namens wird nie überschrieben.
   5. Über eine Freigabe mit Download-Sperre findet der Empfänger Treffer, bekommt aber keinen Export und keine Nebendatei.
 
-**Plans:** 10/17 plans executed
+**Plans:** 11/17 plans executed
 
 Plans:
 **Wave 1**
@@ -191,7 +191,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 04-09-PLAN.md: Container-Routen /export und /export/meta unter Leck-Regel
+- [x] 04-09-PLAN.md: Container-Routen /export und /export/meta unter Leck-Regel
 - [ ] 04-11-PLAN.md: Abspielseite: Abschnitt Untertitel-Entwurf, Spur, Ablage-Knopf
 
 **Wave 5** *(blocked on Wave 4 completion)*
@@ -342,7 +342,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 10/17 | In Progress|  |
+| 4. Suchqualität und Export | 11/17 | In Progress|  |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |
