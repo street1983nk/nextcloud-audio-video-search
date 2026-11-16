@@ -262,6 +262,9 @@ def test_the_export_section_follows_the_ui_spec() -> None:
     selectors = [part.strip() for part in coarse_head.split(",")]
     assert selectors
     assert all(part.startswith("#app-content.avs-play ") for part in selectors), selectors
+    # X6: the noscript overlay of the server would swallow the download links;
+    # only the playback page lets it go, nowhere else.
+    assert re.search(r"body:has\(#app-content\.avs-play\) #nojavascript \{\s*display: none;", style)
 
 
 def test_the_sidecar_button_posts_with_the_token_and_shows_one_banner() -> None:

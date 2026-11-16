@@ -309,6 +309,14 @@
 	}
 }
 
+/* Without JavaScript the server lays #nojavascript (from a noscript block)
+   over the whole page and swallows every click. The downloads here are plain
+   links and work without JavaScript (X6 of the UI-SPEC), so the overlay stays
+   out of the way on the playback page and its error page only. */
+body:has(#app-content.avs-play) #nojavascript {
+	display: none;
+}
+
 /* The display values above must not reveal what play.js or the template hid
    with the hidden attribute, and neither may a server rule that outranks two
    classes (see admin.css); hence the id. */
