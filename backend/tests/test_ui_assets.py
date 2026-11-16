@@ -389,6 +389,14 @@ def test_the_admin_section_keeps_its_contract() -> None:
     assert ".avs-banner {" not in style
     assert "#avs-admin [hidden]" in style
     assert "pointer: coarse" in style
+    # Every selector of the touch rule sits behind the id: one class loses
+    # against the server rule "button:not(.button-vue, ...)" (CI 16.11.2026).
+    coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", style, re.DOTALL)
+    assert coarse is not None
+    coarse_head = coarse.group(1).split("{", 1)[0]
+    selectors = [part.strip() for part in coarse_head.split(",")]
+    assert ".avs-admin__recheck" in coarse_head
+    assert all(part.startswith("#avs-admin ") for part in selectors), selectors
     # The script asks its own routes with the token of the moment.
     assert "admin/state" in script
     assert "admin/sample" in script

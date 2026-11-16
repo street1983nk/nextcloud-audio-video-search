@@ -112,9 +112,12 @@
 
 /* -- touch ------------------------------------------------------------------------ */
 
+/* Behind the id: the server rule "button:not(.button-vue, [class^=vs__])"
+   sets min-height to --default-clickable-area and outranks one class, so the
+   recheck button stayed below 44 px on a phone (same finding as play.css). */
 @media (pointer: coarse) {
-	.avs-admin__recheck,
-	.avs-admin .avs-admin__switch {
+	#avs-admin .avs-admin__recheck,
+	#avs-admin .avs-admin__switch {
 		min-height: calc(var(--default-grid-baseline) * 11);
 	}
 }
