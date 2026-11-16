@@ -27,3 +27,18 @@ attacking: every request to the container without a valid AppAPI signature is
 refused, routes marked ADMIN are not reachable for other users, search results
 and the playback view only show files the user may read, the container runs
 without root, and nothing leaves your server.
+
+For the subtitle draft (not yet in a released version) the promises are:
+exports and the subtitle track are served only for files the user may read and
+only when the share allows downloads (an undecidable share attribute counts as
+blocked); a sidecar file is created only with create permission in the folder
+of the recording and never overwrites an existing file; search filters never
+reveal shares the user cannot see, they only remove results the user may read
+anyway.
+
+Known residual risk, accepted: the app checks that the sidecar name is free and
+creates the file under its own exclusive lock, which keeps parallel saves
+through the app apart. Another client (for example a sync client or WebDAV)
+that creates a file with the same name in the milliseconds between that check
+and the creation is not covered by this lock; in that case the file of the
+other client can be overwritten.
