@@ -9,12 +9,18 @@ use OCA\AudioVideoSearch\Search\Provider;
 use OCA\AudioVideoSearch\Service\ExAppService;
 use OCA\AudioVideoSearch\Service\ExclusionService;
 use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCP\DB\IResult;
+use OCP\DB\QueryBuilder\ICompositeExpression;
+use OCP\DB\QueryBuilder\IExpressionBuilder;
+use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IMimeTypeDetector;
 use OCP\Files\IRootFolder;
+use OCP\Files\Storage\ISharedStorage;
 use OCP\IAppConfig;
 use OCP\IConfig;
+use OCP\IDBConnection;
 use OCP\IL10N;
 use OCP\IURLGenerator;
 use OCP\IUser;
@@ -22,6 +28,8 @@ use OCP\IUserManager;
 use OCP\IUserSession;
 use OCP\Search\IFilter;
 use OCP\Search\ISearchQuery;
+use OCP\Share\IAttributes;
+use OCP\Share\IShare;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -93,6 +101,12 @@ final class ProviderTest extends TestCase {
 	/** @var list<array{string, array<string, mixed>}> */
 	private array $links = [];
 
+	/** @var list<int> the files a share row ties to the person of the filter */
+	private array $sharedFileIds = [];
+
+	/** @var list<list<int>> the ids of every executed share query, one band per query */
+	private array $shareBands = [];
+
 	protected function setUp(): void {
 		parent::setUp();
 
@@ -115,6 +129,8 @@ final class ProviderTest extends TestCase {
 		$this->logged = [];
 		$this->readable = [];
 		$this->links = [];
+		$this->sharedFileIds = [];
+		$this->shareBands = [];
 	}
 
 	private function provider(): Provider {
@@ -208,6 +224,9 @@ final class ProviderTest extends TestCase {
 			$this->logged[] = $message . ' ' . json_encode($context);
 		});
 
+		$db = $this->createMock(IDBConnection::class);
+		$db->method('getQueryBuilder')->willReturnCallback(fn (): IQueryBuilder => $this->shareQueryBuilder());
+
 		return new Provider(
 			$l10n,
 			$urls,
@@ -219,7 +238,57 @@ final class ProviderTest extends TestCase {
 			$mime,
 			$logger,
 			$exclusions,
+			$db,
 		);
+	}
+
+	/**
+	 * The database of the person filter: it records the band of every executed
+	 * query and answers with the share rows of $sharedFileIds. Whether the
+	 * conditions mean what Files means is judged in SearchFiltersTest; here
+	 * the questions are who was asked, how often, and what came of it.
+	 */
+	private function shareQueryBuilder(): IQueryBuilder {
+		$band = null;
+
+		$qb = $this->createMock(IQueryBuilder::class);
+		$expr = $this->createMock(IExpressionBuilder::class);
+		$expr->method('eq')->willReturn('eq');
+		$expr->method('in')->willReturn('in');
+		$expr->method('orX')->willReturnCallback(fn (): ICompositeExpression => $this->createMock(ICompositeExpression::class));
+		$expr->method('andX')->willReturnCallback(fn (): ICompositeExpression => $this->createMock(ICompositeExpression::class));
+		$qb->method('expr')->willReturn($expr);
+		$qb->method('select')->willReturnSelf();
+		$qb->method('from')->willReturnSelf();
+		$qb->method('where')->willReturnSelf();
+		$qb->method('andWhere')->willReturnSelf();
+		$qb->method('createNamedParameter')->willReturnCallback(static function (mixed $value, mixed $type = null) use (&$band): string {
+			if ($type === IQueryBuilder::PARAM_INT_ARRAY && is_array($value)) {
+				$band = array_values($value);
+			}
+
+			return ':p';
+		});
+		$qb->method('executeQuery')->willReturnCallback(function () use (&$band): IResult {
+			self::assertIsArray($band, 'every share query carries its ids as one bound int array');
+			$this->shareBands[] = $band;
+			$rows = [];
+			foreach ($band as $fileId) {
+				if (in_array($fileId, $this->sharedFileIds, true)) {
+					$rows[] = ['file_source' => (string)$fileId];
+				}
+			}
+
+			$result = $this->createMock(IResult::class);
+			$result->method('fetch')->willReturnCallback(static function () use (&$rows): mixed {
+				return array_shift($rows) ?? false;
+			});
+			$result->method('closeCursor')->willReturn(true);
+
+			return $result;
+		});
+
+		return $qb;
 	}
 
 	/**
@@ -244,23 +313,42 @@ final class ProviderTest extends TestCase {
 		return $user;
 	}
 
-	private function query(string $term, int $limit = 5, int|string|null $cursor = null): ISearchQuery&MockObject {
+	/** @param array<string, mixed> $filters filter name to the value its get() returns */
+	private function query(string $term, int $limit = 5, int|string|null $cursor = null, array $filters = []): ISearchQuery&MockObject {
 		$query = $this->createMock(ISearchQuery::class);
 		$query->method('getTerm')->willReturn($term);
 		$query->method('getLimit')->willReturn($limit);
 		$query->method('getCursor')->willReturn($cursor);
 		$query->method('getRoute')->willReturn('files.view.index');
+		$query->method('getFilter')->willReturnCallback(function (string $name) use ($filters): ?IFilter {
+			if (!array_key_exists($name, $filters)) {
+				return null;
+			}
+			$filter = $this->createMock(IFilter::class);
+			$filter->method('get')->willReturn($filters[$name]);
+
+			return $filter;
+		});
 
 		return $query;
 	}
 
-	private function file(int $id, string $name, bool $readable = true): File&MockObject {
+	/** The person of the filter, an account that is not the searching alice. */
+	private function person(string $uid): IUser&MockObject {
+		$person = $this->createMock(IUser::class);
+		$person->method('getUID')->willReturn($uid);
+
+		return $person;
+	}
+
+	private function file(int $id, string $name, bool $readable = true, int $mtime = 1_700_000_000): File&MockObject {
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn($id);
 		$file->method('getName')->willReturn($name);
 		$file->method('getPath')->willReturn('/alice/files/Sitzungen/' . $name);
 		$file->method('getMimetype')->willReturn('video/mp4');
 		$file->method('isReadable')->willReturn($readable);
+		$file->method('getMTime')->willReturn($mtime);
 		$this->readable[$id] = $file;
 
 		return $file;
@@ -269,19 +357,21 @@ final class ProviderTest extends TestCase {
 	/**
 	 * The entries of one search as plain arrays.
 	 *
+	 * @param array<string, mixed> $filters
 	 * @return list<array<string, mixed>>
 	 */
-	private function entries(string $term = 'Haushalt'): array {
-		return $this->page($term)['entries'];
+	private function entries(string $term = 'Haushalt', array $filters = []): array {
+		return $this->page($term, 5, null, $filters)['entries'];
 	}
 
 	/**
 	 * One whole answer: the entries as plain arrays, isPaginated and the cursor.
 	 *
+	 * @param array<string, mixed> $filters
 	 * @return array{entries: list<array<string, mixed>>, isPaginated: bool, cursor: mixed}
 	 */
-	private function page(string $term = 'Haushalt', int $limit = 5, int|string|null $cursor = null): array {
-		$result = $this->provider()->search($this->user(), $this->query($term, $limit, $cursor))->jsonSerialize();
+	private function page(string $term = 'Haushalt', int $limit = 5, int|string|null $cursor = null, array $filters = []): array {
+		$result = $this->provider()->search($this->user(), $this->query($term, $limit, $cursor, $filters))->jsonSerialize();
 		$entries = [];
 		foreach ($result['entries'] as $entry) {
 			$entries[] = is_array($entry) ? $entry : $entry->jsonSerialize();
@@ -338,10 +428,13 @@ final class ProviderTest extends TestCase {
 		self::assertSame(25, $provider->getOrder('dashboard.dashboard.index', []));
 	}
 
-	public function testOnlyTheTermFilterIsSupported(): void {
+	public function testExactlyTheFourCoreFiltersAreSupported(): void {
 		$provider = $this->provider();
 
-		self::assertSame([IFilter::BUILTIN_TERM], $provider->getSupportedFilters());
+		self::assertSame(
+			[IFilter::BUILTIN_TERM, IFilter::BUILTIN_SINCE, IFilter::BUILTIN_UNTIL, IFilter::BUILTIN_PERSON],
+			$provider->getSupportedFilters(),
+		);
 		self::assertSame([], $provider->getAlternateIds());
 		self::assertSame([], $provider->getCustomFilters());
 	}
@@ -767,5 +860,121 @@ final class ProviderTest extends TestCase {
 		self::assertSame([], $page['entries']);
 		self::assertFalse($page['isPaginated']);
 		self::assertSame([0, 20, 40], array_column($this->pages, 'offset'));
+	}
+
+	// -- the filters of the dialog (plan 04-02, SRCH-06, SRCH-04) ----------------
+
+	public function testWithoutAFilterTheShareTableIsNeverAsked(): void {
+		$this->file(11, 'Sitzung.mp4');
+		$this->sharedFileIds = [11];
+		$this->hits = [self::hit(11, 1000)];
+
+		self::assertCount(1, $this->entries());
+		self::assertSame([], $this->shareBands);
+	}
+
+	public function testSinceSkipsAnOlderFileAndThePageFillsFromLaterProposals(): void {
+		$this->file(11, 'Alt.mp4', true, 999);
+		$this->file(12, 'Genau.mp4', true, 1000);
+		$this->file(13, 'Neuer.mp4', true, 2000);
+		$this->hits = [self::hit(11, 1000), self::hit(12, 2000), self::hit(13, 3000)];
+
+		$page = $this->page('Haushalt', 2, null, [IFilter::BUILTIN_SINCE => new \DateTimeImmutable('@1000')]);
+
+		self::assertSame(['Genau.mp4', 'Neuer.mp4'], array_column($page['entries'], 'title'));
+		self::assertFalse($page['isPaginated']);
+	}
+
+	public function testUntilIsInclusiveAtTheBoundarySecond(): void {
+		$this->file(11, 'Genau.mp4', true, 2000);
+		$this->file(12, 'Danach.mp4', true, 2001);
+		$this->hits = [self::hit(11, 1000), self::hit(12, 2000)];
+
+		$entries = $this->entries('Haushalt', [IFilter::BUILTIN_UNTIL => new \DateTimeImmutable('@2000')]);
+
+		self::assertSame(['Genau.mp4'], array_column($entries, 'title'));
+	}
+
+	public function testThePersonFilterDropsANeverSharedFile(): void {
+		$this->file(11, 'Geteilt.mp4');
+		$this->file(12, 'Privat.mp4');
+		$this->sharedFileIds = [11];
+		$this->hits = [self::hit(11, 1000), self::hit(12, 2000)];
+
+		$entries = $this->entries('Haushalt', [IFilter::BUILTIN_PERSON => $this->person('bob')]);
+
+		self::assertSame(['Geteilt.mp4'], array_column($entries, 'title'));
+	}
+
+	public function testOneShareQueryAnswersAllConfirmedCandidatesOfARound(): void {
+		$this->sharedFileIds = [11, 12];
+		$this->hits = $this->marks(6);
+
+		$entries = $this->entries('Haushalt', [IFilter::BUILTIN_PERSON => $this->person('bob')]);
+
+		self::assertCount(5, $entries);
+		self::assertSame([[11, 12]], $this->shareBands);
+	}
+
+	public function testASecondRoundAsksOnlyAboutFilesNotAnsweredYet(): void {
+		// Round 1 carries the files 11 to 17, round 2 the files 17 to 24; only
+		// file 17 is shared, so its three marks are the whole yield and the
+		// second query names only the seven files the first one did not.
+		$this->sharedFileIds = [17];
+		$this->hits = $this->marks(40);
+
+		$entries = $this->entries('Haushalt', [IFilter::BUILTIN_PERSON => $this->person('bob')]);
+
+		self::assertSame(array_fill(0, 3, 'Sitzung 17.mp4'), array_column($entries, 'title'));
+		self::assertSame([[11, 12, 13, 14, 15, 16, 17], [18, 19, 20, 21, 22, 23, 24]], $this->shareBands);
+	}
+
+	public function testAnExcludedOrUnreadableFileNeverReachesTheShareQuestion(): void {
+		$this->file(11, 'Archiv.mp4');
+		$this->file(12, 'Fremd.mp4', false);
+		$this->file(13, 'Eigen.mp4');
+		$this->excludedFiles = [11];
+		$this->sharedFileIds = [11, 12, 13];
+		$this->hits = [self::hit(11, 1000), self::hit(12, 2000), self::hit(13, 3000)];
+
+		$entries = $this->entries('Haushalt', [IFilter::BUILTIN_PERSON => $this->person('bob')]);
+
+		self::assertSame(['Eigen.mp4'], array_column($entries, 'title'));
+		self::assertSame([[13]], $this->shareBands);
+	}
+
+	public function testAFileInAShareWithoutDownloadStillGivesAHit(): void {
+		// SRCH-04: search yes. The download lock of a share blocks export and
+		// sidecar, never the hit; this provider never asks the storage for it.
+		$file = $this->file(11, 'Geteilt.mp4');
+		$attributes = $this->createMock(IAttributes::class);
+		$attributes->method('getAttribute')->willReturn(false);
+		$share = $this->createMock(IShare::class);
+		$share->method('getAttributes')->willReturn($attributes);
+		$storage = $this->createMock(ISharedStorage::class);
+		$storage->method('instanceOfStorage')->willReturnCallback(
+			static fn (string $class): bool => $class === ISharedStorage::class,
+		);
+		$storage->method('getShare')->willReturn($share);
+		$file->method('getStorage')->willReturn($storage);
+		$this->sharedFileIds = [11];
+		$this->hits = [self::hit(11, 754200)];
+
+		$entries = $this->entries('Haushalt', [IFilter::BUILTIN_PERSON => $this->person('bob')]);
+
+		self::assertSame(['Geteilt.mp4'], array_column($entries, 'title'));
+	}
+
+	public function testWithAFilterAtMostSixRoundsAreAsked(): void {
+		$this->hits = $this->marks(200);
+		foreach (array_keys($this->readable) as $id) {
+			$this->file($id, 'Fremd ' . $id . '.mp4', false);
+		}
+
+		$page = $this->page('Haushalt', 5, null, [IFilter::BUILTIN_SINCE => new \DateTimeImmutable('@0')]);
+
+		self::assertSame([], $page['entries']);
+		self::assertFalse($page['isPaginated']);
+		self::assertSame([0, 20, 40, 60, 80, 100], array_column($this->pages, 'offset'));
 	}
 }
