@@ -5,7 +5,7 @@ The development machine has no PHP, so ``php -l`` and phpunit run in CI only
 decided here, on every local test run, so a broken trust boundary does not
 wait for a push to turn red.
 
-The eighteen rules:
+The nineteen rules:
 
 1. Every method carrying ``ExAppRequired`` opens with
    ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
@@ -54,6 +54,11 @@ The eighteen rules:
     ``isExcludedFile`` before it builds an entry. A storage or a folder
     excluded after the first crawl gives no hit from the moment the rule is
     written, whenever SchedulerJob removes its references.
+    Since plan 04-10 the export routes are the fifth place: ``download`` and
+    ``track`` of ``ExportController`` call ``reload`` and ask
+    ``isExcludedUser`` and ``isExcludedFile`` before ``searchAllowed`` and
+    before the export of the container, so an excluded user and an excluded
+    file get no draft there either (T-04-31).
 15. The app puts its own background jobs back (plan 02-17b): the list
     ``JobRegistry::JOBS`` names exactly the jobs of ``<background-jobs>`` in
     ``php/appinfo/info.xml``, and ``HandshakeController::handshake`` asks
@@ -75,6 +80,14 @@ The eighteen rules:
     ``QueueMapper::ORIGIN_EVENT`` in the file and cache listeners,
     ``QueueMapper::ORIGIN_CRAWL`` in the first crawl and the reconcile, never
     the default (D-03-05).
+19. The export path asks the download policy first (plan 04-10, SRCH-04,
+    T-04-29, T-04-29a): in ``download`` and ``track`` of ``ExportController``
+    the ``allowsExport`` question stands before the first ``reload``,
+    ``isExcludedUser`` or ``isExcludedFile`` and before every ``->export(``,
+    so a share whose download switch is off gets its 403 before anything
+    could leak whether the file is excluded or transcribed. And nothing under
+    ``php/lib`` calls ``canDownload`` of IShare, which exists only since
+    33.0.1; the attribute is read in DownloadPolicy alone.
 
 Each rule has a mutated sample that has to make it fire, so a gate whose body
 was deleted cannot stay green. The real tree is additionally held to a floor
@@ -588,6 +601,7 @@ QUEUE_SERVICE = "php/lib/Service/QueueService.php"
 GATEWAY = "php/lib/Controller/GatewayController.php"
 SEARCH_PROVIDER = "php/lib/Search/Provider.php"
 PLAYBACK_PAGE = "php/lib/Controller/PageController.php"
+EXPORT_CONTROLLER = "php/lib/Controller/ExportController.php"
 _EXCLUSION_DEFINITION = re.compile(r"function\s+(isExcluded\w*)\s*\(")
 # Per method: the question to the exclusions and what must not come before it.
 EXCLUSION_CHECKS = (
@@ -597,6 +611,10 @@ EXCLUSION_CHECKS = (
     (SEARCH_PROVIDER, "search", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->search(", "->entries(")),
     (PLAYBACK_PAGE, "excerpt", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->excerpt(")),
     (PLAYBACK_PAGE, "excerpt", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->excerpt(")),
+    (EXPORT_CONTROLLER, "download", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "download", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "track", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "track", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
 )
 
 
@@ -606,6 +624,13 @@ HIT_CHECKS = (
     (SEARCH_PROVIDER, "search", "$this->exclusions->reload(", ("->isExcludedUser(", "->searchAllowed(", "->search(")),
     (SEARCH_PROVIDER, "entries", "$this->exclusions->isExcludedFile(", ("->entry(",)),
     (PLAYBACK_PAGE, "excerpt", "$this->exclusions->reload(", ("->isExcludedUser(", "->isExcludedFile(", "->excerpt(")),
+    (
+        EXPORT_CONTROLLER,
+        "download",
+        "$this->exclusions->reload(",
+        ("->isExcludedUser(", "->isExcludedFile(", "->export("),
+    ),
+    (EXPORT_CONTROLLER, "track", "$this->exclusions->reload(", ("->isExcludedUser(", "->isExcludedFile(", "->export(")),
 )
 
 
@@ -734,6 +759,8 @@ def test_self_rule14_fires_on_a_hit_judged_by_old_rules_or_not_at_all() -> None:
         f"{SEARCH_PROVIDER} has no search",
         f"{SEARCH_PROVIDER} has no entries",
         f"{PLAYBACK_PAGE} has no excerpt",
+        f"{EXPORT_CONTROLLER} has no download",
+        f"{EXPORT_CONTROLLER} has no track",
     ]
 
 
@@ -820,6 +847,10 @@ def test_self_rule14_fires_when_one_of_the_three_checks_is_gone_or_comes_too_lat
         f"{SEARCH_PROVIDER} has no search",
         f"{PLAYBACK_PAGE} has no excerpt",
         f"{PLAYBACK_PAGE} has no excerpt",
+        f"{EXPORT_CONTROLLER} has no download",
+        f"{EXPORT_CONTROLLER} has no download",
+        f"{EXPORT_CONTROLLER} has no track",
+        f"{EXPORT_CONTROLLER} has no track",
         f"{QUEUE_SERVICE}::describeRow does not ask admissible again",
     ]
 
@@ -857,6 +888,33 @@ def test_self_rule14_fires_when_the_playback_page_gives_an_excerpt_without_askin
     assert missing_exclusion_checks(drift_first) == [
         f"{PLAYBACK_PAGE}::excerpt reaches ->searchAllowed( before the exclusions",
         f"{PLAYBACK_PAGE}::excerpt reaches ->searchAllowed( before the exclusions",
+    ]
+
+
+def test_self_rule14_fires_when_an_export_route_skips_the_exclusions_or_asks_them_late() -> None:
+    sources = _lib_sources()
+
+    no_user = _mutated(sources, EXPORT_CONTROLLER, "$this->exclusions->isExcludedUser(", "$this->nothing(")
+    assert missing_exclusion_checks(no_user) == [
+        f"{EXPORT_CONTROLLER}::download does not ask the exclusions",
+        f"{EXPORT_CONTROLLER}::track does not ask the exclusions",
+    ]
+
+    no_fresh = _mutated(sources, EXPORT_CONTROLLER, "$this->exclusions->reload();", "")
+    assert missing_hit_checks(no_fresh) == [
+        f"{EXPORT_CONTROLLER}::download does not call $this->exclusions->reload(",
+        f"{EXPORT_CONTROLLER}::track does not call $this->exclusions->reload(",
+    ]
+
+    # Asked, but only after the container could have answered.
+    guard = "\t\ttry {\n\t\t\t// The rules of now, as on the playback page (owner 14.11.2026).\n"
+    early = "\t\t$early = $this->exAppService->export($uid, $fileId, 'vtt');\n"
+    late = _mutated(sources, EXPORT_CONTROLLER, guard, early + guard)
+    assert missing_exclusion_checks(late) == [
+        f"{EXPORT_CONTROLLER}::download reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::download reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::track reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::track reaches ->export( before the exclusions",
     ]
 
 
@@ -1252,3 +1310,102 @@ def test_self_rule18_fires_on_a_missing_and_on_a_wrong_origin() -> None:
     other = "$this->queueService->enqueue(QueueMapper::KIND_DELETE, $id, $storage);\n"
     commented = "// " + call.format(origin="")
     assert content_origin_findings({listener: other + commented}) == []
+
+
+# -- rule 19 ------------------------------------------------------------------------
+
+EXPORT_METHODS = ("download", "track")
+POLICY_QUESTION = "->downloadPolicy->allowsExport("
+EXCLUSION_CALLS = ("->reload(", "->isExcludedUser(", "->isExcludedFile(")
+CONTAINER_EXPORT = "->export("
+FORBIDDEN_DOWNLOAD_HELPER = "canDownload("
+
+
+def export_policy_findings(sources: dict[str, str]) -> list[str]:
+    """The export methods that do not ask the download policy first of all.
+
+    In download and track the allowsExport question stands before the first
+    reload, isExcludedUser or isExcludedFile and before every export of the
+    container, so the 403 of a blocked share cannot become an oracle about
+    exclusions or transcripts (T-04-29, T-04-29a). And IShare::canDownload is
+    called nowhere under php/lib: it exists only since 33.0.1, the attribute
+    is read in DownloadPolicy alone.
+    """
+    findings = []
+    source = sources.get(EXPORT_CONTROLLER)
+    if source is None:
+        findings.append(f"{EXPORT_CONTROLLER} is missing")
+    else:
+        for method in EXPORT_METHODS:
+            body = php_method(source, method)
+            if body is None:
+                findings.append(f"{EXPORT_CONTROLLER} has no {method}")
+                continue
+            asked = body.find(POLICY_QUESTION)
+            if asked < 0:
+                findings.append(f"{EXPORT_CONTROLLER}::{method} does not ask the download policy")
+                continue
+            findings += [
+                f"{EXPORT_CONTROLLER}::{method} reaches {needle} before the download policy"
+                for needle in EXCLUSION_CALLS
+                if 0 <= body.find(needle) < asked
+            ]
+            if any(match.start() < asked for match in re.finditer(re.escape(CONTAINER_EXPORT), body)):
+                findings.append(f"{EXPORT_CONTROLLER}::{method} asks the container before the download policy")
+    findings += [
+        f"{name} calls canDownload" for name, text in sorted(sources.items()) if FORBIDDEN_DOWNLOAD_HELPER in text
+    ]
+    return findings
+
+
+def test_rule19_the_export_path_asks_the_download_policy_before_the_exclusions_and_the_container() -> None:
+    assert export_policy_findings(_lib_sources()) == []
+
+
+_POLICY_GUARD = "\t\tif (!$this->downloadPolicy->allowsExport($file, $fileId)) {"
+
+
+def test_self_rule19_fires_when_the_exclusions_come_first() -> None:
+    sources = _lib_sources()
+
+    early = _mutated(sources, EXPORT_CONTROLLER, _POLICY_GUARD, "\t\t$this->exclusions->reload();\n" + _POLICY_GUARD)
+    assert export_policy_findings(early) == [
+        f"{EXPORT_CONTROLLER}::download reaches ->reload( before the download policy",
+        f"{EXPORT_CONTROLLER}::track reaches ->reload( before the download policy",
+    ]
+
+    asked = "\t\t$x = $this->exclusions->isExcludedUser($uid) || $this->exclusions->isExcludedFile($fileId);\n"
+    first = _mutated(sources, EXPORT_CONTROLLER, _POLICY_GUARD, asked + _POLICY_GUARD)
+    assert export_policy_findings(first) == [
+        f"{EXPORT_CONTROLLER}::download reaches ->isExcludedUser( before the download policy",
+        f"{EXPORT_CONTROLLER}::download reaches ->isExcludedFile( before the download policy",
+        f"{EXPORT_CONTROLLER}::track reaches ->isExcludedUser( before the download policy",
+        f"{EXPORT_CONTROLLER}::track reaches ->isExcludedFile( before the download policy",
+    ]
+
+
+def test_self_rule19_fires_when_the_container_comes_first() -> None:
+    sources = _lib_sources()
+
+    early = _mutated(
+        sources,
+        EXPORT_CONTROLLER,
+        _POLICY_GUARD,
+        "\t\t$early = $this->exAppService->export($uid, $fileId, 'vtt');\n" + _POLICY_GUARD,
+    )
+    assert export_policy_findings(early) == [
+        f"{EXPORT_CONTROLLER}::download asks the container before the download policy",
+        f"{EXPORT_CONTROLLER}::track asks the container before the download policy",
+    ]
+
+    gone = _mutated(sources, EXPORT_CONTROLLER, POLICY_QUESTION, "->downloadPolicy->nothing(")
+    assert export_policy_findings(gone) == [
+        f"{EXPORT_CONTROLLER}::download does not ask the download policy",
+        f"{EXPORT_CONTROLLER}::track does not ask the download policy",
+    ]
+
+    # A second decider would be a second truth: canDownload fires wherever it shows up.
+    helper = {**sources, "php/lib/Service/Other.php": "<?php\n$allowed = $share->canDownload();\n"}
+    assert export_policy_findings(helper) == ["php/lib/Service/Other.php calls canDownload"]
+
+    assert export_policy_findings({}) == [f"{EXPORT_CONTROLLER} is missing"]
