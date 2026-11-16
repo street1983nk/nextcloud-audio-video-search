@@ -92,7 +92,7 @@ from audio_video_search_backend.media.probe import DAMAGED, ProbeResult
 from audio_video_search_backend.model.overlay import Word, normalize
 from audio_video_search_backend.model.provenance import Level, Provenance
 from audio_video_search_backend.models import catalog, procure
-from audio_video_search_backend.store.repo import ChunkCounters, PreviewJob
+from audio_video_search_backend.store.repo import FILE_LANGUAGES, ChunkCounters, PreviewJob
 from audio_video_search_backend.worker.capture import DISK_FULL_RETRY_SECONDS, MAX_CAPTURE_BYTES, tmp_dir
 
 LOGGER = logging.getLogger(__name__)
@@ -177,6 +177,9 @@ def _add(a: ChunkCounters, b: ChunkCounters) -> ChunkCounters:
         drop_language=a.drop_language + b.drop_language,
         drop_conf=a.drop_conf + b.drop_conf,
         speech_ms=a.speech_ms + b.speech_ms,
+        words_de=a.words_de + b.words_de,
+        words_en=a.words_en + b.words_en,
+        words_fr=a.words_fr + b.words_fr,
     )
 
 
@@ -188,9 +191,15 @@ def take(windows: Sequence[Window], start_ms: int, end_ms: int | None, *, count_
     begins before ``start_ms`` was heard in the context: it keeps only its words
     from ``start_ms`` on, and its drops and speech were counted by the chunk
     before. Without a window the next chunk starts at ``end_ms``.
+
+    Every kept word also counts for the text language of its window
+    (``window.lid``) when that is one of de, en or fr: the majority of these
+    counters becomes the language of the file (D-04-15). A word of a window
+    outside the three is kept but counts for no language.
     """
     words: list[Word] = []
     kept = script = language = conf = speech = 0
+    by_language = dict.fromkeys(FILE_LANGUAGES, 0)
     last_end: int | None = None
     for window in sorted(windows, key=lambda w: w.start_ms):
         if end_ms is not None and window.start_ms >= end_ms:
@@ -214,6 +223,8 @@ def take(windows: Sequence[Window], start_ms: int, end_ms: int | None, *, count_
                     )
                 )
                 kept += 1
+                if window.lid in by_language:
+                    by_language[window.lid] += 1
         elif own and window.verdict == DROP_SCRIPT:
             script += window.n_words
         elif own and window.verdict == DROP_LANGUAGE:
@@ -226,7 +237,14 @@ def take(windows: Sequence[Window], start_ms: int, end_ms: int | None, *, count_
     # Without a window the next chunk starts at the end of this one (or here, for the rest of the file).
     next_start = (start_ms if end_ms is None else end_ms) if last_end is None else max(start_ms, last_end)
     counters = ChunkCounters(
-        kept_words=kept, drop_script=script, drop_language=language, drop_conf=conf, speech_ms=speech
+        kept_words=kept,
+        drop_script=script,
+        drop_language=language,
+        drop_conf=conf,
+        speech_ms=speech,
+        words_de=by_language["de"],
+        words_en=by_language["en"],
+        words_fr=by_language["fr"],
     )
     return Taken(words=words, counters=counters, next_start_ms=next_start)
 
