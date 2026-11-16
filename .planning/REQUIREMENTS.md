@@ -66,7 +66,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 - [x] **SRCH-02**: Treffer aus einem Vorschau-Transkript sind als vorläufig gekennzeichnet
 - [x] **SRCH-03**: Nutzer sieht nur Treffer aus Dateien, die er gerade lesen darf (Prüfung zur Abfragezeit inkl. Gruppenordner-ACL, Freigaben, entzogene Rechte, Papierkorb)
 - [ ] **SRCH-04**: Freigaben mit Download-Sperre: Suche ja, Export nein
-- [ ] **SRCH-05**: Suche findet Wortformen und Teilwörter in Komposita (DE/EN/FR) sowie Zahlen als Ziffer und als Wort
+- [x] **SRCH-05**: Suche findet Wortformen und Teilwörter in Komposita (DE/EN/FR) sowie Zahlen als Ziffer und als Wort
 - [ ] **SRCH-06**: Die Ergebnisgruppe bleibt sichtbar, wenn Nutzer Datums- oder Personenfilter setzen (unterstützte Filter gemeldet)
 
 ### Abspielen (PLAY)
@@ -186,7 +186,7 @@ Quellen: PROJECT.md, research/SUMMARY.md, Spike 3 (SPIKE3-REPORT.md). Owner-Ents
 | SRCH-02 | Phase 3 | Complete |
 | SRCH-03 | Phase 3 | Complete |
 | SRCH-04 | Phase 4 | Pending |
-| SRCH-05 | Phase 4 | Pending |
+| SRCH-05 | Phase 4 | Complete |
 | SRCH-06 | Phase 4 | Pending |
 | PLAY-01 | Phase 1 | Complete |
 | PLAY-02 | Phase 1 | Complete |
