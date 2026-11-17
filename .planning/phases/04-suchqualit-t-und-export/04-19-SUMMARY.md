@@ -10,7 +10,7 @@ key-files:
   modified: []
 decisions:
   - "Owner-Entscheid 17.11.: Nur Umlaute und ß werden im Untertitel-Namen ersetzt; andere Nicht-ASCII-Zeichen (é, ñ, Kyrillisch, Emoji) bleiben UNVERÄNDERT. Die offene Frage aus 04-18-SUMMARY ist damit entschieden."
-status: Task 1 und 2 fertig, Task 3 (UAT Test 5 mit dem Owner) offen
+status: Task 1, 2 und 3 fertig (UAT Test 5 vom Owner am 17.11.2026 erneut bestanden)
 ---
 
 # Phase 04 Plan 19: CI-Beleg für die Untertitel-Namen ohne Umlaute
@@ -56,7 +56,7 @@ Freigabe durch den Owner, Push durch den Orchestrator. Belege: `approvals/push-e
 
 ## Task 3: UAT Test 5 mit dem Owner
 
-Offen, macht der Orchestrator mit dem Owner.
+Erledigt 17.11.2026: Der Owner hat Test 5 nach dem Gap-Schluss erneut geprüft und bestätigt, dass die Dateinamen keine Umlaute mehr tragen (`S7-Uebung.de.srt`, `.vtt`, `.txt` aus Lauf 44019004773, CI-Beleg Push 6 auf ee6bd68). `04-UAT.md` steht damit auf `status: complete`, 14 von 14 bestanden, Gap Test 5 `status: resolved` (Commit 18bc093).
 
 ## Deviations from Plan
 

@@ -13,6 +13,8 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 ### Validated
 
 - ✓ ExApp-Grundgerüst (AppAPI/HaRP, deklarative Admin-Einstellungen, l10n DE/EN/FR, Store-Metadaten, Release-/Zertifikats-Pipeline, CI): existing (gemeinsames Skeleton, e4d5941..f908a85)
+- ✓ Suchqualität: Wortformen, Komposita-Teile (Haushalt findet Haushaltsplanberatung) und Zahlen als Ziffer und Wort in DE/EN/FR; Ergebnisgruppe bleibt bei Datums- und Personenfilter sichtbar (SRCH-05, SRCH-06): Phase 4
+- ✓ SRT/VTT/TXT-Export je Datei als "Untertitel-Entwurf" unter den EXP-02-Grenzen, von drei unabhängigen Prüfern bestanden; Nebendatei `<Name>.<Sprache>.vtt` neben dem Medium, nie überschreibend; Download-Sperre: Suche ja, Export und Nebendatei nein (SRCH-04, EXP-01 bis EXP-04): Phase 4
 
 ### Active
 
@@ -25,7 +27,6 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 - [ ] Halluzinations-Abfangregel: erkannte Sprache außerhalb der Instanz-Sprachen mit Sicherheit < 0,5 verwerfen, Segmente in fremder Schrift verwerfen
 - [ ] Sprachwechsel in einer Datei erkennen und betroffene Fenster mit eigener Spracherkennung nachrechnen, besseres Ergebnis behalten
 - [ ] Unified-Search-Provider: Treffer im gesprochenen Text mit Zeitmarke, Klick öffnet Datei an der Stelle; Rechte wie die Datei (geteilt/entzogen/gelöscht wirkt sofort)
-- [ ] SRT/VTT/TXT-Export je Datei als "Untertitel-Entwurf", optional als Nebendatei (nie überschreiben); Download-Sperre: Suche ja, Export nein
 - [ ] PHP-Begleit-App `audio_video_search` (Suche, Ereignisse, Rechte, Abspielansicht) + ExApp `audio_video_search_backend`
 - [ ] Minimale Abspielansicht, die an der Zeitstelle startet
 - [ ] BITV-Weg: Korrektur-Editor, Sprecher- und Geräusch-Marken von Hand, Status "geprüft", erst dann Export ohne Entwurf-Kennzeichen
@@ -82,12 +83,16 @@ Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lok
 | Instanz-Vokabular nicht im Standard | Spike 3 Option 3 | ✓ Good |
 | Sprachwechsel: erkennen + je Fenster nachrechnen | Owner 06.11. (mixlang 70 % auf 35 %) | Offen |
 | v1-Suche nur über Unified Search, keine eigene App-Seite | Owner 06.11. | Offen |
-| v1 mit SRT/VTT-Export | Owner 06.11., BITV-Argument | Offen |
+| v1 mit SRT/VTT-Export | Owner 06.11., BITV-Argument | ✓ Good (Phase 4: SRT/VTT/TXT als Untertitel-Entwurf, Nebendatei, Download-Sperre) |
 | Alle Dateien automatisch, Admin schränkt ein; externe Speicher mit Admin-Schalter | Owner 06.11., Null-Konfiguration | Offen |
 | amd64 + arm64, nur CPU | Owner 06.11. | Offen |
 | Zwei Apps: PHP `audio_video_search` + ExApp `audio_video_search_backend` | Reine ExApp kann keinen Suchprovider registrieren (alle 4 Recherchen) | Offen |
 | BITV-Weg (Editor, Marken, geprüft) schon in v1 | Owner 06.11.; automatische Untertitel allein nicht BITV-konform | Offen |
 | Admin-Fehlerstatus ohne Dateinamen | Owner 06.11., Details per occ | Offen |
+| Download-Sperre fail-closed: unklares Freigabe-Attribut sperrt Export und Nebendatei, Wiedergabe bleibt offen; X3 setzt zusätzlich controlslist=nodownload | Phase 4 (04-10, 04-16, Owner 16.11.); nur Bedien-Hürde am Medium, keine technische Sperre | ✓ Good |
+| Untertitel-Dateinamen schreiben nur Umlaute und ß aus (ae, oe, ue, ss, auch NFD), andere Nicht-ASCII-Zeichen bleiben | Owner 17.11. nach UAT Test 5 (04-18, 04-19) | ✓ Good |
+| Nebendatei bei Datei-Freigabe landet im Home der Empfängerin | Owner 16.11. (04-17) | ✓ Good |
+| Trefferzeilen-Ausschnitt um den ersten Treffer zentrieren | Owner 16.11. (04-16), Backlog, nicht in Phase 4 | Offen |
 
 ## Evolution
 
@@ -107,4 +112,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-06 after initialization*
+*Last updated: 2026-11-17 after Phase 4*

@@ -22,7 +22,9 @@ Decimal phases appear between their surrounding integers in numeric order.
  (completed 2026-11-14)
 
 - [x] **Phase 3: Vorschau-Transkripte in der Suche** - Gehärteter Medien-Eingang, Parakeet-Vorschau mit Wächter und Abfangregel, echte Treffer mit Rechteprüfung zur Abfragezeit
-- [ ] **Phase 4: Suchqualität und Export** - Wortformen/Komposita/Zahlen, Filter-Verträglichkeit, Download-Sperre, SRT/VTT/TXT und Nebendatei als Untertitel-Entwurf
+- [x] **Phase 4: Suchqualität und Export** - Wortformen/Komposita/Zahlen, Filter-Verträglichkeit, Download-Sperre, SRT/VTT/TXT und Nebendatei als Untertitel-Entwurf
+ (completed 2026-11-17)
+
 - [ ] **Phase 5: Ressourcen, Profile und Modellbezug** - cgroup-RAM-Wächter, OOM-Isolation, Profilvorwahl, Reihenfolge, Rechenfenster, Modell-Download mit sha256, Lizenzen
 - [ ] **Phase 6: Veredelung** - Schnell/Ausgewogen/Qualität mit turbo, large-v3 und ROVER, atomarer Ersatz ohne Textverlust, Schnell-Gate je Build
 - [ ] **Phase 7: Sprachen und Sprachwechsel** - Instanz-Sprachen einstellbar, Sprachwechsel in einer Datei erkannt und je Fenster nachgerechnet
@@ -167,7 +169,7 @@ Plans:
   4. Ein Nutzer legt `<Name>.<Sprache>.vtt` neben das Medium; eine vorhandene Datei gleichen Namens wird nie überschrieben.
   5. Über eine Freigabe mit Download-Sperre findet der Empfänger Treffer, bekommt aber keinen Export und keine Nebendatei.
 
-**Plans:** 18/19 plans executed (Gap-Schließung UAT Test 5: 04-19 offen)
+**Plans:** 19/19 plans complete (UAT 14/14, Gap Test 5 geschlossen)
 
 Plans:
 **Wave 1**
@@ -217,7 +219,7 @@ Plans:
 
 **Wave 10** *(blocked on Wave 9 completion)*
 
-- [ ] 04-19-PLAN.md: Push 6 nach Owner-Freigabe, CI-Beweis, UAT Test 5 erneut mit dem Owner
+- [x] 04-19-PLAN.md: Push 6 nach Owner-Freigabe, CI-Beweis, UAT Test 5 erneut mit dem Owner
 
 **UI hint**: yes
 **Research flag**: Standardmuster (Findling-Muster für Tantivy-Normalisierung). Viewer-Untertitel-Schema für NC 33 bis 35 unbelegt, Nebendatei vor dem Plan gegen den Viewer prüfen.
@@ -349,8 +351,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Zwei-App-Gerüst und Integrationsbeweis | 13/13 | Complete    | 2026-11-07 |
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
-| 3. Vorschau-Transkripte in der Suche | 0/22 | Planned | - |
-| 4. Suchqualität und Export | 18/19 | In Progress|  |
+| 3. Vorschau-Transkripte in der Suche | 25/25 | Complete    | 2026-11-15 |
+| 4. Suchqualität und Export | 19/19 | Complete    | 2026-11-17 |
 | 5. Ressourcen, Profile und Modellbezug | 0/TBD | Not started | - |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |

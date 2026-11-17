@@ -2,41 +2,41 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 04-18-PLAN.md (Umlaut-Ersatz in Untertitel-Namen lokal 5f1d608, e4b2d90; offen 04-19 Push 6 + UAT mit Owner)
-last_updated: "2026-11-17T04:36:38.728Z"
+status: planning
+stopped_at: Phase 4 complete (19 plans, UAT 14/14, Security verified, CI green on phase-04 ee6bd68), next Phase 5
+last_updated: "2026-11-17T05:51:02.000Z"
 last_activity: 2026-11-17
 progress:
   total_phases: 11
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 83
-  completed_plans: 82
-  percent: 27
+  completed_plans: 83
+  percent: 36
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-11-06)
+See: .planning/PROJECT.md (updated 2026-11-17)
 
 **Core value:** Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lokal transkribiert und sind in der Nextcloud-Suche mit Zeitmarke findbar, mit der bestmöglichen Transkriptqualität, die auf der vorhandenen Hardware sicher läuft. Kein Inhalt verlässt den Server.
-**Current focus:** Phase 4 , Suchqualität und Export
+**Current focus:** Phase 4 abgeschlossen; als Nächstes Phase 5, Ressourcen, Profile und Modellbezug
 
 ## Current Position
 
-Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 18 of 19 (Gap-Plan 04-18 fertig; offen: 04-19 Push 6 und UAT Test 5 mit Owner)
-Status: Gap-Schließung läuft, 04-19 offen
+Phase: 5 (Ressourcen, Profile und Modellbezug)
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-11-17
 
-Progress: [██████████] 99%
+Progress: [████░░░░░░] 36% (4 von 11 Phasen; alle 83 bisher geplanten Pläne fertig)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 64
+- Total plans completed: 83
 - Average duration: -
 - Total execution time: 0.0 hours
 
@@ -47,6 +47,7 @@ Progress: [██████████] 99%
 | 1 | 13 | - | - |
 | 2 | 26 | - | - |
 | 3 | 25 | - | - |
+| 4 | 19 | - | - |
 
 **Recent Trend:**
 
@@ -161,7 +162,8 @@ Recent decisions affecting current work:
 - [Phase 4]: 04-15: Push 2 (56f3627) auf phase-04 in allen vier Workflows grün, Discovery legs=all 6 x 22/22; debug-Prüfung gegen origin/phase-03
 - [Phase 04]: 04-16 (Owner 16.11.): alle Prüfpunkte abgenommen (Lauf 43942105866); Spurmenü T31 ohne Bild akzeptiert; S7-Vertrag auf Polizei/Seite nachgezogen; X6-Hinweis und Bannerbreiten bleiben; Trefferzeilen-Ausschnitt S6/S7 ist Backlog
 - [Phase 04]: 04-16 (Owner 16.11.): X3 setzt controlslist=nodownload am Medium, fail-closed wie der Export (jedes Urteil außer ALLOWED); nur Bedien-Hürde, keine technische Sperre
-- [Phase 04]: 04-18 (Owner 17.11.): Untertitel-Dateinamen schreiben nur Umlaute und ß aus (auch NFD), andere Nicht-ASCII-Zeichen bleiben; Owner-Rückfrage offen
+- [Phase 04]: 04-18 (Owner 17.11.): Untertitel-Dateinamen schreiben nur Umlaute und ß aus (auch NFD), andere Nicht-ASCII-Zeichen bleiben; Owner-Rückfrage am 17.11. entschieden (04-19-SUMMARY)
+- [Phase 4, 17.11.]: Phase 4 abgeschlossen: 19/19 Pläne, UAT 14/14 (Gap Test 5 nach 04-18/04-19 geschlossen), 04-SECURITY.md verified mit threats_open 0, CI-Beleg Push 6 auf phase-04 ee6bd68 in allen vier Workflows grün
 
 ### Pending Todos
 
@@ -170,11 +172,10 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- 02-12: Push 5 Owner-Freigabe 09.11. ("Go", Claude Code Terminal): 10 Commits 02-11 und 02-12 auf phase-02; Owner bestätigt beide Auslegungen (Klassifikationspflicht nur für externe Speicher; prefilter_key aus sha256(share_key)); CI ist der erste PHPUnit-Beleg für 02-12
-- 02-11: Push 4 (80ce5c9): Pflicht-Workflows und alle Discovery-Kontrollen grün, erster Schnitt grün; reason_77 (files_accesscontrol gibt 404 statt 403 access_control, 02-10) per Owner 07.11. in Plan 13 Task 3
-- 02-12: PHPUnit und php -l der neuen PHP-Dateien (StorageClassifier, StorageStateMapper, 7 Testdateien) lokal nicht gelaufen; Beleg erst in CI beim nächsten freigegebenen Push
-- 04-17: axe-Prüfung und D2-Fix gebaut (16.11.), Beleg erst im Push-Tor 04-15 (PHPUnit PlayControllerTest und @phase4/@axe nur in CI)
-- 04-16: X3-Fix 42c0cae (controlslist=nodownload) lokal; PHPUnit PlayControllerTest und Playwright X1/X3 erst in CI nach Push 4 (Owner-Freigabe nötig); danach secure-phase 4
+- [Phase 4] requeue_too_long setzt kept_words, drop_*, speech_ms und version_id nicht zurück (deferred-items 04-05): vor Phase 6 (Veredelung) prüfen und entscheiden
+- [Phase 4] Wortform-Lücke "Fischart" findet "Fischarten" nicht (deferred-items 04-14): noch nicht bewertet, bekannte Grenze benennen oder Analyzer mit Messung nachziehen
+- [Phase 4] Backlog (Owner 16.11.): Trefferzeilen-Ausschnitt S6/S7 um den ersten Treffer zentrieren, Phase offen
+- [Phase 4] phase-04 noch nicht nach main gemergt; Merge und Dependabot-PRs #3/#4 danach nur mit Owner-Freigabe
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -189,6 +190,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-17T04:36:31.655Z
-Stopped at: Completed 04-18-PLAN.md (lokal 5f1d608, e4b2d90, nicht gepusht; offen 04-19 Push 6 + UAT mit Owner)
+Last session: 2026-11-17T05:51:02.000Z
+Stopped at: Phase 4 complete, ready to plan Phase 5
 Resume file: None
