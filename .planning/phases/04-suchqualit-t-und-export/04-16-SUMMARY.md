@@ -116,6 +116,13 @@ ruff check und format --check grün, pyright 0 Fehler, vulture grün, volle pyte
 
 SRCH-04, SRCH-05, SRCH-06 und EXP-01 bis EXP-04 abgehakt (Belege 04-15-SUMMARY: alle Workflows und sechs Beine grün; 04-16: Owner-Abnahme). SRCH-04, SRCH-05, EXP-01 bis EXP-04 standen schon; neu abgehakt ist SRCH-06 (S6 abgenommen). Phase 4 bleibt im ROADMAP offen, bis secure-phase 4 und Push 4 durch sind.
 
+## Threat Flags
+
+Nachgetragen im Sicherheitsaudit 17.11.2026 (Formlücke laut 04-SECURITY.md).
+- Player `controlslist="nodownload"` bei gesperrter oder unklarer Freigabe: neue Bedien-Hürde, kein Schutz (SECURITY.md); die echte Sperre ist die DownloadPolicy fail-closed vor Export, Spur und Ablage (T-04-29, T-04-30, T-04-40).
+- T-04-57: Lücken der Abnahme benannt (Spurmenü T31 ohne Bild, Owner akzeptiert).
+- T-04-61 (im Plan als T-04-58 vergeben, doppelt mit 04-14; im Register umbenannt): Screenshots nur mit synthetischen Testnutzern und Testaudio, akzeptiert als AR-04-05 (Owner bestätigt 17.11.2026).
+
 ## Was CI noch belegen muss (Push 4, Owner-Freigabe)
 
 - PHP gates: PHPUnit `PlayControllerTest` mit den zwei neuen Fällen (PHP lokal nicht vorhanden).

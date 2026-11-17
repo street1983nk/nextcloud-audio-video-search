@@ -65,6 +65,13 @@ Owner-freigegebene Texte T13 bis T35 (Untertitel-Entwurf, Download, Ablage, Fehl
 
 - `test_every_user_document_exists_in_three_languages` ist rot, weil `docs/security-guidelines-abgleich.md` (Commit 09c3297, außerhalb dieses Plans) ohne EN/FR-Fassung ist. Siehe `deferred-items.md`. Alle anderen 47 Tests der beiden Dateien sind grün; ruff, ruff format, pyright und vulture sind grün.
 
+## Threat Flags
+
+Keine neue Angriffsfläche (nachgetragen im Sicherheitsaudit 17.11.2026, Formlücke laut 04-SECURITY.md).
+- T-04-08: EXP-04-Gate in `test_public_texts.py` mit Selbsttest, läuft in python.yml.
+- T-04-09: kein `-->`, `\n`, `\r` in den Texten für die VTT-NOTE (Gate), zur Laufzeit `noteSafe`.
+- T-04-10: Icon-Pfade sind reine Pfaddaten, akzeptiert als AR-04-01 (Owner bestätigt 17.11.2026).
+
 ## Known Stubs
 
 Keine. Die neuen Schlüssel werden erst von 04-10 bis 04-12 im Template genutzt; das ist geplant.

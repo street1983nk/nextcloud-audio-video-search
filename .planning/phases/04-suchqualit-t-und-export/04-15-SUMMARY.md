@@ -148,6 +148,13 @@ Owner-Entscheide 16.11.2026 nach der Prüfliste der UI-Abnahme. Nur Testcode und
 - Kontrast-Zahlen nicht im Log (nur Annotation). Der Grenzwert 4,5:1 ist in allen Projekten und Beinen belegt; wer die Zahlen braucht, bekommt sie über einen JSON-Reporter oder ein `console.log` im Kontrast-Fall (Owner-Entscheid, kein Fix ohne Freigabe).
 - PHPUnit-Zähler je Datei nur statisch, der CI-Lauf druckt keine testdox-Ausgabe.
 
+## Threat Flags
+
+Keine neue Angriffsfläche im Code (nachgetragen im Sicherheitsaudit 17.11.2026, Formlücke laut 04-SECURITY.md); der Plan ist ein Push- und CI-Tor.
+- T-04-54: Freigabedateien `approvals/push-*`, Autor und Committer aller Commits street1983nk, keine Sitzungs- oder closes-Zeilen.
+- T-04-55: `main-before-*`/`main-after-*` und `ghcr-before-*`/`ghcr-after-*` gleich, main und ghcr unverändert.
+- T-04-56: Läufe einzeln nacheinander beobachtet, ein Rerun statt Neustart.
+
 ## Self-Check: PASSED
 
 - Läufe 43926051406, 43926051467, 43926051392, 43926051421, 43933705196 für 56f3627 alle success
