@@ -48,13 +48,11 @@ env:
   ADMIN_PASS: 'avs-release-admin-2026-11'
   ARCHIVE_MAX_BYTES: 20971520
   INFO_XML_MAX_BYTES: 524288
-  # sha256 over the DER public key of each app certificate. The PHP app: recorded
-  # when its certificate request was merged (05.11.2026). The backend: its
-  # certificate request (app-certificate-requests PR 1417) is still open, so the
-  # value stays pending-certificate and the backend half of this run stops with
-  # a sentence until the owner records the pin and the secret.
+  # sha256 over the DER public key of each app certificate, recorded when its
+  # certificate request was merged: the PHP app on 05.11.2026, the backend
+  # (app-certificate-requests PR 1417) on 17.11.2026.
   CERT_PUBKEY_SHA256: 0ab74bbaa2972f1cac290b8445e71ffe9d450063db32170262448052ab6aa4c8
-  BACKEND_CERT_PUBKEY_SHA256: pending-certificate
+  BACKEND_CERT_PUBKEY_SHA256: 326dcfa967425902b21160e1af447bbca769c9aa17d73395e29cfff686ba1d80
 
 jobs:
   archives:
@@ -225,9 +223,8 @@ jobs:
       # The External App: audio_video_search_backend
       # ---------------------------------------------------------------------
 
-      # Until the certificate request is merged there is no certificate to
-      # fetch and no pin to compare with; the run stops here with a sentence,
-      # after the PHP app was built and checked.
+      # Without a recorded pin there is nothing to compare with; the run would
+      # stop here with a sentence, after the PHP app was built and checked.
       - name: Fetch the backend certificate and prove it belongs to our key
         run: |
           if [ "${BACKEND_CERT_PUBKEY_SHA256}" = "pending-certificate" ]; then
