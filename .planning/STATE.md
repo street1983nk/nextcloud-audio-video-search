@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-16-PLAN.md (Owner-Abnahme 16.11., X3-Fix 42c0cae lokal, Push 4 und secure-phase 4 offen)
-last_updated: "2026-11-16T22:00:00.000Z"
-last_activity: 2026-11-16
+stopped_at: Completed 04-18-PLAN.md (Umlaut-Ersatz in Untertitel-Namen lokal 5f1d608, e4b2d90; offen 04-19 Push 6 + UAT mit Owner)
+last_updated: "2026-11-17T04:36:38.728Z"
+last_activity: 2026-11-17
 progress:
   total_phases: 11
   completed_phases: 3
-  total_plans: 81
-  completed_plans: 81
+  total_plans: 83
+  completed_plans: 82
   percent: 27
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-06)
 ## Current Position
 
 Phase: 4 (Suchqualität und Export) , EXECUTING
-Plan: 17 of 17 (alle Pläne fertig; offen: Push 4 mit X3-Fix 42c0cae nach Owner-Freigabe, dann secure-phase 4 und verify-work 4)
-Status: Plans complete, Phase-Abschluss nach secure-phase 4
-Last activity: 2026-11-16
+Plan: 18 of 19 (Gap-Plan 04-18 fertig; offen: 04-19 Push 6 und UAT Test 5 mit Owner)
+Status: Gap-Schließung läuft, 04-19 offen
+Last activity: 2026-11-17
 
-Progress: [██████████] 100%
+Progress: [██████████] 99%
 
 ## Performance Metrics
 
@@ -82,6 +82,7 @@ Progress: [██████████] 100%
 | Phase 04 P13 | 35 min | 2 tasks | 5 files |
 | Phase 04 P15 | 60 min | 2 tasks | 1 files |
 | Phase 04 P16 | 45 min | 2 tasks | 9 files |
+| Phase 04 P18 | 45min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -160,6 +161,7 @@ Recent decisions affecting current work:
 - [Phase 4]: 04-15: Push 2 (56f3627) auf phase-04 in allen vier Workflows grün, Discovery legs=all 6 x 22/22; debug-Prüfung gegen origin/phase-03
 - [Phase 04]: 04-16 (Owner 16.11.): alle Prüfpunkte abgenommen (Lauf 43942105866); Spurmenü T31 ohne Bild akzeptiert; S7-Vertrag auf Polizei/Seite nachgezogen; X6-Hinweis und Bannerbreiten bleiben; Trefferzeilen-Ausschnitt S6/S7 ist Backlog
 - [Phase 04]: 04-16 (Owner 16.11.): X3 setzt controlslist=nodownload am Medium, fail-closed wie der Export (jedes Urteil außer ALLOWED); nur Bedien-Hürde, keine technische Sperre
+- [Phase 04]: 04-18 (Owner 17.11.): Untertitel-Dateinamen schreiben nur Umlaute und ß aus (auch NFD), andere Nicht-ASCII-Zeichen bleiben; Owner-Rückfrage offen
 
 ### Pending Todos
 
@@ -187,6 +189,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-16T22:00:00.000Z
-Stopped at: Completed 04-16-PLAN.md (Owner-Abnahme, X3-Fix 42c0cae lokal, Push 4 offen)
+Last session: 2026-11-17T04:36:31.655Z
+Stopped at: Completed 04-18-PLAN.md (lokal 5f1d608, e4b2d90, nicht gepusht; offen 04-19 Push 6 + UAT mit Owner)
 Resume file: None
