@@ -30,10 +30,10 @@ Mobil-Apps (Android, iOS) öffnen einen Treffer als Datei ab 0:00, ohne Sprung a
 
 ### Untertitel-Entwurf
 
-- Download auf der Abspielseite als SRT, VTT und TXT, Dateiname `<Name>.<de|en|fr>.<srt|vtt|txt>`
+- Download auf der Abspielseite als SRT, VTT und TXT, Dateiname `<Name>.<de|en|fr>.<srt|vtt|txt>`, Umlaute und ß im Namen ausgeschrieben (Übung wird Uebung)
 - VTT und TXT tragen den Hinweis "Untertitel-Entwurf, automatisch erstellt und nicht geprüft"
 - Ist die Datei noch in Arbeit, enthält der Entwurf den Stand bis zur genannten Zeitstelle und sagt das
-- Neben die Datei legen: `<Name>.<de|en|fr>.vtt` im Ordner der Aufnahme, nur mit dem Recht, dort Dateien anzulegen; eine vorhandene Datei wird nie überschrieben
+- Neben die Datei legen: `<Name>.<de|en|fr>.vtt`, Umlaute und ß im Namen ausgeschrieben (Übung wird Uebung), im Ordner der Aufnahme, nur mit dem Recht, dort Dateien anzulegen; eine vorhandene Datei wird nie überschrieben
 - Untertitel-Spur am Video auf der Abspielseite, ausgeschaltet, bis Sie sie einschalten
 - Freigaben ohne Download-Erlaubnis: Treffer in der Suche ja, Download und Ablage des Untertitel-Entwurfs nein; lässt sich die Einstellung nicht feststellen, gilt der Download als gesperrt
 

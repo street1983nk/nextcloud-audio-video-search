@@ -45,6 +45,9 @@ import {
 	playAt,
 	READ_ONLY,
 	requestToken,
+	S7_EXPORT_BASE,
+	s7ExportName,
+	S7_LANGUAGE,
 	S7_VIDEO_NAME,
 	restPointerAndFocus,
 	screenshotPart,
@@ -278,7 +281,7 @@ test('X1 Export am Video: Reihenfolge SRT, VTT, TXT, kein Akzent, Klickfläche, 
 		// A clear download: the menu of the native player keeps its entry (counterpart of X3).
 		await expect(page.locator('#avs-media[controlslist]')).toHaveCount(0);
 		// The sidecar block names the real target name (T20) and play.js shows the button.
-		const sidecarName = exportName(S7_VIDEO_NAME, 'vtt');
+		const sidecarName = s7ExportName('vtt');
 		await expect(sidecarHint(page)).toHaveText(fill(T.T20[language], sidecarName));
 		await expect(page.locator('#avs-sidecar')).toBeVisible();
 		await expect(page.locator('#avs-sidecar')).toHaveText(T.T19[language]);
@@ -661,21 +664,21 @@ test('X6 ohne JavaScript: Downloads gehen, Ablage-Knopf unsichtbar, T20 steht @p
 	try {
 		const plain = await context.newPage();
 		await plain.goto(playAt(video, START_SECONDS));
-		await expect(sidecarHint(plain)).toHaveText(fill(T.T20[language], exportName(S7_VIDEO_NAME, 'vtt')));
+		await expect(sidecarHint(plain)).toHaveText(fill(T.T20[language], s7ExportName('vtt')));
 		await expect(plain.locator('#avs-sidecar')).toBeHidden();
 		await expect(plain.locator('#avs-sidecar')).toHaveAttribute('hidden', '');
 		const links = downloadLinks(plain);
 		await expect(links).toHaveCount(3);
 		for (const [index, format] of FORMATS.entries()) {
 			const { name } = await downloadTo(plain, links.nth(index), testInfo.outputPath('x6'));
-			expect(name).toBe(exportName(S7_VIDEO_NAME, format));
+			expect(name).toBe(s7ExportName(format));
 		}
 		// The last click leaves the TXT button under the pointer and focused (darker
 		// than SRT and VTT). Without JavaScript the page cannot blur it, so the
 		// pointer leaves and the same page is loaded again for the picture.
 		await plain.mouse.move(0, 0);
 		await plain.goto(playAt(video, START_SECONDS));
-		await expect(sidecarHint(plain)).toHaveText(fill(T.T20[language], exportName(S7_VIDEO_NAME, 'vtt')));
+		await expect(sidecarHint(plain)).toHaveText(fill(T.T20[language], s7ExportName('vtt')));
 		await expect(plain.locator('#avs-sidecar')).toBeHidden();
 		await expectButtonsAtRest(links);
 		await wholePage(plain, 'x6', testInfo);
@@ -688,13 +691,13 @@ test('X6 ohne JavaScript: Downloads gehen, Ablage-Knopf unsichtbar, T20 steht @p
 // ---------------------------------------------------------------------------
 // D1: the real downloads, kept for the parser proof (tests/test_downloaded_subtitles.py).
 
-test('D1 Downloads SRT, VTT, TXT: Name mit Sprache, auch mit Umlaut, MIME, TXT-Zeile 2 = T35 @phase4', async ({ page }, testInfo) => {
+test('D1 Downloads SRT, VTT, TXT: Name mit Sprache, Umlaut ersetzt, MIME, TXT-Zeile 2 = T35 @phase4', async ({ page }, testInfo) => {
 	only(testInfo, [ONCE]);
 	test.setTimeout(PREPARED_MS);
 	const dir = required('AVS_DOWNLOADS_DIR');
 	const cases = [
-		{ user: users.elke(), language: 'de' as Language, fileId: fileIds.s7Video(), fileName: S7_VIDEO_NAME },
-		{ user: users.alice(), language: 'en' as Language, fileId: fileIds.s7DeDigit(), fileName: 's7-ziffer.wav' },
+		{ user: users.elke(), language: 'de' as Language, fileId: fileIds.s7Video(), fileName: S7_VIDEO_NAME, exportBase: S7_EXPORT_BASE },
+		{ user: users.alice(), language: 'en' as Language, fileId: fileIds.s7DeDigit(), fileName: 's7-ziffer.wav', exportBase: 's7-ziffer' },
 	];
 	for (const [position, item] of cases.entries()) {
 		await expectTranscript(item.user, item.fileId);
@@ -709,7 +712,8 @@ test('D1 Downloads SRT, VTT, TXT: Name mit Sprache, auch mit Umlaut, MIME, TXT-Z
 		for (const [index, format] of FORMATS.entries()) {
 			const { path, name } = await downloadTo(page, links.nth(index), dir);
 			expect(name).toMatch(DOWNLOAD_NAME);
-			expect(name).toBe(exportName(item.fileName, format));
+			expect(name).toBe(`${item.exportBase}.${S7_LANGUAGE}.${format}`);
+			expect(name).not.toMatch(/[äöüÄÖÜßẞ̈]/u);
 			const href = await links.nth(index).getAttribute('href');
 			const response = await page.request.get(href ?? '');
 			expect(response.status()).toBe(200);

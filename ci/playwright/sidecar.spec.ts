@@ -41,7 +41,7 @@ import {
 	playAt,
 	READ_ONLY,
 	requestToken,
-	S7_VIDEO_NAME,
+	s7ExportName,
 	screenshot,
 	screenshotPart,
 	screenshotVariants,
@@ -263,7 +263,7 @@ test('E1 und E2 Ablage legt die VTT an, der zweite Klick zeigt die Kollision und
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
 	const video = fileIds.s7Video();
-	const name = exportName(S7_VIDEO_NAME, 'vtt');
+	const name = s7ExportName('vtt');
 	await expectTranscript(user, video);
 	// The recipient's sidecar lands in the recipient's home; one of an earlier attempt would turn E1 into E2.
 	expect([204, 404]).toContain(await deleteFile(user, name));
@@ -305,7 +305,7 @@ test('E2 Kollision in Hochkontrast und Französisch @phase4 @axe @screenshot', a
 	test.setTimeout(PREPARED_MS);
 	const { user, language } = phase4User(testInfo);
 	const video = fileIds.s7Video();
-	const name = exportName(S7_VIDEO_NAME, 'vtt');
+	const name = s7ExportName('vtt');
 	await expectTranscript(user, video);
 	// dora (high contrast) reads English in the seed; her picture is German as well (04-UI-SPEC).
 	await withLanguage(user, language, async () => {

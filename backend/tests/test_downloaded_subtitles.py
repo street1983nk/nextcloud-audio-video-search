@@ -6,7 +6,12 @@ CI=true afterwards. Without the variable (python.yml, a laptop) the test skips:
 there are no downloads there. With it, a missing folder or a folder without at
 least one .srt, one .vtt and one .txt fails, never skips (T-04-59).
 
-For every file: the name is ``<name>.<de|en|fr>.<srt|vtt|txt>``; SRT and VTT
+For every file: the name is ``<name>.<de|en|fr>.<srt|vtt|txt>`` and carries no
+umlaut and no sharp s, because the export spells them out (owner 17.11.2026,
+UAT 04 test 5). The gate refuses every combining diaeresis U+0308, so also a
+decomposed letter the export does not replace (NFD e or i with diaeresis): on
+purpose strict, real downloads come from NFC names, a U+0308 in the name would
+be a fault of the naming. SRT and VTT
 pass check_srt/check_vtt and ffmpeg (tests/subtitle_checkers.py, plan 04-04;
 ffmpeg over find_tool, so a missing ffmpeg fails under CI=true); line 2 of a TXT
 is T35 in one of the three catalogue languages (php/l10n); no file says "BITV"
@@ -29,6 +34,9 @@ DOWNLOADS_ENV = "AVS_DOWNLOADS_DIR"
 # app" moved it to apps/audio_video_search of the server checkout.
 L10N_ENV = "AVS_L10N_DIR"
 NAME = re.compile(r"^.+\.(de|en|fr)\.(srt|vtt|txt)$")
+# The export spells umlauts and the sharp s out (UAT 04 test 5): none of them,
+# and no combining diaeresis U+0308, may stand in the name of a real download.
+UMLAUT = re.compile("[äöüÄÖÜßẞ̈]")
 FORMATS = ("srt", "vtt", "txt")
 # The source string of T35 (UI-SPEC 04); the catalogues carry its German and French text.
 T35_SOURCE = "Subtitle draft, created automatically and not reviewed."
@@ -60,6 +68,8 @@ def by_format(folder: Path) -> dict[str, list[Path]]:
         match = NAME.fullmatch(path.name)
         if match is None or not path.is_file():
             pytest.fail(f"{path.name}: not a download named <name>.<de|en|fr>.<srt|vtt|txt>")
+        if UMLAUT.search(path.name):
+            pytest.fail(f"{path.name}: umlaut in the name, the export spells them out (UAT 04 test 5)")
         found[match.group(2)].append(path)
     absent = [fmt for fmt in FORMATS if not found[fmt]]
     if absent:
@@ -123,7 +133,7 @@ def _folder(tmp_path: Path, files: dict[str, str]) -> Path:
 
 
 def _complete() -> dict[str, str]:
-    return {"sitzung.de.srt": SRT, "sitzung.de.vtt": VTT, "Sitzung März.de.txt": TXT}
+    return {"sitzung.de.srt": SRT, "sitzung.de.vtt": VTT, "Sitzung Maerz.de.txt": TXT}
 
 
 def test_t35_is_read_in_three_languages() -> None:
@@ -172,8 +182,37 @@ def test_a_complete_folder_passes(tmp_path: Path) -> None:
     assert check_folder(_folder(tmp_path, _complete())) == len(FORMATS)
 
 
+def test_an_umlaut_in_the_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Übung.de.srt": SRT}
+    with pytest.raises(pytest.fail.Exception, match=r"Übung\.de\.srt: umlaut"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_decomposed_umlaut_in_the_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Übung.de.srt": SRT}
+    with pytest.raises(pytest.fail.Exception, match="umlaut in the name"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_sharp_s_in_the_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Straße.de.vtt": VTT}
+    with pytest.raises(pytest.fail.Exception, match="umlaut in the name"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_another_letter_in_the_name_passes(tmp_path: Path) -> None:
+    files = {**_complete(), "Café.de.srt": SRT}
+    assert check_folder(_folder(tmp_path, files)) == len(FORMATS) + 1
+
+
+def test_the_spelled_out_s7_names_pass(tmp_path: Path) -> None:
+    # The positive control of the umlaut gate: the names the export gives the S7 video.
+    files = {"S7-Uebung.de.srt": SRT, "S7-Uebung.de.vtt": VTT, "S7-Uebung.de.txt": TXT}
+    assert check_folder(_folder(tmp_path, files)) == len(FORMATS)
+
+
 def test_a_txt_without_t35_fails(tmp_path: Path) -> None:
-    files = {**_complete(), "Sitzung März.de.txt": "sitzung.wav\nAutomatisch erstellt.\n\nHallo Welt\n"}
+    files = {**_complete(), "Sitzung Maerz.de.txt": "sitzung.wav\nAutomatisch erstellt.\n\nHallo Welt\n"}
     with pytest.raises(pytest.fail.Exception, match="line 2 is not T35"):
         check_folder(_folder(tmp_path, files))
 

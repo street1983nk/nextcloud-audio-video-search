@@ -185,7 +185,7 @@ Datenvertrag Controller -> Template (neu): `exportState` (`available|partial|blo
 ### Download-Knöpfe (D-04-02 bis D-04-04)
 
 - Reihenfolge fest: SRT, VTT, TXT. Drei sichtbare Knöpfe, kein Menü, keine Vorauswahl.
-- Echte Links (`<a href>`), **ohne** `download`-Attribut: Der Server setzt `Content-Disposition: attachment` mit dem Namen `<Name>.<Sprache>.<ext>` (DataDownloadResponse). Ohne JS voll funktionsfähig.
+- Echte Links (`<a href>`), **ohne** `download`-Attribut: Der Server setzt `Content-Disposition: attachment` mit dem Namen `<Name>.<Sprache>.<ext>` (Umlaute und ß im Namen ersetzt: ä->ae, ö->oe, ü->ue, ß->ss; Owner 17.11.2026) (DataDownloadResponse). Ohne JS voll funktionsfähig.
 - Klick lädt sofort herunter; kein Bestätigungsschritt (nichts wird verändert).
 - Fehler beim Herunterladen (Container still, Zeitlimit, Sperre zwischen Seitenaufbau und Klick, Transkript inzwischen weg): Der Controller liefert **keine** JSON- oder Leerantwort, sondern eine kleine Fehlerseite im App-Rahmen mit Banner `error` (Titel T29, Text je Ursache T24, T25 oder Bestandstext A5) und Banner-Aktion "Zurück zur Wiedergabe" (T30) auf die Abspielseite mit derselben `fileId` und `?t=`. Status 403/404/503 wie der Fall.
 - Ladezeit: Lange Dateien dürfen bis zum Export-Zeitlimit (eigener Wert, Plan misst) dauern; der Browser zeigt seinen eigenen Ladezustand. Kein eigenes Spinner-Element.
@@ -362,7 +362,7 @@ Grundmatrix "6": Breiten 375, 768, 1280 px, je hell und dunkel. Sprache DE; FR z
 | X4 | ohne Transkript / ausgeschlossen / Grund | 1280 hell | Abschnitt fehlt; ausgeschlossener Nutzer und unbekannte Datei byte-gleich (Vergleich mit P4/P11 aus Phase 3) |
 | X5 | ohne Schreibrecht im Ordner (Freigabe nur lesen, Download erlaubt) | 1280 hell, 375 hell | T23 statt Knopf; Downloads funktionieren |
 | X6 | ohne JS | 1280 hell | Downloads funktionieren, Ablage-Knopf nicht sichtbar, T20 steht |
-| D1 | Download SRT/VTT/TXT | kein Bild | Dateiname `<Name>.<de|en|fr>.<ext>` (auch mit Umlaut im Namen), MIME laut Research, VTT/SRT parsen in webvtt-py, srt und ffmpeg; TXT Zeile 2 = T35 in Anzeigesprache; Text-Gate EXP-04 auf den Dateien |
+| D1 | Download SRT/VTT/TXT | kein Bild | Dateiname `<Name>.<de|en|fr>.<ext>` (Umlaute und ß im Namen ersetzt: ä->ae, ö->oe, ü->ue, ß->ss; Owner 17.11.2026), MIME laut Research, VTT/SRT parsen in webvtt-py, srt und ffmpeg; TXT Zeile 2 = T35 in Anzeigesprache; Text-Gate EXP-04 auf den Dateien |
 | D2 | Fehlerseite Download (Container gestoppt) | 1280 hell + dunkel, 375 hell | T29 + T25 + Aktion T30 führt zurück zur Abspielseite mit gleicher Zeitmarke |
 | E1 | Ablage erfolgreich | 6 | Datei im Ordner, Name aus T21 stimmt mit Datei überein; Fokus bleibt auf dem Knopf; Screenreader-Ansage (role status) |
 | E2 | zweiter Klick: Kollision | 6 + FR 375 + Hochkontrast | T22a/T22b mit Name; vorhandene Datei byte-gleich (sha256 vor/nach); Fokus auf dem Banner |

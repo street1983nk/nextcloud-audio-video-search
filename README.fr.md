@@ -30,10 +30,10 @@ Les applications mobiles (Android, iOS) ouvrent un résultat comme fichier à pa
 
 ### Brouillon de sous-titres
 
-- Téléchargement sur la page de lecture en SRT, VTT et TXT, nom de fichier `<nom>.<de|en|fr>.<srt|vtt|txt>`
+- Téléchargement sur la page de lecture en SRT, VTT et TXT, nom de fichier `<nom>.<de|en|fr>.<srt|vtt|txt>`, trémas allemands et ß du nom transcrits (Übung devient Uebung)
 - VTT et TXT portent la mention « Brouillon de sous-titres, créé automatiquement et non vérifié. »
 - Tant que le fichier est encore en cours de traitement, le brouillon contient l'état jusqu'au moment indiqué et le signale
-- Déposer à côté du fichier : `<nom>.<de|en|fr>.vtt` dans le dossier de l'enregistrement, uniquement avec le droit d'y créer des fichiers ; un fichier existant n'est jamais écrasé
+- Déposer à côté du fichier : `<nom>.<de|en|fr>.vtt`, trémas allemands et ß du nom transcrits (Übung devient Uebung), dans le dossier de l'enregistrement, uniquement avec le droit d'y créer des fichiers ; un fichier existant n'est jamais écrasé
 - Piste de sous-titres sur les vidéos de la page de lecture, désactivée jusqu'à ce que vous l'activiez
 - Partages qui n'autorisent pas le téléchargement : résultats dans la recherche oui, téléchargement et dépôt du brouillon de sous-titres non ; si le réglage ne peut pas être déterminé, le téléchargement est considéré comme bloqué
 

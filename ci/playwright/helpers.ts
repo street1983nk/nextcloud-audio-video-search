@@ -710,6 +710,13 @@ export function fold(word: string): string {
 
 /** The name alice gave the video of the seed (with an umlaut, D1), and the folder of the sidecar share. */
 export const S7_VIDEO_NAME = 'S7-Übung.webm';
+/**
+ * The base of every export name of that video: the umlaut is spelled out in
+ * the name of a download and a sidecar (owner 17.11.2026, UAT 04 test 5). A
+ * literal on purpose, not derived from S7_VIDEO_NAME, so the check does not
+ * repeat the pattern of the implementation.
+ */
+export const S7_EXPORT_BASE = 'S7-Uebung';
 export const ABLAGE_FOLDER = 'Ablage';
 export const ABLAGE_FILE = 's7-ablage.wav';
 /** The transcript language of both: the speech of S7_DE and S7_DE_DIGIT is German (fetch_speech.py). */
@@ -883,6 +890,11 @@ export function exportName(fileName: string, format: ExportFormat, language = S7
 	const dot = fileName.lastIndexOf('.');
 	const base = dot <= 0 ? fileName : fileName.slice(0, dot);
 	return `${base}.${language}.${format}`;
+}
+
+/** The export name of the S7 video, umlaut spelled out: "S7-Uebung.de.vtt". */
+export function s7ExportName(format: ExportFormat, language = S7_LANGUAGE): string {
+	return `${S7_EXPORT_BASE}.${language}.${format}`;
 }
 
 /** The playback page of a file at a time mark. */

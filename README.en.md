@@ -30,10 +30,10 @@ Mobile apps (Android, iOS) open a result as a file from 0:00, without the jump t
 
 ### Subtitle draft
 
-- Download on the playback page as SRT, VTT and TXT, file name `<name>.<de|en|fr>.<srt|vtt|txt>`
+- Download on the playback page as SRT, VTT and TXT, file name `<name>.<de|en|fr>.<srt|vtt|txt>`, umlauts and ß in the name spelled out (Übung becomes Uebung)
 - VTT and TXT carry the note "Subtitle draft, created automatically and not reviewed."
 - While the file is still being processed, the draft holds the state up to the stated point in time and says so
-- Save next to the file: `<name>.<de|en|fr>.vtt` in the folder of the recording, only with the permission to create files there; an existing file is never overwritten
+- Save next to the file: `<name>.<de|en|fr>.vtt`, umlauts and ß in the name spelled out (Übung becomes Uebung), in the folder of the recording, only with the permission to create files there; an existing file is never overwritten
 - Subtitle track on videos on the playback page, switched off until you switch it on
 - Shares that do not allow downloads: results in the search yes, download and saving of the subtitle draft no; if the setting cannot be determined, the download counts as blocked
 
