@@ -67,6 +67,30 @@ final class ExportController extends Controller {
 		'txt' => 'text/plain; charset=utf-8',
 	];
 
+	/**
+	 * The umlauts and the sharp s of a subtitle name, spelled out (owner
+	 * 17.11.2026, UAT 04 test 5). The decomposed forms (letter plus U+0308)
+	 * stand here too, so a name in NFD is spelled out even without intl;
+	 * with intl, composed() makes them NFC first. strtr() takes the longest
+	 * match, every key is a fixed UTF-8 sequence.
+	 */
+	private const UMLAUTS = [
+		'ä' => 'ae',
+		'ö' => 'oe',
+		'ü' => 'ue',
+		'Ä' => 'Ae',
+		'Ö' => 'Oe',
+		'Ü' => 'Ue',
+		'ß' => 'ss',
+		"\u{1E9E}" => 'SS',
+		"a\u{0308}" => 'ae',
+		"o\u{0308}" => 'oe',
+		"u\u{0308}" => 'ue',
+		"A\u{0308}" => 'Ae',
+		"O\u{0308}" => 'Oe',
+		"U\u{0308}" => 'Ue',
+	];
+
 	public function __construct(
 		IRequest $request,
 		private IRootFolder $rootFolder,
@@ -328,12 +352,15 @@ final class ExportController extends Controller {
 	 * The name of the download (D-04-04): the file name in NFC, the last
 	 * extension cut (a name without a dot, or with only a leading one, stays
 	 * whole), then the language and the format. "sitzung.mp4" becomes
-	 * "sitzung.de.srt", "Übung.final.webm" becomes "Übung.final.fr.vtt".
-	 * DataDownloadResponse does the header work: slashes replaced, an ASCII
-	 * fallback next to the UTF-8 name (T-04-32).
+	 * "sitzung.de.srt", "Übung.final.webm" becomes "Uebung.final.fr.vtt".
+	 * The umlauts and the sharp s are spelled out (owner 17.11.2026, UAT 04
+	 * test 5), also decomposed; every other character stays. The length
+	 * checks of the sidecar and the play page run on this result, so on the
+	 * spelled-out name. DataDownloadResponse does the header work: slashes
+	 * replaced, an ASCII fallback next to the UTF-8 name (T-04-32).
 	 */
 	public static function downloadName(string $fileName, string $language, string $format): string {
-		$name = self::composed($fileName);
+		$name = strtr(self::composed($fileName), self::UMLAUTS);
 		$dot = strrpos($name, '.');
 		$base = $dot === false || $dot === 0 ? $name : substr($name, 0, $dot);
 

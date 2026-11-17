@@ -530,10 +530,28 @@ final class ExportControllerTest extends TestCase {
 	public static function downloadNames(): array {
 		return [
 			'one extension' => ['sitzung.mp4', 'de', 'srt', 'sitzung.de.srt'],
-			'several dots' => ['Übung.final.webm', 'fr', 'vtt', 'Übung.final.fr.vtt'],
+			'several dots' => ['Übung.final.webm', 'fr', 'vtt', 'Uebung.final.fr.vtt'],
 			'no dot' => ['mitschnitt', 'en', 'txt', 'mitschnitt.en.txt'],
 			'leading dot only' => ['.versteckt', 'de', 'txt', '.versteckt.de.txt'],
-			'decomposed umlaut' => ["U\u{0308}bung.mp4", 'de', 'srt', "\u{00DC}bung.de.srt"],
+			'control character stays' => ["Sitz\tung.webm", 'de', 'vtt', "Sitz\tung.de.vtt"],
+			'decomposed umlaut' => ["U\u{0308}bung.mp4", 'de', 'srt', 'Uebung.de.srt'],
+			'decomposed lowercase' => ["Ma\u{0308}rz.ogg", 'de', 'srt', 'Maerz.de.srt'],
+			'all umlauts' => [
+				'Äpfel Öl Über ärger öfter übel Straße.mp4',
+				'de',
+				'vtt',
+				'Aepfel Oel Ueber aerger oefter uebel Strasse.de.vtt',
+			],
+			'capital sharp s' => ["GRO\u{1E9E}E.wav", 'de', 'txt', 'GROSSE.de.txt'],
+			// Only umlauts and the sharp s are spelled out: every other letter,
+			// Cyrillic and the microphone U+1F3A4 (an escape, never the
+			// character in a tracked file) stay as they are.
+			'other letters stay' => [
+				"Caf\u{00E9} ni\u{00F1}o \u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} \u{1F3A4}.mp4",
+				'fr',
+				'srt',
+				"Caf\u{00E9} ni\u{00F1}o \u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} \u{1F3A4}.fr.srt",
+			],
 		];
 	}
 
@@ -590,6 +608,25 @@ final class ExportControllerTest extends TestCase {
 		// The header carries the name too: the tab became a space there, so
 		// the download is a download and not a server error.
 		self::assertStringContainsString('Sitz ung.de.txt', (string)$response->getHeaders()['Content-Disposition']);
+	}
+
+	public function testTheDownloadNameSpellsOutTheUmlautAndTheTxtHeadKeepsTheRealName(): void {
+		$this->file(7, 'S7-Übung.webm');
+		$this->export = self::known(['body' => 'der Haushalt wird beraten']);
+
+		foreach (['srt', 'vtt', 'txt'] as $format) {
+			$response = $this->download(7, $format);
+			self::assertInstanceOf(DataDownloadResponse::class, $response);
+			$disposition = (string)$response->getHeaders()['Content-Disposition'];
+			self::assertStringContainsString('S7-Uebung.de.' . $format, $disposition);
+			self::assertStringNotContainsString('Übung', $disposition);
+			self::assertStringNotContainsString(rawurlencode('Ü'), $disposition);
+		}
+
+		// The head of the TXT is content, not a file name: the real name of the recording.
+		$txt = $this->download(7, 'txt');
+		self::assertInstanceOf(DataDownloadResponse::class, $txt);
+		self::assertStringStartsWith("S7-Übung.webm\n", $txt->render());
 	}
 
 	public function testTheAttachmentNameTurnsControlCharactersIntoSpacesAndKeepsTheRest(): void {
@@ -819,6 +856,59 @@ final class ExportControllerTest extends TestCase {
 		$fits = $this->sidecar(8);
 		self::assertSame(Http::STATUS_CREATED, $fits->getStatus());
 		self::assertSame(['name' => str_repeat('a', 248) . '.de.vtt'], $fits->getData());
+	}
+
+	public function testTheSidecarSpellsOutTheUmlautAndASecondCallIsThe409OnTheSameName(): void {
+		$this->file(7, 'Übung.webm');
+
+		$first = $this->sidecar(7);
+		self::assertSame(Http::STATUS_CREATED, $first->getStatus());
+		self::assertSame(['name' => 'Uebung.de.vtt'], $first->getData());
+		self::assertSame(['Uebung.de.vtt'], array_keys($this->sidecars));
+		$before = hash('sha256', $this->sidecars['Uebung.de.vtt']);
+
+		$second = $this->sidecar(7);
+		self::assertSame(Http::STATUS_CONFLICT, $second->getStatus());
+		self::assertSame(['name' => 'Uebung.de.vtt'], $second->getData());
+		self::assertSame($before, hash('sha256', $this->sidecars['Uebung.de.vtt']));
+		self::assertSame(1, $this->newFileCalls);
+	}
+
+	public function testTheLimitOf255BytesIsCheckedOnTheSpelledOutName(): void {
+		// 124 x "ß" (248 bytes) + ".mp4" is a valid file name; spelled out
+		// 124 x "ss" (248 bytes) + ".de.vtt" makes exactly 255 bytes. "ß" to
+		// "ss" keeps the byte count, so this pair pins the edge 255/256.
+		$this->file(7, str_repeat('ß', 124) . '.mp4');
+		$fits = $this->sidecar(7);
+		self::assertSame(Http::STATUS_CREATED, $fits->getStatus());
+		$name = str_repeat('ss', 124) . '.de.vtt';
+		self::assertSame(255, strlen($name));
+		self::assertSame(['name' => $name], $fits->getData());
+
+		// One byte more: 256 bytes, the 400 and nothing written.
+		$this->readable = [];
+		$this->sidecars = [];
+		$this->newFileCalls = 0;
+		$this->file(8, str_repeat('ß', 124) . 'x.mp4');
+		$over = $this->sidecar(8);
+		self::assertSame(Http::STATUS_BAD_REQUEST, $over->getStatus());
+		self::assertSame(['reason' => 'name_too_long'], $over->getData());
+		self::assertSame([], $this->sidecars);
+		self::assertSame(0, $this->newFileCalls);
+	}
+
+	public function testACapitalSharpSNameFitsOnlyBecauseItIsSpelledOut(): void {
+		// 83 x U+1E9E is 249 bytes: kept, the name would be 256 bytes. Spelled
+		// out as "SS" it is 173 bytes, so the check sits on the replaced name.
+		$this->file(7, str_repeat("\u{1E9E}", 83) . '.webm');
+
+		$response = $this->sidecar(7);
+
+		$name = str_repeat('SS', 83) . '.de.vtt';
+		self::assertSame(173, strlen($name));
+		self::assertSame(Http::STATUS_CREATED, $response->getStatus());
+		self::assertSame(['name' => $name], $response->getData());
+		self::assertArrayHasKey($name, $this->sidecars);
 	}
 
 	public function testAnExcludedAnUnknownAndAnUnreadableFileAreTheSameEmpty404(): void {

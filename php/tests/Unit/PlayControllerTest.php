@@ -1253,10 +1253,17 @@ final class PlayControllerTest extends TestCase {
 		$this->file(7, str_repeat('a', 248) . '.webm');
 		self::assertSame(str_repeat('a', 248) . '.de.vtt', $this->play(7)['sidecarName']);
 
+		// 125 x "ä" spelled out is 250 bytes "ae", with ".de.vtt" 257: still too long.
 		$this->file(8, str_repeat('ä', 125) . '.webm');
 		$params = $this->play(8);
 		self::assertSame('available', $params['exportState']);
 		self::assertSame('', $params['sidecarName']);
+	}
+
+	public function testTheSidecarNameOnThePageSpellsOutTheUmlaut(): void {
+		$this->file(7, 'S7-Übung.webm');
+
+		self::assertSame('S7-Uebung.de.vtt', $this->play(7)['sidecarName']);
 	}
 
 	public function testTheAnswersWithoutASectionAreTheSameForExcludedAndUnknown(): void {
