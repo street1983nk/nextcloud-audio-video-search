@@ -7,6 +7,7 @@ ADD of a remote URL, apt lists removed, the app id in the entrypoint.
 """
 
 import re
+import tomllib
 
 from audio_video_search_backend import APP_ID
 from audio_video_search_backend.index.wordlist import SYSTEM_WORDLIST
@@ -218,3 +219,71 @@ def test_the_pin_comparison_fires_on_another_release_or_a_missing_pin() -> None:
 
     assert [m.split(":")[0] for m in pin_mismatches(DOCKERFILE, other)] == ["FFMPEG_RELEASE"]
     assert [m.split(":")[0] for m in pin_mismatches(DOCKERFILE, missing)] == ["FFMPEG_BUILD"]
+
+
+# -- T-04-SC: the checkers of the dev group stay out of the image (plan 04-04) --
+#
+# webvtt-py and srt are pinned in [dependency-groups] dev only; the image gets
+# them the moment one uv call of the build installs or exports that group. The
+# rule reads every uv sync and uv export of the Dockerfile, continuation lines
+# joined, and wants --no-dev on each, and none of the flags that pull a group
+# back in.
+
+DEV_FLAGS = ("--dev", "--all-groups", "--only-dev", "--group", "--only-group")
+
+
+def uv_installs(source: str) -> list[str]:
+    """Every uv sync or uv export command of the Dockerfile, with its continuation lines joined."""
+    joined = re.sub(r"\\n\s*", " ", source)
+    return [" ".join(match.group(0).split()) for match in re.finditer(r"\buv\s+(?:sync|export)\b[^\n&;|]*", joined)]
+
+
+def dev_install_findings(source: str) -> list[str]:
+    findings: list[str] = []
+    installs = uv_installs(source)
+    if not installs:
+        findings.append("the Dockerfile has no uv sync, so the rule would hold nothing")
+    for command in installs:
+        flags = command.split()
+        if "--no-dev" not in flags:
+            findings.append(f"{command} installs the dev group (no --no-dev)")
+        findings += [f"{command} pulls a group in with {flag}" for flag in DEV_FLAGS if flag in flags]
+    return findings
+
+
+def test_every_uv_sync_of_the_build_leaves_the_dev_group_out() -> None:
+    assert len(uv_installs(DOCKERFILE)) == 2
+    assert dev_install_findings(DOCKERFILE) == []
+
+
+def test_the_dev_group_rule_fires_without_no_dev() -> None:
+    first = "RUN uv sync --frozen --no-dev --no-editable --no-install-project"
+    assert first in DOCKERFILE
+
+    dropped = DOCKERFILE.replace(first, first.replace(" --no-dev", ""), 1)
+    assert dev_install_findings(dropped) == [
+        "uv sync --frozen --no-editable --no-install-project installs the dev group (no --no-dev)"
+    ]
+    continued = DOCKERFILE.replace(first, "RUN uv sync --frozen \\n    --no-editable --no-install-project", 1)
+    assert dev_install_findings(continued) == [
+        "uv sync --frozen --no-editable --no-install-project installs the dev group (no --no-dev)"
+    ]
+    exported = DOCKERFILE + "RUN uv export --frozen > requirements.txt && pip install -r requirements.txt\n"
+    assert dev_install_findings(exported) == [
+        "uv export --frozen > requirements.txt installs the dev group (no --no-dev)"
+    ]
+    grouped = DOCKERFILE.replace(first, f"{first} --group dev", 1)
+    assert dev_install_findings(grouped) == [f"{first[4:]} --group dev pulls a group in with --group"]
+    assert dev_install_findings("FROM x AS runtime\n") == [
+        "the Dockerfile has no uv sync, so the rule would hold nothing"
+    ]
+
+
+def test_the_checkers_are_pinned_in_the_dev_group_only() -> None:
+    project = tomllib.loads((BACKEND_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime = " ".join(project["project"]["dependencies"])
+    dev = project["dependency-groups"]["dev"]
+
+    for checker in ("webvtt-py", "srt"):
+        assert any(entry.startswith(f"{checker}==") for entry in dev), checker
+        assert not re.search(rf"(?<![\w-]){re.escape(checker)}(?![\w-])", runtime), checker
