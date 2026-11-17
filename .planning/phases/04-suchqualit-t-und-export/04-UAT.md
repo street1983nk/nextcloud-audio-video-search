@@ -3,7 +3,7 @@ status: complete
 phase: 04-suchqualit-t-und-export
 source: [04-01-SUMMARY.md, 04-02-SUMMARY.md, 04-03-SUMMARY.md, 04-04-SUMMARY.md, 04-05-SUMMARY.md, 04-06-SUMMARY.md, 04-07-SUMMARY.md, 04-08-SUMMARY.md, 04-09-SUMMARY.md, 04-10-SUMMARY.md, 04-11-SUMMARY.md, 04-12-SUMMARY.md, 04-13-SUMMARY.md, 04-14-SUMMARY.md, 04-15-SUMMARY.md, 04-16-SUMMARY.md, 04-17-SUMMARY.md]
 started: 2026-11-17T12:00:00Z
-updated: 2026-11-17T15:00:00Z
+updated: 2026-11-17T18:00:00Z
 ---
 
 <!-- Keine lokale Live-Instanz (kein Docker). Belege sind Bilder und CI-Läufe.
@@ -41,9 +41,10 @@ result: pass
 ### 5. Dateiname und Kopf der heruntergeladenen Datei
 expected: Die heruntergeladene Datei heißt wie die Aufnahme plus Sprache und Format, auch mit Umlaut, z. B. "S7-Übung.de.srt", "S7-Übung.de.vtt", "S7-Übung.de.txt". Die TXT-Datei beginnt mit dem Dateinamen und in Zeile 2 "Untertitel-Entwurf, automatisch erstellt und nicht geprüft."; die VTT-Datei trägt denselben Satz als NOTE.
 beleg: kein Bild; Downloads je Bein im Artefakt von Lauf 43942105866 (6 Dateien je Bein), Schritt "The parsers on the real downloads of phase 4" grün in Lauf https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/43955067783 (11 passed je Bein)
-result: issue
+result: pass
 reported: "Kein Umlaut bei Dateinamen" (Owner-Klärung 17.11.: Umlaute ersetzen, ue/oe/ae/ss, für Download UND Nebendatei)
 severity: major
+retest: pass (Owner 17.11.2026, nach Gap-Plan 04-18, CI-Beleg Push 6 ee6bd68, Lauf 44019004773: S7-Uebung.de.srt/.vtt/.txt)
 
 ### 6. Hinweis auf Teilstand, solange die Datei noch verarbeitet wird
 expected: Ist die Aufnahme noch nicht fertig verarbeitet, zeigt der Abschnitt zusätzlich "Transkript bis <Zeit>, Datei wird noch verarbeitet.", wobei <Zeit> die Endzeit des letzten fertigen Stücks ist (z. B. m:ss). Downloads sind trotzdem möglich; der französische Text ist vollständig und läuft auf 375 px nicht über.
@@ -93,8 +94,8 @@ result: pass
 ## Summary
 
 total: 14
-passed: 13
-issues: 1
+passed: 14
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
@@ -103,7 +104,7 @@ blocked: 0
 
 <!-- YAML format for plan-phase --gaps consumption -->
 - truth: "Exportierte und neben die Aufnahme gelegte Untertiteldateien tragen keine Umlaute im Dateinamen (ä->ae, ö->oe, ü->ue, Ä->Ae, Ö->Oe, Ü->Ue, ß->ss), z. B. S7-Übung.webm -> S7-Uebung.de.srt"
-  status: failed
+  status: resolved
   reason: "User reported: Kein Umlaut bei Dateinamen (Klärung: Umlaute ersetzen, für Download und Nebendatei)"
   severity: major
   test: 5
