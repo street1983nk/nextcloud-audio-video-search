@@ -1,7 +1,8 @@
 """GET /coverage: the numbers of D-02-06 for occ audio_video_search:status.
 
 ADMIN in appinfo/info.xml and signed like every route (AppAPIAuthMiddleware in
-main.py). The answer is a fixed set of keys with numbers only:
+main.py). The access level only guards the proxy way; occ reaches the route
+through exAppRequest, which skips it (api/__init__.py). The answer is a fixed set of keys with numbers only:
 contents, transcribed, files, byState, byStage, dueWork, byPreview (store/coverage.py).
 """
 

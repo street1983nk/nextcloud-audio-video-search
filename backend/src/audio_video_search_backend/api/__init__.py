@@ -2,7 +2,13 @@
 
 Every route sits behind ``AppAPIAuthMiddleware`` (main.py): a request without a
 valid AppAPI signature is answered with 401 before it reaches a handler. The
-routes block in appinfo/info.xml limits unsigned direct access on top.
+routes block in appinfo/info.xml decides only the proxy way (browser ->
+AppAPI proxy or HaRP -> /exapps/<app>/<route>, signed on the way); the signed
+exAppRequest of the PHP app skips it. The routes with user data (/search,
+/excerpt, /export, /export/meta) are therefore not declared there, so the
+proxy answers 404 for them; who may see what is decided in PHP before the
+call (read check, exclusions, download policy). The declared routes are all
+ADMIN (tests/test_store_metadata.py).
 
 Store and index are opened once in the lifespan and live in ``app.state``. The
 SQLite connection is shared between threads, and a transaction on it must not

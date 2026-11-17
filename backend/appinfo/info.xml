@@ -15,6 +15,18 @@
 	^/<name>$. Signed AppAPI requests skip the route check; the block governs
 	unsigned direct access only.
 
+	Which routes are declared, and why (owner 17.11.2026, T-04-25, E-1): the
+	block opens a route for the way browser -> AppAPI proxy or HaRP ->
+	/exapps/audio_video_search_backend/<route>, with the AppAPI signature added
+	on the way. That way never passes the PHP app, so it never sees the read
+	check, the exclusions or the download policy. A route that answers with
+	user data (/search, /excerpt, /export, /export/meta) is therefore not
+	declared at all: the PHP app reaches it with PublicFunctions::exAppRequest,
+	which signs the request and skips the route check (HaRP haproxy_agent.py
+	"We skip routes checking for AppAPI signed requests"), and the proxy answers
+	404 for it. Only ADMIN routes stay declared, for occ and the diagnosis of
+	an admin. tests/test_store_metadata.py holds both rules.
+
 	Lockstep: <version>, <image-tag>, the version in pyproject.toml and the git
 	tag v<version> are one number, and php/appinfo/info.xml follows it.
 	tests/test_store_metadata.py and tests/test_lockstep_versions.py hold them.
@@ -73,34 +85,6 @@ Prérequis :
 				<url>^/status$</url>
 				<verb>GET</verb>
 				<access_level>ADMIN</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-				<bruteforce_protection>[401]</bruteforce_protection>
-			</route>
-			<route>
-				<url>^/search$</url>
-				<verb>POST</verb>
-				<access_level>USER</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-				<bruteforce_protection>[401]</bruteforce_protection>
-			</route>
-			<route>
-				<url>^/excerpt$</url>
-				<verb>POST</verb>
-				<access_level>USER</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-				<bruteforce_protection>[401]</bruteforce_protection>
-			</route>
-			<route>
-				<url>^/export$</url>
-				<verb>POST</verb>
-				<access_level>USER</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-				<bruteforce_protection>[401]</bruteforce_protection>
-			</route>
-			<route>
-				<url>^/export/meta$</url>
-				<verb>POST</verb>
-				<access_level>USER</access_level>
 				<headers_to_exclude>[]</headers_to_exclude>
 				<bruteforce_protection>[401]</bruteforce_protection>
 			</route>

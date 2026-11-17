@@ -26,6 +26,12 @@ Only the snapshot of the words holds the store lock; language detection, cue
 building and formatting run in worker threads beside it (T-04-26), so a long
 file never blocks search or the worker. Nothing here logs: text, format
 content and language belong in no log line (T-04-28).
+
+Rights are not checked here: the read check, the exclusions and the download
+policy of the share live in ExportController (T-04-29 to T-04-31). Both routes
+are therefore not declared in appinfo/info.xml; only the signed exAppRequest
+of the PHP app reaches them, the AppAPI proxy and HaRP answer 404 (owner
+17.11.2026, T-04-25).
 """
 
 import asyncio

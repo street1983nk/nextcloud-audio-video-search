@@ -1,7 +1,10 @@
 """GET /status: what the admin section of the PHP app shows about the container.
 
 Route access level ADMIN in appinfo/info.xml; the signature check is the one of
-AppAPIAuthMiddleware in main.py, as for every other route.
+AppAPIAuthMiddleware in main.py, as for every other route. The access level
+only decides the proxy way (AppAPI proxy or HaRP); the signed exAppRequest of
+the PHP app skips it, so for the admin section the decision is the PHP
+controller's, not this file's.
 
 Fields (the admin section treats a missing field as unknown):
 

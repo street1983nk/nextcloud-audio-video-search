@@ -1,7 +1,8 @@
 """POST /reconcile/run: one round of the reconcile at once (plan 02-20).
 
 ADMIN in appinfo/info.xml, reached through occ audio_video_search:reconcile
-[--reprove] (ExAppService::reconcileNow, plan 02-19). Body ``{"reprove":
+[--reprove] (ExAppService::reconcileNow, plan 02-19); the access level only
+guards the proxy way, exAppRequest skips it (api/__init__.py). Body ``{"reprove":
 bool}``; the round runs sweep, proof planning and walk whatever their stamps
 say, after a round of the loop that may be running. The answer is the closed
 set of counters ExAppService::RECONCILE_KEYS checks, in that order.

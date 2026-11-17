@@ -24,9 +24,13 @@ The backend `audio_video_search_backend` is an External App: a Python container
 reachable only through AppAPI and HaRP. The PHP app `audio_video_search` serves
 search results and the playback view inside Nextcloud. The promises worth
 attacking: every request to the container without a valid AppAPI signature is
-refused, routes marked ADMIN are not reachable for other users, search results
-and the playback view only show files the user may read, the container runs
-without root, and nothing leaves your server.
+refused; the container routes that return user data (search, excerpt, export)
+are not declared for the AppAPI proxy or HaRP, so they are reachable only
+through the PHP app, which checks read access, exclusions and download
+restrictions first; the remaining container routes are marked ADMIN and not
+reachable for other users; search results and the playback view only show
+files the user may read; the container runs without root; and nothing leaves
+your server.
 
 For the subtitle draft (not yet in a released version) the promises are:
 exports and the subtitle track are served only for files the user may read and

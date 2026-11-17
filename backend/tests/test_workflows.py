@@ -937,3 +937,85 @@ def test_the_phase_4_rule_fires_on_a_softened_catch_count_step() -> None:
     assert phase4_findings(broken, summary, dockerfile) == [
         "the catch count in 'The catch count of the prefix clause in the container' may fail without failing the run"
     ]
+
+
+# -- T-04-25, T-04-50, E-1: no way past the PHP app (owner 17.11.2026) -----------
+#
+# The routes with user data are not declared in backend/appinfo/info.xml
+# (tests/test_store_metadata.py). This rule holds the CI proof in deploy-harp.yml:
+# bob asks each of them on both proxy ways and gets 404, the container never
+# logs the request, and afterwards the admin reaches the ADMIN route /status on
+# the same two ways (the positive control that the ways work at all). The step
+# must come after the OCS search of bob, which proves the PHP way for him.
+
+PAST_PHP_STEP = "Container routes with user data are not reachable past the PHP app"
+PAST_PHP_ROUTES = ("/search", "/excerpt", "/export", "/export/meta")
+PAST_PHP_NEEDLES = (
+    ('-u "bob:${BOB_PASS}"', "bob does not ask"),
+    ('test "${code}" = "404"', "the refusal is not held to 404"),
+    ('"http://localhost:8090/exapps/${BACKEND_APP_ID}${route}"', "the HaRP way is not asked"),
+    ('"${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}${route}"', "the AppAPI proxy way is not asked"),
+    ('test "${after}" = "${before[${index}]}"', "the container log is not compared"),
+    ('-u "admin:${ADMIN_PASS}" "${url}"', "the admin control is missing"),
+    ('test "${code}" = "200"', "the admin control is not held to 200"),
+    ('"http://localhost:8090/exapps/${BACKEND_APP_ID}/status"', "the admin control misses the HaRP way"),
+    ('"${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}/status"', "the admin control misses the AppAPI way"),
+)
+
+
+def past_php_findings(source: str) -> list[str]:
+    """Where deploy-harp.yml falls short of the proof that no proxy reaches a user data route."""
+    steps = steps_of(source)
+    names = [name for name, _ in steps]
+    if PAST_PHP_STEP not in names:
+        return [f"deploy-harp.yml has no step '{PAST_PHP_STEP}'"]
+    text = dict(steps)[PAST_PHP_STEP]
+    findings: list[str] = []
+    if re.search(r"^ {8}continue-on-error:", text, re.MULTILINE):
+        findings.append("the proof past the PHP app may fail without failing the run")
+    if "set -euo pipefail" not in text:
+        findings.append("the proof past the PHP app does not stop at the first failure")
+    loop = re.search(r"for route in ([^;\n]+); do\n\s+probe ", text)
+    if loop is None or tuple(loop.group(1).split()) != PAST_PHP_ROUTES:
+        findings.append("the proof past the PHP app does not ask exactly /search /excerpt /export /export/meta")
+    findings += [message for needle, message in PAST_PHP_NEEDLES if needle not in text]
+    control = text.find('-u "admin:${ADMIN_PASS}"')
+    if control != -1 and control < text.find('probe "http://localhost:8090'):
+        findings.append("the admin control runs before the probes, so it does not show that HaRP still serves")
+    if "The OCS search honours read access" not in names or names.index(
+        "The OCS search honours read access"
+    ) > names.index(PAST_PHP_STEP):
+        findings.append("the proof past the PHP app runs before the OCS search of bob")
+    return findings
+
+
+def test_the_proof_past_the_php_app_holds_every_rule() -> None:
+    assert past_php_findings(harp_source()) == []
+
+
+def test_the_past_php_rule_fires_on_each_weakened_proof() -> None:
+    source = harp_source()
+    assert past_php_findings(source.replace(PAST_PHP_STEP, "Something else", 1)) == [
+        f"deploy-harp.yml has no step '{PAST_PHP_STEP}'"
+    ]
+    assert past_php_findings(source.replace('test "${code}" = "404"', 'test "${code}" != "200"', 1)) == [
+        "the refusal is not held to 404"
+    ]
+    assert past_php_findings(
+        source.replace(
+            "/search /excerpt /export /export/meta; do\n            probe", "/search /excerpt; do\n            probe", 1
+        )
+    ) == ["the proof past the PHP app does not ask exactly /search /excerpt /export /export/meta"]
+    assert past_php_findings(
+        source.replace('"${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}${route}"', '"x"', 1)
+    ) == ["the AppAPI proxy way is not asked"]
+    assert past_php_findings(source.replace('test "${after}" = "${before[${index}]}"', "true", 1)) == [
+        "the container log is not compared"
+    ]
+    softened = source.replace(
+        f"      - name: {PAST_PHP_STEP}\n", f"      - name: {PAST_PHP_STEP}\n        continue-on-error: true\n", 1
+    )
+    assert past_php_findings(softened) == ["the proof past the PHP app may fail without failing the run"]
+    assert past_php_findings(
+        source.replace('-u "admin:${ADMIN_PASS}" "${url}"', '-u "bob:${BOB_PASS}" "${url}"', 1)
+    ) == ["the admin control is missing"]

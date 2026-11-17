@@ -1,6 +1,7 @@
 """GET /workstock: one page of the work stock for occ audio_video_search:files.
 
-ADMIN in appinfo/info.xml. Query: ``state`` (one code of the closed list or
+ADMIN in appinfo/info.xml (the proxy way; occ reaches it through exAppRequest,
+which skips the access level, api/__init__.py). Query: ``state`` (one code of the closed list or
 absent), ``after`` (the file id the page starts behind, default 0), ``limit``
 (1 to 1000, default 1000); anything else is answered 422 by the validation.
 The answer is ``{"files": [{"fileId", "mediaId", "storageId", "state",

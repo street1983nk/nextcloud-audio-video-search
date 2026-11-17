@@ -16,7 +16,8 @@ answers ``companion_missing`` before it touches the gateway (companion.py). An
 unknown state is asked once first; only a confirmed absence refuses, an
 unreachable instance is left to the gateway to report.
 
-Both routes are ADMIN in appinfo/info.xml and only reached through occ.
+Both routes are ADMIN in appinfo/info.xml and reached through occ (exAppRequest,
+which skips the access level) or, in CI, by the admin through HaRP.
 """
 
 import logging

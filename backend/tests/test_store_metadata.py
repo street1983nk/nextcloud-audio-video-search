@@ -45,7 +45,14 @@ STORE_CATEGORIES = frozenset(
     }
 )
 ROUTE_URL = re.compile(r"^\^/[A-Za-z0-9_./\-*()|?+\\\[\]]*\$?$")
-ACCESS_LEVELS = frozenset({"PUBLIC", "USER", "ADMIN"})
+# Owner 17.11.2026 (T-04-25, T-04-50, E-1): the routes block only opens the way
+# browser -> AppAPI proxy or HaRP -> container, and that way never passes the
+# PHP app with its read check, exclusions and download policy. So no route is
+# USER or PUBLIC, and the routes with user data are not declared at all; the
+# PHP app reaches them through exAppRequest, which skips the route check.
+ACCESS_LEVELS = frozenset({"ADMIN"})
+USER_DATA_ROUTES = ("/search", "/excerpt", "/export", "/export/meta")
+EXAPP_SERVICE = REPO_ROOT / "php" / "lib" / "Service" / "ExAppService.php"
 
 
 def info() -> ElementTree.Element:
@@ -135,6 +142,77 @@ def test_routes_are_anchored_regular_expressions_with_an_access_level() -> None:
         assert text(route, "verb")
 
 
+def route_findings(source: str) -> list[str]:
+    """Every declared route that is not ADMIN, and every one that opens a route with user data.
+
+    A route url is a regular expression; HaRP matches it with re.match against
+    the path and the PHP proxy of AppAPI also without regard to case, so a
+    pattern such as ``^/.*$`` or ``^/EXPORT$`` opens a user data route as well
+    as the plain name does.
+    """
+    findings: list[str] = []
+    root = ElementTree.fromstring(source)  # noqa: S314 - our own file or a staged copy of it
+    for route in root.findall("external-app/routes/route"):
+        url = (route.findtext("url") or "").strip()
+        level = (route.findtext("access_level") or "").strip()
+        if level not in ACCESS_LEVELS:
+            findings.append(f"{url} has access_level {level or 'none'}, only ADMIN is allowed")
+        try:
+            pattern = re.compile(url, re.IGNORECASE)
+        except re.error:
+            findings.append(f"{url} is not a regular expression")
+            continue
+        findings += [
+            f"{url} opens {path} past the PHP app"
+            for path in USER_DATA_ROUTES
+            if pattern.match(path) or pattern.match(f"{path}/")
+        ]
+    return findings
+
+
+def test_no_route_is_user_or_public_and_no_user_data_route_is_declared() -> None:
+    assert info().findall("external-app/routes/route")
+    assert route_findings(INFO_XML.read_text(encoding="utf-8")) == []
+
+
+def test_the_route_rule_fires_on_user_public_and_on_every_way_to_user_data() -> None:
+    source = INFO_XML.read_text(encoding="utf-8")
+    status = "<url>^/status$</url>\n\t\t\t\t<verb>GET</verb>\n\t\t\t\t<access_level>ADMIN</access_level>"
+    assert status in source
+
+    def with_route(url: str, level: str = "ADMIN") -> str:
+        extra = (
+            f"<route><url>{url}</url><verb>POST</verb><access_level>{level}</access_level>"
+            "<headers_to_exclude>[]</headers_to_exclude><bruteforce_protection>[401]</bruteforce_protection></route>"
+        )
+        return source.replace("</routes>", f"{extra}</routes>", 1)
+
+    for level in ("USER", "PUBLIC"):
+        lowered = source.replace(status, status.replace(">ADMIN<", f">{level}<"), 1)
+        assert route_findings(lowered) == [f"^/status$ has access_level {level}, only ADMIN is allowed"]
+    for path in USER_DATA_ROUTES:
+        assert route_findings(with_route(f"^{path}$")) == [f"^{path}$ opens {path} past the PHP app"]
+    assert route_findings(with_route("^/export$", "USER")) == [
+        "^/export$ has access_level USER, only ADMIN is allowed",
+        "^/export$ opens /export past the PHP app",
+    ]
+    assert route_findings(with_route("^/.*$")) == [f"^/.*$ opens {path} past the PHP app" for path in USER_DATA_ROUTES]
+    assert route_findings(with_route("^/EXPORT/META$")) == ["^/EXPORT/META$ opens /export/meta past the PHP app"]
+    assert route_findings(with_route("^/searching$")) == []  # positive control: a name beside it is no finding
+    assert route_findings(with_route("^/(")) == ["^/( is not a regular expression"]
+
+
+def test_the_php_app_still_asks_every_user_data_route_through_its_one_call() -> None:
+    # The routes are gone from the proxy, not from the container: ExAppService
+    # names each through call(), whose transport is exAppRequest (test_php_gates
+    # rule 3 holds exAppRequest to that one place).
+    source = EXAPP_SERVICE.read_text(encoding="utf-8")
+
+    for path in USER_DATA_ROUTES:
+        assert re.search(rf"->call\(\s*'{re.escape(path)}'", source), path
+    assert "$appApi->exAppRequest(" in source
+
+
 def test_environment_variables_carry_the_app_prefix_and_a_default() -> None:
     variables = info().findall("external-app/environment-variables/variable")
 
@@ -159,8 +237,13 @@ def test_the_work_stock_and_coverage_routes_are_admin_only() -> None:
         assert text(routes[url], "access_level") == "ADMIN"
 
 
-def test_every_container_route_is_declared_with_its_verb() -> None:
-    """A route HaRP does not know is unreachable; one declared with another verb as well."""
+def test_every_container_route_is_declared_with_its_verb_or_reached_only_by_php() -> None:
+    """A route HaRP does not know is unreachable through the proxy; one declared with another verb as well.
+
+    The routes with user data are the deliberate exception (owner 17.11.2026):
+    the container serves them, the proxy does not, and only the signed
+    exAppRequest of the PHP app reaches them.
+    """
     from fastapi.routing import APIRoute
 
     from audio_video_search_backend.api import build_router
@@ -178,7 +261,10 @@ def test_every_container_route_is_declared_with_its_verb() -> None:
         return found
 
     routes = flat(list(build_router().routes))
-    assert {route.path for route in routes} >= {"/status", "/search", "/workstock", "/coverage"}
+    assert {route.path for route in routes} >= {"/status", "/workstock", "/coverage", *USER_DATA_ROUTES}
     for route in routes:
         for verb in route.methods or set():
+            if route.path in USER_DATA_ROUTES:
+                assert not any(url == f"^{route.path}$" for url, _ in declared), route.path
+                continue
             assert (f"^{route.path}$", verb) in declared, (route.path, verb)

@@ -14,6 +14,11 @@ file). All of it only under the leak rule (D-02-15c, D-03-13): what a file may
 show comes from store.media_for_file and store.preview_view, which both name
 nothing for an unreadable, vanished or trashed reference. Such a file, an
 excluded one and one never seen get exactly ``{"known": false}``.
+
+The container does not know the user's read right; PHP checks it before the
+call. So the route is not declared in appinfo/info.xml: only the signed
+exAppRequest of the PHP app reaches it, the AppAPI proxy and HaRP answer 404
+(owner 17.11.2026, E-1).
 """
 
 from typing import Annotated, Final

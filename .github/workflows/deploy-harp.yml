@@ -454,6 +454,61 @@ jobs:
           search mallory "${MALLORY_PASS}"
           jq -e '.ocs.data.entries | length == 0' search-mallory.json
 
+      # Owner 17.11.2026 (T-04-25, T-04-50, E-1): the container routes with
+      # user data are not declared in backend/appinfo/info.xml, so neither
+      # proxy forwards them; only the signed exAppRequest of the PHP app, which
+      # checks read access, exclusions and the download policy first, reaches
+      # them (the step above and @phase4 prove that way for bob). Both proxies
+      # answer a route they do not know with 404: HaRP v0.4.5 (the HARP_IMAGE
+      # digest) haproxy_agent.py "No defined route" -> not_found -> haproxy.cfg
+      # "return status 404"; AppAPI ExAppProxyController::prepareProxy "route
+      # does not pass the access check" -> NotFoundResponse. Every refused
+      # request counts toward the HaRP ban of 127.0.0.1 (HP_BLACKLIST_COUNT 10
+      # in 300 s, and Nextcloud reaches HaRP from the same address), so HaRP
+      # gets exactly four. Positive control on the same ways afterwards: the
+      # admin reaches the ADMIN route /status, which also shows no ban.
+      - name: Container routes with user data are not reachable past the PHP app
+        run: |
+          set -euo pipefail
+          backend_lines() {
+            docker logs "${EXAPP_CONTAINER}" 2>&1 \
+              | jq -R --arg request "$1" 'fromjson? | select(.logger == "uvicorn.access" and ((.msg // "") | contains($request)))' \
+              | jq -s length
+          }
+          probe() {
+            code=$(curl -s -o probe-body.txt -w '%{http_code}' -u "bob:${BOB_PASS}" \
+              -H 'Content-Type: application/json' --data "$2" "$1")
+            echo "bob POST $1: ${code}"
+            test "${code}" = "404"
+            if grep -q '"known"' probe-body.txt; then
+              echo "the answer of $1 came from the container"
+              exit 1
+            fi
+          }
+          body=$(jq -cn --argjson id "${FILEID_OGG}" '{fileId: $id, format: "vtt", atMs: 0, term: "Audiosuche", userId: "alice", limit: 5, offset: 0}')
+          before=()
+          for route in /search /excerpt /export /export/meta; do
+            before+=("$(backend_lines "POST ${route} ")")
+          done
+          for route in /search /excerpt /export /export/meta; do
+            probe "http://localhost:8090/exapps/${BACKEND_APP_ID}${route}" "${body}"
+            probe "${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}${route}" "${body}"
+          done
+          index=0
+          for route in /search /excerpt /export /export/meta; do
+            after=$(backend_lines "POST ${route} ")
+            echo "container lines POST ${route}: ${before[${index}]} -> ${after}"
+            test "${after}" = "${before[${index}]}"
+            index=$((index + 1))
+          done
+          for url in "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" \
+                     "${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}/status"; do
+            code=$(curl -s -o control-status.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" "${url}")
+            echo "admin GET ${url}: ${code}"
+            test "${code}" = "200"
+            jq -e --arg id "${BACKEND_APP_ID}" '.app_id == $id' control-status.json
+          done
+
       # The playback page seeks inside the medium, and that needs a byte range.
       - name: WebDAV answers a byte range with 206
         run: |

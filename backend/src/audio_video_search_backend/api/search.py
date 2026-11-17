@@ -15,7 +15,9 @@ of index candidates is therefore fixed too (``MAX_CANDIDATES``), never derived
 from ``limit`` or ``offset``.
 
 The container checks no rights: PHP rechecks every file id for the user and
-takes title and path from the node, never from here.
+takes title and path from the node, never from here. That is why the route is
+not declared in appinfo/info.xml: only the signed exAppRequest of the PHP app
+reaches it, the AppAPI proxy and HaRP answer 404 (owner 17.11.2026, E-1).
 
 The time of a place is the start of the first word in the segment that matches
 the term, and the segment start when no single word does (a phrase over two
