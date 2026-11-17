@@ -1,0 +1,229 @@
+"""The parsers on the real downloads of the end-to-end run (plan 04-14, EXP-01, EXP-02, EXP-04).
+
+The step @phase4 of deploy-harp.yml saves every SRT, VTT and TXT the browser
+downloaded (D1 in plan 04-17) into AVS_DOWNLOADS_DIR and runs this file with
+CI=true afterwards. Without the variable (python.yml, a laptop) the test skips:
+there are no downloads there. With it, a missing folder or a folder without at
+least one .srt, one .vtt and one .txt fails, never skips (T-04-59).
+
+For every file: the name is ``<name>.<de|en|fr>.<srt|vtt|txt>`` and carries no
+umlaut and no sharp s, because the export spells them out (owner 17.11.2026,
+UAT 04 test 5). The gate refuses every combining diaeresis U+0308, so also a
+decomposed letter the export does not replace (NFD e or i with diaeresis): on
+purpose strict, real downloads come from NFC names, a U+0308 in the name would
+be a fault of the naming. SRT and VTT
+pass check_srt/check_vtt and ffmpeg (tests/subtitle_checkers.py, plan 04-04;
+ffmpeg over find_tool, so a missing ffmpeg fails under CI=true); line 2 of a TXT
+is T35 in one of the three catalogue languages (php/l10n); no file says "BITV"
+(EXP-04 on the file contents). The self tests at the end run the same check on
+folders in tmp_path, never on the environment of the session.
+"""
+
+import json
+import os
+import re
+from pathlib import Path
+
+import pytest
+
+from tests.conftest import REPO_ROOT
+from tests.subtitle_checkers import SubtitleCheckError, check_ffmpeg, check_srt, check_vtt
+
+DOWNLOADS_ENV = "AVS_DOWNLOADS_DIR"
+# In deploy-harp.yml the PHP app no longer lies under php/: "Install the PHP
+# app" moved it to apps/audio_video_search of the server checkout.
+L10N_ENV = "AVS_L10N_DIR"
+NAME = re.compile(r"^.+\.(de|en|fr)\.(srt|vtt|txt)$")
+# The export spells umlauts and the sharp s out (UAT 04 test 5): none of them,
+# and no combining diaeresis U+0308, may stand in the name of a real download.
+UMLAUT = re.compile("[äöüÄÖÜßẞ̈]")
+FORMATS = ("srt", "vtt", "txt")
+# The source string of T35 (UI-SPEC 04); the catalogues carry its German and French text.
+T35_SOURCE = "Subtitle draft, created automatically and not reviewed."
+CATALOGUES = ("de", "fr")
+FORBIDDEN = "BITV"
+
+
+def l10n_dir() -> Path:
+    """The catalogue folder: AVS_L10N_DIR where the job moved the PHP app (deploy-harp.yml), else php/l10n."""
+    value = os.environ.get(L10N_ENV, "").strip()
+    return Path(value) if value else REPO_ROOT / "php" / "l10n"
+
+
+def t35_texts() -> frozenset[str]:
+    """T35 in English, German and French, read from the catalogues like the page reads it."""
+    texts = {T35_SOURCE}
+    for language in CATALOGUES:
+        catalogue = json.loads((l10n_dir() / f"{language}.json").read_text(encoding="utf-8"))
+        texts.add(catalogue["translations"][T35_SOURCE])
+    return frozenset(texts)
+
+
+def by_format(folder: Path) -> dict[str, list[Path]]:
+    """The downloads of the folder by format; a missing folder, a stray name or a missing format fails."""
+    if not folder.is_dir():
+        pytest.fail(f"{DOWNLOADS_ENV} points at no folder: the step @phase4 saved no download")
+    found: dict[str, list[Path]] = {fmt: [] for fmt in FORMATS}
+    for path in sorted(folder.iterdir()):
+        match = NAME.fullmatch(path.name)
+        if match is None or not path.is_file():
+            pytest.fail(f"{path.name}: not a download named <name>.<de|en|fr>.<srt|vtt|txt>")
+        if UMLAUT.search(path.name):
+            pytest.fail(f"{path.name}: umlaut in the name, the export spells them out (UAT 04 test 5)")
+        found[match.group(2)].append(path)
+    absent = [fmt for fmt in FORMATS if not found[fmt]]
+    if absent:
+        pytest.fail(f"no .{', .'.join(absent)} among the downloads: every format has to be proven on a real file")
+    return found
+
+
+def check_download(path: Path, t35: frozenset[str]) -> None:
+    """One downloaded file: parsers and ffmpeg for subtitles, T35 for text, no BITV anywhere."""
+    text = path.read_bytes().decode("utf-8")
+    if FORBIDDEN in text:
+        pytest.fail(f"{path.name} says {FORBIDDEN} (EXP-04)")
+    suffix = path.suffix
+    try:
+        if suffix == ".srt":
+            check_srt(text)
+            check_ffmpeg(text, ".srt")
+        elif suffix == ".vtt":
+            check_vtt(text)
+            check_ffmpeg(text, ".vtt")
+    except SubtitleCheckError as error:
+        pytest.fail(f"{path.name}: {error}")
+    if suffix == ".txt":
+        lines = text.splitlines()
+        if len(lines) < 2 or lines[1] not in t35:
+            pytest.fail(f"{path.name}: line 2 is not T35 in de, en or fr")
+
+
+def check_folder(folder: Path) -> int:
+    """Every download of the folder; answers how many files passed."""
+    t35 = t35_texts()
+    files = [path for paths in by_format(folder).values() for path in paths]
+    for path in files:
+        check_download(path, t35)
+    return len(files)
+
+
+def test_the_real_downloads_pass_the_parsers() -> None:
+    value = os.environ.get(DOWNLOADS_ENV, "").strip()
+    if not value:
+        pytest.skip(f"{DOWNLOADS_ENV} is not set: only the step @phase4 of deploy-harp.yml has downloads")
+    assert check_folder(Path(value)) >= len(FORMATS)
+
+
+# -- self tests: the check on folders of this test, not on the session environment --
+
+VTT = (
+    "WEBVTT\n\nNOTE\nSubtitle draft, created automatically and not reviewed.\n\n"
+    "00:00:01.000 --> 00:00:02.500\nHallo Welt\n"
+)
+SRT = "1\n00:00:01,000 --> 00:00:02,500\nHallo Welt\n"
+TXT = "sitzung.wav\nUntertitel-Entwurf, automatisch erstellt und nicht geprüft.\n\nHallo Welt\n"
+
+
+def _folder(tmp_path: Path, files: dict[str, str]) -> Path:
+    folder = tmp_path / "downloads"
+    folder.mkdir()
+    for name, text in files.items():
+        (folder / name).write_bytes(text.encode("utf-8"))
+    return folder
+
+
+def _complete() -> dict[str, str]:
+    return {"sitzung.de.srt": SRT, "sitzung.de.vtt": VTT, "Sitzung Maerz.de.txt": TXT}
+
+
+def test_t35_is_read_in_three_languages() -> None:
+    assert t35_texts() == {
+        T35_SOURCE,
+        "Untertitel-Entwurf, automatisch erstellt und nicht geprüft.",
+        "Brouillon de sous-titres, créé automatiquement et non vérifié.",
+    }
+
+
+def test_the_catalogues_come_from_avs_l10n_dir_when_it_is_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The job of deploy-harp.yml moved the PHP app away from php/; a folder
+    # with other texts proves the variable is read and not php/l10n.
+    for language in CATALOGUES:
+        catalogue = {"translations": {T35_SOURCE: f"T35 {language}"}}
+        (tmp_path / f"{language}.json").write_text(json.dumps(catalogue), encoding="utf-8")
+    monkeypatch.setenv(L10N_ENV, str(tmp_path))
+
+    assert t35_texts() == {T35_SOURCE, "T35 de", "T35 fr"}
+
+
+def test_an_empty_folder_fails(tmp_path: Path) -> None:
+    with pytest.raises(pytest.fail.Exception, match=r"no \.srt, \.vtt, \.txt"):
+        check_folder(_folder(tmp_path, {}))
+
+
+def test_a_missing_folder_fails(tmp_path: Path) -> None:
+    with pytest.raises(pytest.fail.Exception, match="points at no folder"):
+        check_folder(tmp_path / "never-made")
+
+
+def test_a_folder_without_vtt_fails(tmp_path: Path) -> None:
+    files = _complete()
+    del files["sitzung.de.vtt"]
+    with pytest.raises(pytest.fail.Exception, match=r"no \.vtt"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_stray_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "sitzung.vtt": VTT}
+    with pytest.raises(pytest.fail.Exception, match=r"sitzung\.vtt"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_complete_folder_passes(tmp_path: Path) -> None:
+    assert check_folder(_folder(tmp_path, _complete())) == len(FORMATS)
+
+
+def test_an_umlaut_in_the_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Übung.de.srt": SRT}
+    with pytest.raises(pytest.fail.Exception, match=r"Übung\.de\.srt: umlaut"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_decomposed_umlaut_in_the_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Übung.de.srt": SRT}
+    with pytest.raises(pytest.fail.Exception, match="umlaut in the name"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_sharp_s_in_the_name_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Straße.de.vtt": VTT}
+    with pytest.raises(pytest.fail.Exception, match="umlaut in the name"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_another_letter_in_the_name_passes(tmp_path: Path) -> None:
+    files = {**_complete(), "Café.de.srt": SRT}
+    assert check_folder(_folder(tmp_path, files)) == len(FORMATS) + 1
+
+
+def test_the_spelled_out_s7_names_pass(tmp_path: Path) -> None:
+    # The positive control of the umlaut gate: the names the export gives the S7 video.
+    files = {"S7-Uebung.de.srt": SRT, "S7-Uebung.de.vtt": VTT, "S7-Uebung.de.txt": TXT}
+    assert check_folder(_folder(tmp_path, files)) == len(FORMATS)
+
+
+def test_a_txt_without_t35_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "Sitzung Maerz.de.txt": "sitzung.wav\nAutomatisch erstellt.\n\nHallo Welt\n"}
+    with pytest.raises(pytest.fail.Exception, match="line 2 is not T35"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_bitv_in_a_download_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "sitzung.de.srt": SRT.replace("Hallo Welt", "BITV-konform")}
+    with pytest.raises(pytest.fail.Exception, match="BITV"):
+        check_folder(_folder(tmp_path, files))
+
+
+def test_a_broken_vtt_fails(tmp_path: Path) -> None:
+    files = {**_complete(), "sitzung.de.vtt": VTT.replace("-->", "->")}
+    with pytest.raises(pytest.fail.Exception, match=r"sitzung\.de\.vtt"):
+        check_folder(_folder(tmp_path, files))

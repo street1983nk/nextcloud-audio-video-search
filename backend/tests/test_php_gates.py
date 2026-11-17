@@ -1,0 +1,1529 @@
+"""Static gates over the PHP app, the local stand-in for a PHP toolchain.
+
+The development machine has no PHP, so ``php -l`` and phpunit run in CI only
+(``.github/workflows/php.yml``). What can be decided by reading the sources is
+decided here, on every local test run, so a broken trust boundary does not
+wait for a push to turn red.
+
+The twenty rules:
+
+1. Every method carrying ``ExAppRequired`` opens with
+   ``$foreign = $this->rejectForeignCaller();``. The attribute only answers "is
+   this a registered external app"; the comparison against the one backend app
+   id is what keeps every other container out (Findling Gate B).
+2. No ``PublicPage`` anywhere in ``php/lib``: every route needs a session or
+   the signed AppAPI path.
+3. ``exAppRequest(`` appears in ``ExAppService.php`` only, and there once: one
+   place that talks to the container, one timeout, one way to fail.
+4. ``->getFirstNodeById(`` appears in ``FileAccess.php`` only: the readability
+   question is asked in exactly one place.
+5. No ``error_log``, ``var_dump`` or ``print_r`` in ``php/lib``.
+6. A logger call never carries ``getPath()``, ``getName()`` or ``$path``:
+   the Nextcloud log is not a private place.
+7. Every ``.php`` file starts with ``<?php`` and ``declare(strict_types=1);``.
+8. No U+2013 or U+2014 anywhere under ``php/``.
+9. ``php/composer.json`` is valid JSON and maps both app namespaces.
+10. No helper in ``php/tests`` is named like a final method of PHPUnit's TestCase.
+11. Every ``[hidden]`` rule under ``php/css`` hangs off an id: the server rule
+    ``button:not(...) > span[class^=icon-] { display: block }`` outranks two
+    classes and showed a hidden spinner (``!important`` is ruled out by the
+    UI-SPEC).
+12. ``getDistinctMounts(``, ``getByAncestorInStorage(`` and the media type
+    query on ``mimetypes`` appear in ``StorageService.php`` only: event, crawl,
+    reconcile and diagnosis ask one place what lies in a mount (RESEARCH,
+    Pitfall 10).
+13. Nothing the container gets from the PHP app carries a key ``path``,
+    ``name``, ``mountPoint`` or ``host``: not the rows of
+    ``QueueService::describe``, not the answers of an ExApp route, not a body
+    ``ExAppService`` sends (T-02-23).
+14. The exclusions are decided in ``ExclusionService.php`` only: no other file
+    under ``php/lib`` defines a method whose name begins with ``isExcluded``
+    or names one of the four list keys, so no rule is compared a second way.
+    And the three checks stay where plan 02-16 put them (T-02-57, T-02-58):
+    ``QueueService::admissible`` asks ``isExcluded`` and the hand over goes
+    through ``admissible``, both gateway routes ask ``isExcludedFile`` before
+    they resolve or open anything, and ``Provider::search`` asks
+    ``isExcludedUser`` before the first call that could reach the container.
+    Since plan 02-16b the playback page is the fourth place: ``excerpt`` of
+    ``PageController`` asks ``isExcludedUser`` and ``isExcludedFile`` before
+    ``searchAllowed`` and before the excerpt of the container, so an excluded
+    user and an excluded file get no text there either.
+    Since 14.11.2026 (owner: filter at once) every hit is judged by the rules
+    of now: ``Provider::search`` and ``PageController::excerpt`` call
+    ``reload`` before their first question, and ``Provider::entries`` asks
+    ``isExcludedFile`` before it builds an entry. A storage or a folder
+    excluded after the first crawl gives no hit from the moment the rule is
+    written, whenever SchedulerJob removes its references.
+    Since plan 04-10 the export routes are the fifth place: ``download`` and
+    ``track`` of ``ExportController`` call ``reload`` and ask
+    ``isExcludedUser`` and ``isExcludedFile`` before ``searchAllowed`` and
+    before the export of the container, so an excluded user and an excluded
+    file get no draft there either (T-04-31). Since plan 04-12 the sidecar
+    route stands under the same order.
+15. The app puts its own background jobs back (plan 02-17b): the list
+    ``JobRegistry::JOBS`` names exactly the jobs of ``<background-jobs>`` in
+    ``php/appinfo/info.xml``, and ``HandshakeController::handshake`` asks
+    ``ensure()`` only after the guard of rule 1, so a foreign caller never
+    writes into the job list (T-02-84).
+16. The reconcile hands every file it found different back through the one
+    pre-check (plan 02-19, D-02-05, T-02-69): ``ReconcileController`` calls
+    ``->enqueue(`` in ``requeue`` only, there only for the content kind and
+    only after ``->admissible(``, so the container never puts a file into the
+    work stock past the exclusions. The four reconcile routes carry
+    ``ExAppRequired`` (and with it the guard of rule 1).
+17. The work stock knows who wrote a row (plan 03-04, D-03-05, T-03-11):
+    ``QueueMapper::ORIGINS`` is exactly ``event`` and ``crawl``, ``enqueue``
+    refuses every other origin, ``QueueService::ITEM_KEYS`` carries
+    ``origin`` and ``describeRow`` drops a row whose origin is not on the
+    list. The container holds the same list twice, in the claim contract
+    (``nc_queue.ORIGINS``) and in the store (``repo.ORIGINS``, plan 03-11).
+18. Every enqueue of the content kind under ``php/lib`` names its origin:
+    ``QueueMapper::ORIGIN_EVENT`` in the file and cache listeners,
+    ``QueueMapper::ORIGIN_CRAWL`` in the first crawl and the reconcile, never
+    the default (D-03-05).
+19. The export path asks the download policy first (plan 04-10, SRCH-04,
+    T-04-29, T-04-29a): in ``download``, ``track`` and (since plan 04-12)
+    ``sidecar`` of ``ExportController`` the ``allowsExport`` question stands
+    before the first ``reload``, ``isExcludedUser`` or ``isExcludedFile`` and
+    before every ``->export(``, so a share whose download switch is off gets
+    its 403 before anything could leak whether the file is excluded or
+    transcribed. And nothing under ``php/lib`` calls ``canDownload`` of
+    IShare, which exists only since 33.0.1; the attribute is read in
+    DownloadPolicy alone.
+20. A new file is created in ``SidecarWriter.php`` only (plan 04-12, EXP-03,
+    D-04-05, T-04-36, T-04-38): ``->newFile(`` appears nowhere else under
+    ``php/lib``, in ``write`` the lock comes before the existence question
+    and the question before the creation (``Folder::newFile`` silently
+    overwrites an existing file, lib/private/Files/Node/Folder.php stable34),
+    and the ``sidecar`` route keeps the CSRF check: it carries no
+    ``NoCSRFRequired``.
+
+Each rule has a mutated sample that has to make it fire, so a gate whose body
+was deleted cannot stay green. The real tree is additionally held to a floor
+(the files this plan writes exist and carry their one call each), so the gates
+cannot pass on an empty directory.
+"""
+
+import json
+import re
+from collections.abc import Collection, Mapping
+from pathlib import Path
+
+from audio_video_search_backend import nc_queue
+from audio_video_search_backend.store import repo
+from tests.conftest import REPO_ROOT
+
+PHP_ROOT = REPO_ROOT / "php"
+LIB = PHP_ROOT / "lib"
+SKIPPED_DIRECTORIES = {"vendor", "node_modules", ".phpunit.cache"}
+
+GUARD_STATEMENT = "$foreign = $this->rejectForeignCaller();"
+EXAPP_ATTRIBUTE = "ExAppRequired"
+FORBIDDEN_ATTRIBUTE = "PublicPage"
+PROXY_CALL = "exAppRequest("
+PROXY_HOME = "ExAppService.php"
+LOOKUP_CALL = "->getFirstNodeById("
+LOOKUP_HOME = "FileAccess.php"
+DEBUG_OUTPUT = ("error_log", "var_dump", "print_r")
+LEAKING_LOG_ARGUMENTS = re.compile(r"getPath\(\)|getName\(\)|\$path\b")
+DASHES = ("\u2013", "\u2014")
+PHP_HEADER = re.compile(r"\A<\?php\r?\n(?:\r?\n)*declare\(strict_types=1\);")
+
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_HIDDEN_RULE = re.compile(r"([^{}]*\[hidden\])\s*\{")
+_FUNCTION = re.compile(r"^\s*(?:public|protected|private)\s+(?:static\s+)?function\s+(\w+)\s*\(")
+_LOGGER_CALL = re.compile(r"->logger->(?:debug|info|notice|warning|error|critical|alert|emergency|log)\(")
+_NOT_A_STATEMENT = ("//", "/*", "*", "#")
+
+
+def php_files(root: Path) -> list[Path]:
+    """Every .php file below root, without dependency and cache directories."""
+    return sorted(
+        path for path in root.rglob("*.php") if not SKIPPED_DIRECTORIES.intersection(path.relative_to(root).parts)
+    )
+
+
+def text_files(root: Path) -> list[Path]:
+    """Every file below root that reads as UTF-8 text, same exclusions."""
+    found = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or SKIPPED_DIRECTORIES.intersection(path.relative_to(root).parts):
+            continue
+        try:
+            path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        found.append(path)
+    return found
+
+
+# -- rule 1 ---------------------------------------------------------------------
+
+
+def _attributes_above(lines: list[str], index: int) -> list[str]:
+    """The attribute lines directly above a method; the docblock is the wall."""
+    collected = []
+    cursor = index - 1
+    while cursor >= 0 and lines[cursor].strip().startswith("#["):
+        collected.append(lines[cursor].strip())
+        cursor -= 1
+    return collected
+
+
+def _first_statement(lines: list[str], index: int) -> str:
+    """The first line inside the body of the method declared at index."""
+    start = len(lines)
+    for cursor in range(index, len(lines)):
+        if lines[cursor].rstrip().endswith("{"):
+            start = cursor + 1
+            break
+    for line in lines[start:]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith(_NOT_A_STATEMENT):
+            return stripped
+    return ""
+
+
+def unguarded_exapp_methods(source: str) -> list[str]:
+    """Methods with ExAppRequired whose first statement is not the guard."""
+    lines = source.splitlines()
+    findings = []
+    for index, line in enumerate(lines):
+        match = _FUNCTION.match(line)
+        if match is None:
+            continue
+        if not any(EXAPP_ATTRIBUTE in attribute for attribute in _attributes_above(lines, index)):
+            continue
+        if _first_statement(lines, index) != GUARD_STATEMENT:
+            findings.append(match.group(1))
+    return findings
+
+
+def exapp_methods(source: str) -> list[str]:
+    """Every method that carries the ExAppRequired attribute."""
+    lines = source.splitlines()
+    return [
+        match.group(1)
+        for index, line in enumerate(lines)
+        if (match := _FUNCTION.match(line)) is not None
+        and any(EXAPP_ATTRIBUTE in attribute for attribute in _attributes_above(lines, index))
+    ]
+
+
+# -- rules 2 to 5 ---------------------------------------------------------------
+
+
+def misplaced(sources: dict[str, str], needle: str, home: str) -> list[str]:
+    """Files other than home that contain needle."""
+    return sorted(name for name, text in sources.items() if needle in text and Path(name).name != home)
+
+
+def debug_output_calls(source: str) -> list[str]:
+    """The debug printers a source calls."""
+    return [name for name in DEBUG_OUTPUT if re.search(rf"\b{name}\s*\(", source)]
+
+
+# -- rule 6 ---------------------------------------------------------------------
+
+
+def _call_arguments(source: str, open_paren: int) -> str:
+    """The text between an opening parenthesis and its partner, strings respected."""
+    depth = 0
+    quote = ""
+    index = open_paren
+    while index < len(source):
+        char = source[index]
+        if quote:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return source[open_paren + 1 : index]
+        index += 1
+    return source[open_paren + 1 :]
+
+
+def leaking_log_calls(source: str) -> list[str]:
+    """Logger calls whose arguments carry a path or a file name."""
+    findings = []
+    for match in _LOGGER_CALL.finditer(source):
+        arguments = _call_arguments(source, match.end() - 1)
+        if LEAKING_LOG_ARGUMENTS.search(arguments):
+            findings.append(" ".join(arguments.split())[:120])
+    return findings
+
+
+def logger_call_count(source: str) -> int:
+    """How many logger calls the scanner recognises in a source."""
+    return len(_LOGGER_CALL.findall(source))
+
+
+# -- rules 7 and 8 --------------------------------------------------------------
+
+
+def lacks_strict_header(source: str) -> bool:
+    """True when the file does not open with <?php and declare(strict_types=1)."""
+    return PHP_HEADER.match(source) is None
+
+
+def dashes_in(source: str) -> list[str]:
+    """The forbidden dash characters a text contains, by code point."""
+    return [f"U+{ord(dash):04X}" for dash in DASHES if dash in source]
+
+
+# -- the real tree ----------------------------------------------------------------
+
+
+def _lib_sources() -> dict[str, str]:
+    return {path.relative_to(REPO_ROOT).as_posix(): path.read_text(encoding="utf-8") for path in php_files(LIB)}
+
+
+def test_the_tree_carries_the_files_the_gates_are_about() -> None:
+    """Anti vacuum: the gates below must have something to judge."""
+    service = LIB / "Service" / PROXY_HOME
+    access = LIB / "Service" / LOOKUP_HOME
+    gateway = LIB / "Controller" / "GatewayController.php"
+    for path in (service, access, gateway):
+        assert path.is_file(), f"{path.relative_to(REPO_ROOT)} is missing"
+    assert service.read_text(encoding="utf-8").count(PROXY_CALL) == 1
+    assert LOOKUP_CALL in access.read_text(encoding="utf-8")
+    assert exapp_methods(gateway.read_text(encoding="utf-8")), "the gateway route lost ExAppRequired"
+    assert logger_call_count(gateway.read_text(encoding="utf-8")) >= 2
+
+
+def test_rule1_every_exapp_route_opens_with_the_foreign_caller_guard() -> None:
+    findings = {name: unguarded_exapp_methods(text) for name, text in _lib_sources().items()}
+    assert {name: methods for name, methods in findings.items() if methods} == {}
+
+
+def test_rule2_no_public_page_in_lib() -> None:
+    assert [name for name, text in _lib_sources().items() if FORBIDDEN_ATTRIBUTE in text] == []
+
+
+def test_rule3_the_container_is_called_from_exapp_service_only() -> None:
+    assert misplaced(_lib_sources(), PROXY_CALL, PROXY_HOME) == []
+
+
+def test_rule4_the_node_lookup_lives_in_file_access_only() -> None:
+    assert misplaced(_lib_sources(), LOOKUP_CALL, LOOKUP_HOME) == []
+
+
+def test_rule5_no_debug_output_in_lib() -> None:
+    findings = {name: debug_output_calls(text) for name, text in _lib_sources().items()}
+    assert {name: calls for name, calls in findings.items() if calls} == {}
+
+
+def test_rule6_no_path_or_file_name_in_a_log_call() -> None:
+    findings = {name: leaking_log_calls(text) for name, text in _lib_sources().items()}
+    assert {name: calls for name, calls in findings.items() if calls} == {}
+
+
+def test_rule7_every_php_file_is_strict() -> None:
+    files = php_files(PHP_ROOT)
+    assert files, "no PHP file found"
+    assert [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in files
+        if lacks_strict_header(path.read_text(encoding="utf-8"))
+    ] == []
+
+
+def test_rule8_no_dash_characters_under_php() -> None:
+    findings = {
+        path.relative_to(REPO_ROOT).as_posix(): dashes_in(path.read_text(encoding="utf-8"))
+        for path in text_files(PHP_ROOT)
+    }
+    assert {name: found for name, found in findings.items() if found} == {}
+
+
+COMPOSER_NAMESPACES = {"OCA\\AudioVideoSearch\\": "lib/"}
+COMPOSER_TEST_NAMESPACES = {"OCA\\AudioVideoSearch\\Tests\\": "tests/"}
+
+
+def composer_namespaces(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """The psr-4 maps of a composer.json; raises on text that is not JSON."""
+    data = json.loads(text)
+    return data["autoload"]["psr-4"], data["autoload-dev"]["psr-4"]
+
+
+# Final methods of PHPUnit\Framework\TestCase (11.5): a test helper with one of
+# these names is a fatal error the moment phpunit loads the class.
+FINAL_TESTCASE_METHODS = frozenset(
+    {
+        "any",
+        "atLeast",
+        "atLeastOnce",
+        "atMost",
+        "count",
+        "dataName",
+        "exactly",
+        "dataSetAsString",
+        "groups",
+        "name",
+        "nameWithDataSet",
+        "never",
+        "numberOfAssertionsPerformed",
+        "once",
+        "providedData",
+        "result",
+        "run",
+        "size",
+        "status",
+        "usesDataProvider",
+        "valueObjectForEvents",
+    }
+)
+
+
+def helpers_shadowing_final_methods(source: str) -> list[str]:
+    """Names of methods in source that PHPUnit's TestCase declares final."""
+    return [
+        match.group(1)
+        for line in source.splitlines()
+        if (match := _FUNCTION.match(line)) and match.group(1) in FINAL_TESTCASE_METHODS
+    ]
+
+
+def test_rule10_no_test_helper_shadows_a_final_testcase_method() -> None:
+    findings = {
+        path.relative_to(REPO_ROOT).as_posix(): found
+        for path in php_files(PHP_ROOT / "tests")
+        if (found := helpers_shadowing_final_methods(path.read_text(encoding="utf-8")))
+    }
+    assert findings == {}
+
+
+def weak_hidden_rules(source: str) -> list[str]:
+    """Selectors of ``[hidden]`` rules in source that do not hang off an id."""
+    rules = _CSS_COMMENT.sub("", source)
+    return [selector.strip() for selector in _HIDDEN_RULE.findall(rules) if "#" not in selector]
+
+
+def test_rule11_every_hidden_rule_wins_over_the_server_styles() -> None:
+    sheets = sorted((PHP_ROOT / "css").glob("*.css"))
+    assert sheets, "php/css carries no style sheet"
+    findings = {path.name: found for path in sheets if (found := weak_hidden_rules(path.read_text(encoding="utf-8")))}
+    assert findings == {}
+    assert all(_HIDDEN_RULE.search(path.read_text(encoding="utf-8")) for path in sheets)
+
+
+def test_rule9_composer_json_parses_and_maps_the_app_namespaces() -> None:
+    # A copy that lost one backslash ("OCA\AudioVideoSearch") is invalid JSON
+    # and broke every composer step in CI; this catches it before a push.
+    autoload, autoload_dev = composer_namespaces((PHP_ROOT / "composer.json").read_text(encoding="utf-8"))
+    assert autoload == COMPOSER_NAMESPACES
+    assert autoload_dev == COMPOSER_TEST_NAMESPACES
+
+
+# -- the self tests: every rule has to fire on a staged violation ----------------
+
+GUARDED_ROUTE = """
+	#[\\OCP\\AppFramework\\Http\\Attribute\\ExAppRequired]
+	#[\\OCP\\AppFramework\\Http\\Attribute\\NoCSRFRequired]
+	public function get(int $fileId): DataResponse {
+		// a comment first is fine
+		$foreign = $this->rejectForeignCaller();
+		if ($foreign !== null) {
+			return $foreign;
+		}
+		return new DataResponse([]);
+	}
+"""
+
+
+def test_self_rule1_fires_on_a_route_without_the_guard_and_passes_the_guarded_one() -> None:
+    assert unguarded_exapp_methods(GUARDED_ROUTE) == []
+    late = GUARDED_ROUTE.replace(
+        "// a comment first is fine", "$this->logger->info('Audio & Video Search: before the guard');"
+    )
+    missing = GUARDED_ROUTE.replace(GUARD_STATEMENT, "$x = 1;")
+    assert unguarded_exapp_methods(late) == ["get"]
+    assert unguarded_exapp_methods(missing) == ["get"]
+    # A method without the attribute is not judged.
+    plain = GUARDED_ROUTE.replace("#[\\OCP\\AppFramework\\Http\\Attribute\\ExAppRequired]\n", "")
+    assert unguarded_exapp_methods(plain.replace(GUARD_STATEMENT, "$x = 1;")) == []
+
+
+def test_self_rule2_fires_on_a_public_page_attribute() -> None:
+    sources = {"php/lib/Controller/X.php": "#[PublicPage]\npublic function x(): void {}"}
+    assert [name for name, text in sources.items() if FORBIDDEN_ATTRIBUTE in text] == ["php/lib/Controller/X.php"]
+
+
+def test_self_rule3_fires_on_a_second_caller_of_the_proxy() -> None:
+    sources = {
+        "php/lib/Service/ExAppService.php": "$appApi->exAppRequest($id);",
+        "php/lib/Search/Provider.php": "$appApi->exAppRequest($id);",
+    }
+    assert misplaced(sources, PROXY_CALL, PROXY_HOME) == ["php/lib/Search/Provider.php"]
+
+
+def test_self_rule4_fires_on_a_lookup_outside_file_access() -> None:
+    sources = {
+        "php/lib/Service/FileAccess.php": "$folder->getFirstNodeById($id);",
+        "php/lib/Command/SampleCommand.php": "$root->getFirstNodeById($id);",
+    }
+    assert misplaced(sources, LOOKUP_CALL, LOOKUP_HOME) == ["php/lib/Command/SampleCommand.php"]
+
+
+def test_self_rule5_fires_on_each_debug_printer() -> None:
+    for name in DEBUG_OUTPUT:
+        assert debug_output_calls(f"{name}($value);") == [name]
+    assert debug_output_calls("$this->logger->debug('fine');") == []
+
+
+def test_self_rule6_fires_on_a_path_or_a_name_in_a_log_call() -> None:
+    staged = [
+        "$this->logger->warning('x', ['file' => $file->getPath()]);",
+        "$this->logger->info('x', [\n\t'name' => $node->getName(),\n]);",
+        "$this->logger->error('x', ['p' => $path]);",
+    ]
+    for source in staged:
+        assert len(leaking_log_calls(source)) == 1, source
+    clean = "$this->logger->warning('x (y)', ['fileId' => $fileId]); $path = $file->getPath();"
+    assert leaking_log_calls(clean) == []
+    assert logger_call_count(clean) == 1
+
+
+def test_self_rule7_fires_on_a_missing_or_late_strict_declaration() -> None:
+    assert not lacks_strict_header("<?php\n\ndeclare(strict_types=1);\n\nnamespace X;\n")
+    assert lacks_strict_header("<?php\n\nnamespace X;\n")
+    assert lacks_strict_header("<?php\nnamespace X;\ndeclare(strict_types=1);\n")
+    assert lacks_strict_header(" <?php\n\ndeclare(strict_types=1);\n")
+
+
+def test_self_rule8_fires_on_both_dashes() -> None:
+    assert dashes_in("a \u2013 b \u2014 c") == ["U+2013", "U+2014"]
+    assert dashes_in("a - b \u00b7 c \u2026") == []
+
+
+def test_self_rule9_fires_on_a_lost_backslash() -> None:
+    broken = r'{"autoload": {"psr-4": {"OCA\AudioVideoSearch\\": "lib/"}}, "autoload-dev": {"psr-4": {}}}'
+    try:
+        composer_namespaces(broken)
+    except json.JSONDecodeError:
+        pass
+    else:
+        raise AssertionError("a single backslash before a letter has to be rejected")
+
+
+def test_self_rule10_fires_on_a_helper_named_status() -> None:
+    assert helpers_shadowing_final_methods("\tprivate function status(array $value): IResponse {") == ["status"]
+    assert helpers_shadowing_final_methods("\tprivate function statusResponse(array $value): IResponse {") == []
+    # The matcher factories are final and static: a data provider of that name is a fatal error.
+    assert helpers_shadowing_final_methods("	public static function never(): array {") == ["never"]
+    assert helpers_shadowing_final_methods("	public static function neverCapturable(): array {") == []
+
+
+def test_self_rule11_fires_on_a_hidden_rule_without_an_id() -> None:
+    assert weak_hidden_rules(".avs-admin [hidden] {\n\tdisplay: none;\n}") == [".avs-admin [hidden]"]
+    assert weak_hidden_rules("#avs-admin [hidden] {\n\tdisplay: none;\n}") == []
+
+
+# -- rules 12 and 13 ----------------------------------------------------------------
+
+MOUNT_HOME = "StorageService.php"
+MOUNT_NEEDLES = ("getDistinctMounts(", "getByAncestorInStorage(", "->from('mimetypes')")
+FORBIDDEN_KEYS = ("path", "name", "mountPoint", "host")
+# An array key in a literal ('path' => ...), a write ($item['path'] = ...) or a
+# list entry of a key constant (ITEM_KEYS = [..., 'path', ...]).
+_FORBIDDEN_KEY = re.compile(
+    r"""(?:(['"])(?P<a>path|name|mountPoint|host)\1\s*=>)"""
+    r"""|(?:\[\s*(['"])(?P<b>path|name|mountPoint|host)\3\s*\]\s*=(?!=))"""
+)
+_KEY_CONSTANT = re.compile(r"const\s+\w*KEYS\s*=\s*\[(?P<body>[^\]]*)\]")
+CONTAINER_FACING = ("QueueService.php", PROXY_HOME)
+
+
+def mount_lookups_outside_home(sources: dict[str, str]) -> list[str]:
+    """Files other than StorageService.php that enumerate mounts, files or media types."""
+    return sorted({name for needle in MOUNT_NEEDLES for name in misplaced(sources, needle, MOUNT_HOME)})
+
+
+def container_facing(sources: dict[str, str]) -> dict[str, str]:
+    """The sources whose arrays reach the container: ExApp routes, describe, ExAppService."""
+    return {
+        name: text for name, text in sources.items() if EXAPP_ATTRIBUTE in text or Path(name).name in CONTAINER_FACING
+    }
+
+
+def forbidden_keys(source: str) -> list[str]:
+    """The keys of FORBIDDEN_KEYS a source writes into an array or lists as a key constant."""
+    found = [match.group("a") or match.group("b") for match in _FORBIDDEN_KEY.finditer(source)]
+    for constant in _KEY_CONSTANT.finditer(source):
+        found += [key for key in FORBIDDEN_KEYS if re.search(rf"""['"]{key}['"]""", constant.group("body"))]
+    return found
+
+
+def test_rule12_mounts_files_and_media_types_are_enumerated_in_storage_service_only() -> None:
+    sources = _lib_sources()
+    storage = sources.get("php/lib/Service/StorageService.php", "")
+    assert all(needle in storage for needle in MOUNT_NEEDLES), "StorageService lost one of its enumerations"
+    assert mount_lookups_outside_home(sources) == []
+
+
+def test_rule13_nothing_the_container_gets_carries_a_path_or_a_name() -> None:
+    facing = container_facing(_lib_sources())
+    assert "php/lib/Service/QueueService.php" in facing
+    assert "php/lib/Controller/QueueController.php" in facing
+    findings = {name: forbidden_keys(text) for name, text in facing.items()}
+    assert {name: keys for name, keys in findings.items() if keys} == {}
+
+
+def test_self_rule12_fires_on_a_second_mount_enumeration() -> None:
+    sources = _lib_sources()
+    sources["php/lib/BackgroundJobs/Other.php"] = "$this->fileAccess->getDistinctMounts([], true);"
+    sources["php/lib/Service/Other.php"] = "$qb->select('id')->from('mimetypes');"
+
+    assert mount_lookups_outside_home(sources) == ["php/lib/BackgroundJobs/Other.php", "php/lib/Service/Other.php"]
+
+
+def test_self_rule13_fires_on_a_path_key_in_queue_service() -> None:
+    sources = _lib_sources()
+    name = "php/lib/Service/QueueService.php"
+    assert forbidden_keys(sources[name]) == []
+    staged = [
+        "$item['path'] = $entry->getPath();",
+        "return ['fileId' => $id, 'name' => $file->getName()];",
+        "public const ITEM_KEYS = ['queueId', 'mountPoint'];",
+        '$answer["host"] = $host;',
+    ]
+    for line in staged:
+        assert len(forbidden_keys(sources[name] + "\n" + line)) == 1, line
+    # A comparison or a variable of that name is no key.
+    assert forbidden_keys("if ($row['path'] === $x) { $path = 1; }") == []
+
+
+# -- rule 14 ------------------------------------------------------------------------
+
+EXCLUSION_HOME = "ExclusionService.php"
+EXCLUSION_LISTS = ("excluded_users", "excluded_groups", "excluded_folders", "excluded_mounts")
+EXCLUSION_QUESTIONS = ("isExcluded", "isExcludedFile", "isExcludedUser")
+QUEUE_SERVICE = "php/lib/Service/QueueService.php"
+GATEWAY = "php/lib/Controller/GatewayController.php"
+SEARCH_PROVIDER = "php/lib/Search/Provider.php"
+PLAYBACK_PAGE = "php/lib/Controller/PageController.php"
+EXPORT_CONTROLLER = "php/lib/Controller/ExportController.php"
+_EXCLUSION_DEFINITION = re.compile(r"function\s+(isExcluded\w*)\s*\(")
+# Per method: the question to the exclusions and what must not come before it.
+EXCLUSION_CHECKS = (
+    (QUEUE_SERVICE, "admissible", "$this->exclusions->isExcluded(", ("->storageCapturable(", "->find(")),
+    (GATEWAY, "getFileContents", "$this->exclusions->isExcludedFile(", ("->resolve(", "fopen(", "->actAs(")),
+    (GATEWAY, "getFileHead", "$this->exclusions->isExcludedFile(", ("->resolve(", "fopen(", "->actAs(")),
+    (SEARCH_PROVIDER, "search", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->search(", "->entries(")),
+    (PLAYBACK_PAGE, "excerpt", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->excerpt(")),
+    (PLAYBACK_PAGE, "excerpt", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->excerpt(")),
+    (EXPORT_CONTROLLER, "download", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "download", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "track", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "track", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "sidecar", "$this->exclusions->isExcludedUser(", ("->searchAllowed(", "->export(")),
+    (EXPORT_CONTROLLER, "sidecar", "$this->exclusions->isExcludedFile(", ("->searchAllowed(", "->export(")),
+)
+
+
+# Every hit by the rules of now (owner 14.11.2026): per method, the call and
+# what must not come before it.
+HIT_CHECKS = (
+    (SEARCH_PROVIDER, "search", "$this->exclusions->reload(", ("->isExcludedUser(", "->searchAllowed(", "->search(")),
+    (SEARCH_PROVIDER, "entries", "$this->exclusions->isExcludedFile(", ("->entry(",)),
+    (PLAYBACK_PAGE, "excerpt", "$this->exclusions->reload(", ("->isExcludedUser(", "->isExcludedFile(", "->excerpt(")),
+    (
+        EXPORT_CONTROLLER,
+        "download",
+        "$this->exclusions->reload(",
+        ("->isExcludedUser(", "->isExcludedFile(", "->export("),
+    ),
+    (EXPORT_CONTROLLER, "track", "$this->exclusions->reload(", ("->isExcludedUser(", "->isExcludedFile(", "->export(")),
+    (
+        EXPORT_CONTROLLER,
+        "sidecar",
+        "$this->exclusions->reload(",
+        ("->isExcludedUser(", "->isExcludedFile(", "->export("),
+    ),
+)
+
+
+def php_code(source: str) -> str:
+    """A PHP source without its comments and with every string emptied, so braces can be counted."""
+    out: list[str] = []
+    index = 0
+    while index < len(source):
+        char = source[index]
+        pair = source[index : index + 2]
+        if pair == "//" or (char == "#" and pair != "#["):
+            end = source.find("\n", index)
+            index = len(source) if end < 0 else end
+        elif pair == "/*":
+            end = source.find("*/", index + 2)
+            index = len(source) if end < 0 else end + 2
+        elif char in "'\"":
+            end = index + 1
+            while end < len(source) and source[end] != char:
+                end += 2 if source[end] == "\\" else 1
+            out.append(char + char)
+            index = end + 1
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+def php_method(source: str, method: str) -> str | None:
+    """The body of a method, comments and string contents removed, by counting braces."""
+    code = php_code(source)
+    match = re.search(r"function\s+" + re.escape(method) + r"\s*\(", code)
+    if match is None:
+        return None
+    start = code.find("{", match.end())
+    depth = 0
+    for index in range(max(start, 0), len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[start : index + 1]
+    return None
+
+
+def second_exclusion_deciders(sources: dict[str, str]) -> list[str]:
+    """Files other than ExclusionService.php that define an isExcluded method or name a rule list."""
+    findings = []
+    for name, text in sorted(sources.items()):
+        if Path(name).name == EXCLUSION_HOME:
+            continue
+        findings += [f"{name} defines {found}" for found in _EXCLUSION_DEFINITION.findall(php_code(text))]
+        findings += [f"{name} names {key}" for key in EXCLUSION_LISTS if key in text]
+    return findings
+
+
+def missing_exclusion_checks(sources: dict[str, str]) -> list[str]:
+    """The places of EXCLUSION_CHECKS that do not ask the exclusions first, or not at all."""
+    findings = []
+    for name, method, question, later in EXCLUSION_CHECKS:
+        body = php_method(sources.get(name, ""), method)
+        if body is None:
+            findings.append(f"{name} has no {method}")
+            continue
+        asked = body.find(question)
+        if asked < 0:
+            findings.append(f"{name}::{method} does not ask the exclusions")
+            continue
+        findings += [
+            f"{name}::{method} reaches {needle} before the exclusions"
+            for needle in later
+            if 0 <= body.find(needle) < asked
+        ]
+    describe = php_method(sources.get(QUEUE_SERVICE, ""), "describeRow")
+    if describe is None or "$this->admissible(" not in describe:
+        findings.append(f"{QUEUE_SERVICE}::describeRow does not ask admissible again")
+    return findings
+
+
+def missing_hit_checks(sources: dict[str, str]) -> list[str]:
+    """The places of HIT_CHECKS that do not make their call, or make it too late."""
+    findings = []
+    for name, method, call, later in HIT_CHECKS:
+        body = php_method(sources.get(name, ""), method)
+        if body is None:
+            findings.append(f"{name} has no {method}")
+            continue
+        at = body.find(call)
+        if at < 0:
+            findings.append(f"{name}::{method} does not call {call}")
+            continue
+        findings += [
+            f"{name}::{method} reaches {needle} before {call}" for needle in later if 0 <= body.find(needle) < at
+        ]
+    return findings
+
+
+def test_rule14_every_hit_is_judged_by_the_rules_of_now() -> None:
+    assert missing_hit_checks(_lib_sources()) == []
+
+
+def test_self_rule14_fires_on_a_hit_judged_by_old_rules_or_not_at_all() -> None:
+    sources = _lib_sources()
+    reload = "$this->exclusions->reload();"
+
+    no_fresh_search = _mutated(sources, SEARCH_PROVIDER, reload, "")
+    assert missing_hit_checks(no_fresh_search) == [
+        f"{SEARCH_PROVIDER}::search does not call $this->exclusions->reload("
+    ]
+
+    # Read again, but only after the first question.
+    late = _mutated(sources, PLAYBACK_PAGE, reload, "")
+    late = _mutated(late, PLAYBACK_PAGE, "\t\tif ($excluded) {\n", f"\t\t{reload}\n\t\tif ($excluded) {{\n")
+    assert missing_hit_checks(late) == [
+        f"{PLAYBACK_PAGE}::excerpt reaches ->isExcludedUser( before $this->exclusions->reload(",
+        f"{PLAYBACK_PAGE}::excerpt reaches ->isExcludedFile( before $this->exclusions->reload(",
+    ]
+
+    no_file = _mutated(sources, SEARCH_PROVIDER, "$this->exclusions->isExcludedFile(", "$this->nothing(")
+    assert missing_hit_checks(no_file) == [
+        f"{SEARCH_PROVIDER}::entries does not call $this->exclusions->isExcludedFile("
+    ]
+
+    assert missing_hit_checks({}) == [
+        f"{SEARCH_PROVIDER} has no search",
+        f"{SEARCH_PROVIDER} has no entries",
+        f"{PLAYBACK_PAGE} has no excerpt",
+        f"{EXPORT_CONTROLLER} has no download",
+        f"{EXPORT_CONTROLLER} has no track",
+        f"{EXPORT_CONTROLLER} has no sidecar",
+    ]
+
+
+def test_rule14_the_exclusions_are_decided_in_one_place_and_asked_at_three() -> None:
+    sources = _lib_sources()
+    home = sources.get(f"php/lib/Service/{EXCLUSION_HOME}", "")
+    public = re.findall(r"public\s+function\s+(isExcluded\w*)\s*\(", php_code(home))
+    assert sorted(public) == sorted(EXCLUSION_QUESTIONS)
+    assert all(key in home for key in EXCLUSION_LISTS), "ExclusionService lost one of its lists"
+    assert second_exclusion_deciders(sources) == []
+    assert missing_exclusion_checks(sources) == []
+
+
+def test_self_rule14_fires_on_a_second_place_that_decides_an_exclusion() -> None:
+    sources = _lib_sources()
+    sources["php/lib/Listener/Other.php"] = (
+        "<?php\n// isExcluded() is asked elsewhere\n"
+        "private function isExcludedHere(string $path): bool { return str_starts_with($path, 'privat/'); }\n"
+    )
+    sources["php/lib/Command/Other.php"] = "<?php\n$list = $this->appConfig->getValueString('x', 'excluded_folders');\n"
+
+    assert second_exclusion_deciders(sources) == [
+        "php/lib/Command/Other.php names excluded_folders",
+        "php/lib/Listener/Other.php defines isExcludedHere",
+    ]
+    # A call is no definition, and a comment is no code.
+    only_asks = {"php/lib/X.php": "<?php\n// function isExcluded(\n$a->isExcluded($b, $c);\n"}
+    assert second_exclusion_deciders(only_asks) == []
+
+
+def _mutated(sources: dict[str, str], name: str, old: str, new: str) -> dict[str, str]:
+    assert sources[name].count(old) >= 1, f"{name} no longer holds {old!r}"
+    return {**sources, name: sources[name].replace(old, new)}
+
+
+def test_self_rule14_fires_when_one_of_the_three_checks_is_gone_or_comes_too_late() -> None:
+    sources = _lib_sources()
+
+    queue = _mutated(sources, QUEUE_SERVICE, "$this->exclusions->isExcluded(", "$this->nothing(")
+    assert missing_exclusion_checks(queue) == [f"{QUEUE_SERVICE}::admissible does not ask the exclusions"]
+
+    # Only named in a comment: the body is read without comments.
+    commented = _mutated(
+        sources,
+        QUEUE_SERVICE,
+        "if ($this->exclusions->isExcluded($storageId, $mountRelativePath)) {",
+        "// $this->exclusions->isExcluded($storageId, $mountRelativePath)\n\t\tif (false) {",
+    )
+    assert missing_exclusion_checks(commented) == [f"{QUEUE_SERVICE}::admissible does not ask the exclusions"]
+
+    handover = _mutated(sources, QUEUE_SERVICE, "!$this->admissible(", "!$this->cheaper(")
+    assert missing_exclusion_checks(handover) == [f"{QUEUE_SERVICE}::describeRow does not ask admissible again"]
+
+    gateway = _mutated(sources, GATEWAY, "$this->exclusions->isExcludedFile(", "$this->nothing(")
+    assert missing_exclusion_checks(gateway) == [
+        f"{GATEWAY}::getFileContents does not ask the exclusions",
+        f"{GATEWAY}::getFileHead does not ask the exclusions",
+    ]
+
+    # Asked, but only after the file was resolved through the user.
+    late = _mutated(sources, GATEWAY, "\t\ttry {\n", "\t\ttry {\n\t\t\t$early = $this->resolve($fileId, $userId);\n")
+    assert missing_exclusion_checks(late) == [
+        f"{GATEWAY}::getFileContents reaches ->resolve( before the exclusions",
+        f"{GATEWAY}::getFileHead reaches ->resolve( before the exclusions",
+    ]
+
+    provider = _mutated(sources, SEARCH_PROVIDER, "$this->exclusions->isExcludedUser(", "$this->nothing(")
+    assert missing_exclusion_checks(provider) == [f"{SEARCH_PROVIDER}::search does not ask the exclusions"]
+
+    asked_late = _mutated(
+        sources,
+        SEARCH_PROVIDER,
+        "\t\t$uid = $user->getUID();\n",
+        "\t\t$uid = $user->getUID();\n\t\t$this->exAppService->searchAllowed();\n",
+    )
+    assert missing_exclusion_checks(asked_late) == [
+        f"{SEARCH_PROVIDER}::search reaches ->searchAllowed( before the exclusions"
+    ]
+
+    assert missing_exclusion_checks({}) == [
+        f"{QUEUE_SERVICE} has no admissible",
+        f"{GATEWAY} has no getFileContents",
+        f"{GATEWAY} has no getFileHead",
+        f"{SEARCH_PROVIDER} has no search",
+        f"{PLAYBACK_PAGE} has no excerpt",
+        f"{PLAYBACK_PAGE} has no excerpt",
+        f"{EXPORT_CONTROLLER} has no download",
+        f"{EXPORT_CONTROLLER} has no download",
+        f"{EXPORT_CONTROLLER} has no track",
+        f"{EXPORT_CONTROLLER} has no track",
+        f"{EXPORT_CONTROLLER} has no sidecar",
+        f"{EXPORT_CONTROLLER} has no sidecar",
+        f"{QUEUE_SERVICE}::describeRow does not ask admissible again",
+    ]
+
+
+def test_self_rule14_fires_when_the_playback_page_gives_an_excerpt_without_asking() -> None:
+    sources = _lib_sources()
+    silent = f"{PLAYBACK_PAGE}::excerpt does not ask the exclusions"
+
+    no_user = _mutated(sources, PLAYBACK_PAGE, "$this->exclusions->isExcludedUser(", "$this->nothing(")
+    assert missing_exclusion_checks(no_user) == [silent]
+
+    no_file = _mutated(sources, PLAYBACK_PAGE, "$this->exclusions->isExcludedFile(", "$this->nothing(")
+    assert missing_exclusion_checks(no_file) == [silent]
+
+    # Asked, but only after the container was reachable.
+    opening = "private function excerpt(string $uid, int $fileId, int $startMs): array {\n"
+    late = _mutated(
+        sources,
+        PLAYBACK_PAGE,
+        opening,
+        opening + "\t\t$early = $this->exAppService->excerpt($uid, $fileId, $startMs);\n",
+    )
+    assert missing_exclusion_checks(late) == [
+        f"{PLAYBACK_PAGE}::excerpt reaches ->excerpt( before the exclusions",
+        f"{PLAYBACK_PAGE}::excerpt reaches ->excerpt( before the exclusions",
+    ]
+
+    drift_first = _mutated(
+        sources,
+        PLAYBACK_PAGE,
+        opening,
+        opening
+        + "\t\tif (!$this->exAppService->searchAllowed()) {\n\t\t\treturn [self::EXCERPT_UNAVAILABLE, ''];\n\t\t}\n",
+    )
+    assert missing_exclusion_checks(drift_first) == [
+        f"{PLAYBACK_PAGE}::excerpt reaches ->searchAllowed( before the exclusions",
+        f"{PLAYBACK_PAGE}::excerpt reaches ->searchAllowed( before the exclusions",
+    ]
+
+
+def test_self_rule14_fires_when_an_export_route_skips_the_exclusions_or_asks_them_late() -> None:
+    sources = _lib_sources()
+
+    no_user = _mutated(sources, EXPORT_CONTROLLER, "$this->exclusions->isExcludedUser(", "$this->nothing(")
+    assert missing_exclusion_checks(no_user) == [
+        f"{EXPORT_CONTROLLER}::download does not ask the exclusions",
+        f"{EXPORT_CONTROLLER}::track does not ask the exclusions",
+        f"{EXPORT_CONTROLLER}::sidecar does not ask the exclusions",
+    ]
+
+    no_fresh = _mutated(sources, EXPORT_CONTROLLER, "$this->exclusions->reload();", "")
+    assert missing_hit_checks(no_fresh) == [
+        f"{EXPORT_CONTROLLER}::download does not call $this->exclusions->reload(",
+        f"{EXPORT_CONTROLLER}::track does not call $this->exclusions->reload(",
+        f"{EXPORT_CONTROLLER}::sidecar does not call $this->exclusions->reload(",
+    ]
+
+    # Asked, but only after the container could have answered.
+    guard = "\t\ttry {\n\t\t\t// The rules of now, as on the playback page (owner 14.11.2026).\n"
+    early = "\t\t$early = $this->exAppService->export($uid, $fileId, 'vtt');\n"
+    late = _mutated(sources, EXPORT_CONTROLLER, guard, early + guard)
+    assert missing_exclusion_checks(late) == [
+        f"{EXPORT_CONTROLLER}::download reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::download reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::track reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::track reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->export( before the exclusions",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->export( before the exclusions",
+    ]
+
+
+def test_self_rule14_reads_a_method_body_without_comments_and_strings() -> None:
+    source = (
+        "<?php\nclass X {\n"
+        "\tpublic function one(): string {\n\t\t// } not the end\n\t\treturn '} neither';\n\t}\n"
+        "\tpublic function two(): void {\n\t\t$this->later();\n\t}\n}\n"
+    )
+    assert php_method(source, "one") == "{\n\t\t\n\t\treturn '';\n\t}"
+    assert php_method(source, "two") == "{\n\t\t$this->later();\n\t}"
+    assert php_method(source, "three") is None
+
+
+# -- rule 15 ------------------------------------------------------------------------
+
+INFO_XML = PHP_ROOT / "appinfo" / "info.xml"
+JOB_REGISTRY = "php/lib/Service/JobRegistry.php"
+HANDSHAKE = "php/lib/Controller/HandshakeController.php"
+ENSURE_CALL = "->ensure("
+APP_JOBS = "OCA\\AudioVideoSearch\\BackgroundJobs\\"
+_BACKGROUND_JOBS = re.compile(r"<background-jobs>(?P<body>.*?)</background-jobs>", re.DOTALL)
+_JOB = re.compile(r"<job>\s*([^<\s]+)\s*</job>")
+_NAMESPACE = re.compile(r"^namespace\s+([\w\\]+)\s*;", re.MULTILINE)
+_USE = re.compile(r"^use\s+([\w\\]+)\s*;", re.MULTILINE)
+_JOBS_CONSTANT = re.compile(r"const\s+JOBS\s*=\s*\[(?P<body>[^\]]*)\]")
+
+
+def info_xml_jobs(text: str) -> list[str]:
+    """The classes of every <background-jobs> block of an info.xml, in order."""
+    return [job for block in _BACKGROUND_JOBS.finditer(text) for job in _JOB.findall(block.group("body"))]
+
+
+def registry_jobs(source: str) -> list[str]:
+    """The fully qualified classes of JobRegistry::JOBS, resolved through the use statements."""
+    constant = _JOBS_CONSTANT.search(php_code(source))
+    if constant is None:
+        return []
+    imported = {name.rsplit("\\", 1)[-1]: name for name in _USE.findall(source)}
+    namespace = _NAMESPACE.search(source)
+    found = []
+    for name in re.findall(r"([\w\\]+)::class", constant.group("body")):
+        if name.startswith("\\"):
+            found.append(name[1:])
+        elif name in imported:
+            found.append(imported[name])
+        else:
+            found.append(f"{namespace.group(1)}\\{name}" if namespace else name)
+    return found
+
+
+def job_list_drift(info_jobs: list[str], registry: list[str]) -> list[str]:
+    """What differs between the jobs of info.xml and the list JobRegistry puts back."""
+    findings = [f"JobRegistry misses {job}" for job in info_jobs if job not in registry]
+    findings += [f"info.xml does not name {job}" for job in registry if job not in info_jobs]
+    if not info_jobs:
+        findings.append("info.xml names no background job")
+    return findings
+
+
+def handshake_job_findings(source: str) -> list[str]:
+    """Whether handshake asks ensure(), and only after the guard of rule 1."""
+    body = php_method(source, "handshake")
+    if body is None:
+        return [f"{HANDSHAKE} has no handshake"]
+    guard = body.find(GUARD_STATEMENT)
+    ensure = body.find(ENSURE_CALL)
+    if ensure < 0:
+        return [f"{HANDSHAKE}::handshake does not put the jobs back"]
+    if guard < 0 or ensure < guard:
+        return [f"{HANDSHAKE}::handshake puts the jobs back before the guard"]
+    return []
+
+
+def test_rule15_the_handshake_puts_back_exactly_the_jobs_of_info_xml() -> None:
+    sources = _lib_sources()
+    info = info_xml_jobs(INFO_XML.read_text(encoding="utf-8"))
+    assert APP_JOBS + "SchedulerJob" in info
+    assert JOB_REGISTRY in sources, "JobRegistry.php is missing"
+    assert job_list_drift(info, registry_jobs(sources[JOB_REGISTRY])) == []
+    assert "IJobList" in sources[JOB_REGISTRY]
+    assert handshake_job_findings(sources.get(HANDSHAKE, "")) == []
+
+
+def test_self_rule15_fires_on_a_missing_and_on_an_extra_job() -> None:
+    info = info_xml_jobs(INFO_XML.read_text(encoding="utf-8"))
+    registry_source = (
+        "<?php\nnamespace OCA\\AudioVideoSearch\\Service;\n"
+        "use OCA\\AudioVideoSearch\\BackgroundJobs\\SchedulerJob;\n"
+        "use OCA\\AudioVideoSearch\\BackgroundJobs\\StorageCrawlJob;\n"
+        "class JobRegistry {\n\tpublic const JOBS = [SchedulerJob::class, StorageCrawlJob::class];\n}\n"
+    )
+    assert job_list_drift(info, registry_jobs(registry_source)) == [
+        f"JobRegistry misses {APP_JOBS}ExternalRescanJob",
+        f"info.xml does not name {APP_JOBS}StorageCrawlJob",
+    ]
+    # A list only in a comment is no list.
+    assert registry_jobs("<?php\n// const JOBS = [SchedulerJob::class];\n") == []
+    assert job_list_drift([], []) == ["info.xml names no background job"]
+    staged = "<background-jobs><job>A\\B</job>\n<job> C\\D </job></background-jobs>"
+    assert info_xml_jobs(staged) == ["A\\B", "C\\D"]
+
+
+def test_self_rule15_fires_when_the_handshake_skips_or_precedes_the_guard() -> None:
+    inline = (
+        "<?php\nclass H {\n\tpublic function handshake(): DataResponse {\n"
+        "\t\t$foreign = $this->rejectForeignCaller();\n\t\tif ($foreign !== null) {\n\t\t\treturn $foreign;\n\t\t}\n"
+        "\t\t$this->jobs->ensure();\n\t\treturn new DataResponse([]);\n\t}\n}\n"
+    )
+    assert handshake_job_findings(inline) == []
+    early = (
+        "<?php\nclass H {\n\tpublic function handshake(): DataResponse {\n"
+        "\t\t$this->jobs->ensure();\n"
+        "\t\t$foreign = $this->rejectForeignCaller();\n\t\tif ($foreign !== null) {\n\t\t\treturn $foreign;\n\t\t}\n"
+        "\t\treturn new DataResponse([]);\n\t}\n}\n"
+    )
+    assert handshake_job_findings(early) == [f"{HANDSHAKE}::handshake puts the jobs back before the guard"]
+    commented = inline.replace("$this->jobs->ensure();", "// $this->jobs->ensure();")
+    assert handshake_job_findings(commented) == [f"{HANDSHAKE}::handshake does not put the jobs back"]
+    assert handshake_job_findings("") == [f"{HANDSHAKE} has no handshake"]
+
+
+# -- rule 16 ------------------------------------------------------------------------
+
+RECONCILE = "php/lib/Controller/ReconcileController.php"
+RECONCILE_ROUTES = ("mounts", "slice", "classify", "requeue")
+ENQUEUE_CALL = "->enqueue("
+ADMISSIBLE_CALL = "->admissible("
+CONTENT_KIND = "QueueMapper::KIND_CONTENT"
+
+
+def reconcile_requeue_findings(source: str) -> list[str]:
+    """Whether the reconcile routes exist and requeue enqueues content only, after admissible."""
+    if not source:
+        return [f"{RECONCILE} is missing"]
+    routes = exapp_methods(source)
+    findings = [f"{RECONCILE} has no ExApp route {route}" for route in RECONCILE_ROUTES if route not in routes]
+    body = php_method(source, "requeue")
+    if body is None:
+        return [*findings, f"{RECONCILE} has no requeue"]
+    if php_code(source).count(ENQUEUE_CALL) != body.count(ENQUEUE_CALL):
+        findings.append(f"{RECONCILE} enqueues outside requeue")
+    admissible = body.find(ADMISSIBLE_CALL)
+    enqueue = body.find(ENQUEUE_CALL)
+    if enqueue < 0:
+        findings.append(f"{RECONCILE}::requeue enqueues nothing")
+    elif admissible < 0 or enqueue < admissible:
+        findings.append(f"{RECONCILE}::requeue enqueues before the pre-check")
+    elif CONTENT_KIND not in body[enqueue : enqueue + 80]:
+        findings.append(f"{RECONCILE}::requeue enqueues another kind than content")
+    return findings
+
+
+def test_rule16_the_reconcile_hands_back_through_the_one_pre_check() -> None:
+    sources = _lib_sources()
+    assert RECONCILE in sources, "ReconcileController.php is missing"
+    assert reconcile_requeue_findings(sources[RECONCILE]) == []
+
+
+_ROUTE_ATTRIBUTE = "\t#[\\OCP\\AppFramework\\Http\\Attribute\\ExAppRequired]\n"
+_GUARD_LINE = "\t\t$foreign = $this->rejectForeignCaller();\n"
+REQUEUE_SAMPLE = (
+    "<?php\nclass R {\n"
+    + "".join(
+        f"{_ROUTE_ATTRIBUTE}\tpublic function {route}(): DataResponse {{\n{_GUARD_LINE}"
+        "\t\treturn new DataResponse([]);\n\t}\n"
+        for route in RECONCILE_ROUTES[:3]
+    )
+    + f"{_ROUTE_ATTRIBUTE}\tpublic function requeue(): DataResponse {{\n{_GUARD_LINE}"
+    + "\t\tif (!$this->queueService->admissible($s, $m, $r)) {\n\t\t\treturn null;\n\t\t}\n"
+    + "\t\t$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $id, $s);\n"
+    + "\t\treturn new DataResponse([]);\n\t}\n}\n"
+)
+
+
+def test_self_rule16_fires_on_an_enqueue_past_the_pre_check() -> None:
+    assert reconcile_requeue_findings(REQUEUE_SAMPLE) == []
+    no_check = REQUEUE_SAMPLE.replace("$this->queueService->admissible($s, $m, $r)", "$known")
+    assert reconcile_requeue_findings(no_check) == [f"{RECONCILE}::requeue enqueues before the pre-check"]
+    other_kind = REQUEUE_SAMPLE.replace("KIND_CONTENT", "KIND_RESTORE")
+    assert reconcile_requeue_findings(other_kind) == [f"{RECONCILE}::requeue enqueues another kind than content"]
+    mounts_head = f"public function mounts(): DataResponse {{\n{_GUARD_LINE}"
+    outside = REQUEUE_SAMPLE.replace(
+        mounts_head, mounts_head + "\t\t$this->queueService->enqueue(QueueMapper::KIND_CONTENT, 1, 2);\n"
+    )
+    assert outside != REQUEUE_SAMPLE
+    assert reconcile_requeue_findings(outside) == [f"{RECONCILE} enqueues outside requeue"]
+    commented = REQUEUE_SAMPLE.replace("$this->queueService->enqueue(", "// $this->queueService->enqueue(")
+    assert reconcile_requeue_findings(commented) == [f"{RECONCILE}::requeue enqueues nothing"]
+    unguarded = REQUEUE_SAMPLE.replace(f"{_ROUTE_ATTRIBUTE}\tpublic function slice", "\tpublic function slice")
+    assert unguarded != REQUEUE_SAMPLE
+    assert reconcile_requeue_findings(unguarded) == [f"{RECONCILE} has no ExApp route slice"]
+    assert reconcile_requeue_findings("") == [f"{RECONCILE} is missing"]
+
+
+# -- rule 17 ------------------------------------------------------------------------
+
+QUEUE_MAPPER = "php/lib/Db/QueueMapper.php"
+EXPECTED_ORIGINS = ("event", "crawl")
+_PHP_STRING_CONSTANT = re.compile(r"const\s+(\w+)\s*=\s*'([^'\\]*)'\s*;")
+
+
+def php_string_list(source: str, constant: str) -> list[str] | None:
+    """The values of a list constant, self:: references resolved; None if it is missing.
+
+    An entry that is neither a string nor a known string constant stays as
+    written, so it can never pass for one of the expected values.
+    """
+    match = re.search(rf"const\s+{re.escape(constant)}\s*=\s*\[(?P<body>[^\]]*)\]", source)
+    if match is None:
+        return None
+    strings = dict(_PHP_STRING_CONSTANT.findall(source))
+    values = []
+    for entry in (part.strip() for part in match.group("body").split(",")):
+        literal = re.fullmatch(r"'([^'\\]*)'", entry)
+        reference = re.fullmatch(r"self::(\w+)", entry)
+        if literal is not None:
+            values.append(literal.group(1))
+        elif reference is not None and reference.group(1) in strings:
+            values.append(strings[reference.group(1)])
+        elif entry:
+            values.append(entry)
+    return values
+
+
+CONTAINER_ORIGINS: Mapping[str, Collection[str]] = {"nc_queue.ORIGINS": nc_queue.ORIGINS, "repo.ORIGINS": repo.ORIGINS}
+
+
+def queue_origin_findings(root: Path, container: Mapping[str, Collection[str]] = CONTAINER_ORIGINS) -> list[str]:
+    """Whether the origins of the work stock are the closed pair and travel with the claim.
+
+    QueueMapper::ORIGINS is exactly event and crawl (the container holds the
+    same list, plan 03-11), enqueue refuses everything else, ITEM_KEYS carries
+    origin and describeRow drops a row whose origin is not on the list
+    (T-03-11). Written over a source tree, so a changed copy can make it fire.
+    """
+    mapper_path = root / QUEUE_MAPPER
+    service_path = root / QUEUE_SERVICE
+    missing = [f"{path.relative_to(root).as_posix()} is missing" for path in (mapper_path, service_path)]
+    if not mapper_path.is_file() or not service_path.is_file():
+        return [line for line, path in zip(missing, (mapper_path, service_path), strict=True) if not path.is_file()]
+    mapper = mapper_path.read_text(encoding="utf-8")
+    service = service_path.read_text(encoding="utf-8")
+    findings = []
+    origins = php_string_list(mapper, "ORIGINS")
+    if origins is None:
+        findings.append("QueueMapper has no ORIGINS")
+    elif sorted(origins) != sorted(EXPECTED_ORIGINS):
+        findings.append(f"QueueMapper::ORIGINS is {origins}, expected {list(EXPECTED_ORIGINS)}")
+    for name, values in container.items():
+        if origins is not None and sorted(origins) != sorted(values):
+            findings.append(f"QueueMapper::ORIGINS is {origins}, {name} is {sorted(values)}")
+    enqueue = php_method(mapper, "enqueue") or ""
+    if "in_array($origin, self::ORIGINS, true)" not in enqueue:
+        findings.append("QueueMapper::enqueue does not check the origin against ORIGINS")
+    item_keys = php_string_list(service, "ITEM_KEYS") or []
+    if "origin" not in item_keys:
+        findings.append("QueueService::ITEM_KEYS has no origin")
+    describe_row = php_method(service, "describeRow") or ""
+    if "QueueMapper::ORIGINS" not in describe_row:
+        findings.append("QueueService::describeRow hands an origin out unchecked")
+    return findings
+
+
+def test_rule17_the_origins_of_the_work_stock_are_event_and_crawl() -> None:
+    assert queue_origin_findings(REPO_ROOT) == []
+    assert php_string_list((REPO_ROOT / QUEUE_MAPPER).read_text(encoding="utf-8"), "ORIGINS") == ["event", "crawl"]
+    # Held apart from the PHP source as well: the two lists of the container are one set.
+    assert nc_queue.ORIGINS == repo.ORIGINS == frozenset({"event", "crawl"})
+
+
+def _origin_tree(root: Path, mapper: tuple[str, str] = ("", ""), service: tuple[str, str] = ("", "")) -> Path:
+    """A copy of the two sources of rule 17 below root, each with one replacement."""
+    for name, (old, new) in ((QUEUE_MAPPER, mapper), (QUEUE_SERVICE, service)):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        if old:
+            assert old in text, old
+            text = text.replace(old, new)
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_self_rule17_fires_on_a_changed_copy(tmp_path: Path) -> None:
+    assert queue_origin_findings(_origin_tree(tmp_path / "same")) == []
+    one = _origin_tree(
+        tmp_path / "one", mapper=("ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL]", "ORIGINS = ['event']")
+    )
+    assert queue_origin_findings(one) == [
+        "QueueMapper::ORIGINS is ['event'], expected ['event', 'crawl']",
+        "QueueMapper::ORIGINS is ['event'], nc_queue.ORIGINS is ['crawl', 'event']",
+        "QueueMapper::ORIGINS is ['event'], repo.ORIGINS is ['crawl', 'event']",
+    ]
+    third = _origin_tree(
+        tmp_path / "third",
+        mapper=("ORIGINS = [self::ORIGIN_EVENT, self::ORIGIN_CRAWL]", "ORIGINS = [self::ORIGIN_EVENT, 'urgent']"),
+    )
+    assert queue_origin_findings(third) == [
+        "QueueMapper::ORIGINS is ['event', 'urgent'], expected ['event', 'crawl']",
+        "QueueMapper::ORIGINS is ['event', 'urgent'], nc_queue.ORIGINS is ['crawl', 'event']",
+        "QueueMapper::ORIGINS is ['event', 'urgent'], repo.ORIGINS is ['crawl', 'event']",
+    ]
+    # A container list that drifted from PHP fires on the unchanged PHP tree.
+    drifted = {"nc_queue.ORIGINS": frozenset({"event", "crawl", "push"}), "repo.ORIGINS": frozenset({"event"})}
+    assert queue_origin_findings(_origin_tree(tmp_path / "drift"), drifted) == [
+        "QueueMapper::ORIGINS is ['event', 'crawl'], nc_queue.ORIGINS is ['crawl', 'event', 'push']",
+        "QueueMapper::ORIGINS is ['event', 'crawl'], repo.ORIGINS is ['event']",
+    ]
+    unchecked = _origin_tree(
+        tmp_path / "unchecked", mapper=("in_array($origin, self::ORIGINS, true)", "is_string($origin)")
+    )
+    assert queue_origin_findings(unchecked) == ["QueueMapper::enqueue does not check the origin against ORIGINS"]
+    no_key = _origin_tree(tmp_path / "no_key", service=("'readerUid', 'origin']", "'readerUid']"))
+    assert queue_origin_findings(no_key) == ["QueueService::ITEM_KEYS has no origin"]
+    passed = _origin_tree(
+        tmp_path / "passed", service=("!in_array($row['origin'], QueueMapper::ORIGINS, true)", "$row['origin'] === ''")
+    )
+    assert queue_origin_findings(passed) == ["QueueService::describeRow hands an origin out unchecked"]
+    assert queue_origin_findings(tmp_path / "empty") == [f"{QUEUE_MAPPER} is missing", f"{QUEUE_SERVICE} is missing"]
+
+
+# -- rule 18 ------------------------------------------------------------------------
+
+ORIGIN_EVENT = "QueueMapper::ORIGIN_EVENT"
+ORIGIN_CRAWL = "QueueMapper::ORIGIN_CRAWL"
+EVENT_DIRECTORY = "php/lib/Listener/"
+# The callers of the content kind on the real tree and the origin each names
+# (plan 03-04): two in FileEventListener, one in CacheEventListener, one each
+# in StorageCrawlJob and ReconcileController.
+CONTENT_CALLERS = {
+    "php/lib/Listener/FileEventListener.php": [ORIGIN_EVENT, ORIGIN_EVENT],
+    "php/lib/Listener/CacheEventListener.php": [ORIGIN_EVENT],
+    "php/lib/BackgroundJobs/StorageCrawlJob.php": [ORIGIN_CRAWL],
+    "php/lib/Controller/ReconcileController.php": [ORIGIN_CRAWL],
+}
+
+
+def content_enqueue_origins(source: str) -> list[str]:
+    """The last argument of every content enqueue of a source, comments left out."""
+    code = php_code(source)
+    origins = []
+    for match in re.finditer(re.escape(ENQUEUE_CALL), code):
+        arguments = [part.strip() for part in _call_arguments(code, match.end() - 1).split(",")]
+        if arguments and arguments[0] == CONTENT_KIND:
+            origins.append(arguments[3] if len(arguments) > 3 else "")
+    return origins
+
+
+def content_origin_findings(sources: dict[str, str]) -> list[str]:
+    """Content enqueues without an origin, or with the origin of the other way.
+
+    The events under php/lib/Listener write event, every other caller (first
+    crawl, reconcile) writes crawl, and none leaves the origin to the default
+    (D-03-05).
+    """
+    findings = []
+    for name, text in sorted(sources.items()):
+        expected = ORIGIN_EVENT if name.startswith(EVENT_DIRECTORY) else ORIGIN_CRAWL
+        for origin in content_enqueue_origins(text):
+            if origin != expected:
+                findings.append(f"{name} queues content with {origin or 'no origin'}, expected {expected}")
+    return findings
+
+
+def test_rule18_every_content_row_names_its_origin() -> None:
+    sources = _lib_sources()
+    assert content_origin_findings(sources) == []
+    found = {name: content_enqueue_origins(text) for name, text in sources.items()}
+    assert {name: origins for name, origins in found.items() if origins} == CONTENT_CALLERS
+
+
+def test_self_rule18_fires_on_a_missing_and_on_a_wrong_origin() -> None:
+    listener = "php/lib/Listener/X.php"
+    crawl = "php/lib/BackgroundJobs/Y.php"
+    call = "$this->queueService->enqueue(QueueMapper::KIND_CONTENT, $id, $storage{origin});\n"
+    good = {
+        listener: call.format(origin=", " + ORIGIN_EVENT),
+        crawl: call.format(origin=", " + ORIGIN_CRAWL),
+    }
+    assert content_origin_findings(good) == []
+    assert content_enqueue_origins(good[listener]) == [ORIGIN_EVENT]
+    assert content_origin_findings({**good, listener: call.format(origin="")}) == [
+        f"{listener} queues content with no origin, expected {ORIGIN_EVENT}"
+    ]
+    assert content_origin_findings({**good, crawl: call.format(origin=", " + ORIGIN_EVENT)}) == [
+        f"{crawl} queues content with {ORIGIN_EVENT}, expected {ORIGIN_CRAWL}"
+    ]
+    assert content_origin_findings({**good, listener: call.format(origin=", " + ORIGIN_CRAWL)}) == [
+        f"{listener} queues content with {ORIGIN_CRAWL}, expected {ORIGIN_EVENT}"
+    ]
+    # Another kind may keep the default, and a call in a comment is no call.
+    other = "$this->queueService->enqueue(QueueMapper::KIND_DELETE, $id, $storage);\n"
+    commented = "// " + call.format(origin="")
+    assert content_origin_findings({listener: other + commented}) == []
+
+
+# -- rule 19 ------------------------------------------------------------------------
+
+EXPORT_METHODS = ("download", "track", "sidecar")
+POLICY_QUESTION = "->downloadPolicy->allowsExport("
+EXCLUSION_CALLS = ("->reload(", "->isExcludedUser(", "->isExcludedFile(")
+CONTAINER_EXPORT = "->export("
+FORBIDDEN_DOWNLOAD_HELPER = "canDownload("
+
+
+def export_policy_findings(sources: dict[str, str]) -> list[str]:
+    """The export methods that do not ask the download policy first of all.
+
+    In download, track and sidecar the allowsExport question stands before
+    the first reload, isExcludedUser or isExcludedFile and before every
+    export of the container, so the 403 of a blocked share cannot become an
+    oracle about exclusions or transcripts (T-04-29, T-04-29a, T-04-40). And
+    IShare::canDownload is called nowhere under php/lib: it exists only since
+    33.0.1, the attribute is read in DownloadPolicy alone.
+    """
+    findings = []
+    source = sources.get(EXPORT_CONTROLLER)
+    if source is None:
+        findings.append(f"{EXPORT_CONTROLLER} is missing")
+    else:
+        for method in EXPORT_METHODS:
+            body = php_method(source, method)
+            if body is None:
+                findings.append(f"{EXPORT_CONTROLLER} has no {method}")
+                continue
+            asked = body.find(POLICY_QUESTION)
+            if asked < 0:
+                findings.append(f"{EXPORT_CONTROLLER}::{method} does not ask the download policy")
+                continue
+            findings += [
+                f"{EXPORT_CONTROLLER}::{method} reaches {needle} before the download policy"
+                for needle in EXCLUSION_CALLS
+                if 0 <= body.find(needle) < asked
+            ]
+            if any(match.start() < asked for match in re.finditer(re.escape(CONTAINER_EXPORT), body)):
+                findings.append(f"{EXPORT_CONTROLLER}::{method} asks the container before the download policy")
+    findings += [
+        f"{name} calls canDownload" for name, text in sorted(sources.items()) if FORBIDDEN_DOWNLOAD_HELPER in text
+    ]
+    return findings
+
+
+def test_rule19_the_export_path_asks_the_download_policy_before_the_exclusions_and_the_container() -> None:
+    assert export_policy_findings(_lib_sources()) == []
+
+
+_POLICY_GUARD = "\t\tif (!$this->downloadPolicy->allowsExport($file, $fileId)) {"
+
+
+def test_self_rule19_fires_when_the_exclusions_come_first() -> None:
+    sources = _lib_sources()
+
+    early = _mutated(sources, EXPORT_CONTROLLER, _POLICY_GUARD, "\t\t$this->exclusions->reload();\n" + _POLICY_GUARD)
+    assert export_policy_findings(early) == [
+        f"{EXPORT_CONTROLLER}::download reaches ->reload( before the download policy",
+        f"{EXPORT_CONTROLLER}::track reaches ->reload( before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->reload( before the download policy",
+    ]
+
+    asked = "\t\t$x = $this->exclusions->isExcludedUser($uid) || $this->exclusions->isExcludedFile($fileId);\n"
+    first = _mutated(sources, EXPORT_CONTROLLER, _POLICY_GUARD, asked + _POLICY_GUARD)
+    assert export_policy_findings(first) == [
+        f"{EXPORT_CONTROLLER}::download reaches ->isExcludedUser( before the download policy",
+        f"{EXPORT_CONTROLLER}::download reaches ->isExcludedFile( before the download policy",
+        f"{EXPORT_CONTROLLER}::track reaches ->isExcludedUser( before the download policy",
+        f"{EXPORT_CONTROLLER}::track reaches ->isExcludedFile( before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->isExcludedUser( before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar reaches ->isExcludedFile( before the download policy",
+    ]
+
+
+def test_self_rule19_fires_when_the_container_comes_first() -> None:
+    sources = _lib_sources()
+
+    early = _mutated(
+        sources,
+        EXPORT_CONTROLLER,
+        _POLICY_GUARD,
+        "\t\t$early = $this->exAppService->export($uid, $fileId, 'vtt');\n" + _POLICY_GUARD,
+    )
+    assert export_policy_findings(early) == [
+        f"{EXPORT_CONTROLLER}::download asks the container before the download policy",
+        f"{EXPORT_CONTROLLER}::track asks the container before the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar asks the container before the download policy",
+    ]
+
+    gone = _mutated(sources, EXPORT_CONTROLLER, POLICY_QUESTION, "->downloadPolicy->nothing(")
+    assert export_policy_findings(gone) == [
+        f"{EXPORT_CONTROLLER}::download does not ask the download policy",
+        f"{EXPORT_CONTROLLER}::track does not ask the download policy",
+        f"{EXPORT_CONTROLLER}::sidecar does not ask the download policy",
+    ]
+
+    # A second decider would be a second truth: canDownload fires wherever it shows up.
+    helper = {**sources, "php/lib/Service/Other.php": "<?php\n$allowed = $share->canDownload();\n"}
+    assert export_policy_findings(helper) == ["php/lib/Service/Other.php calls canDownload"]
+
+    assert export_policy_findings({}) == [f"{EXPORT_CONTROLLER} is missing"]
+
+
+# -- rule 20 ------------------------------------------------------------------------
+
+SIDECAR_WRITER = "php/lib/Service/SidecarWriter.php"
+NEWFILE_CALL = "->newFile("
+LOCK_CALL = "->acquireLock("
+EXISTS_CALL = "->nodeExists("
+CSRF_WAIVER = "NoCSRFRequired"
+_SIDECAR_FUNCTION = re.compile(r"function\s+sidecar\s*\(")
+
+
+def sidecar_creation_findings(sources: dict[str, str]) -> list[str]:
+    """Rule 20: a new file is created in the sidecar writer only, under its lock.
+
+    ``->newFile(`` appears under php/lib in SidecarWriter.php alone, because
+    ``Folder::newFile`` silently overwrites an existing file (stable34,
+    lib/private/Files/Node/Folder.php): every creation has to pass the one
+    place that asks ``nodeExists`` first, and the lock has to be taken before
+    the question (T-04-36). And the sidecar route writes, so it keeps the
+    CSRF check: the method carries no ``NoCSRFRequired`` (T-04-38).
+    """
+    findings = []
+    writer = sources.get(SIDECAR_WRITER)
+    if writer is None:
+        findings.append(f"{SIDECAR_WRITER} is missing")
+    else:
+        body = php_method(writer, "write")
+        if body is None:
+            findings.append(f"{SIDECAR_WRITER} has no write")
+        else:
+            locked = body.find(LOCK_CALL)
+            asked = body.find(EXISTS_CALL)
+            created = body.find(NEWFILE_CALL)
+            if created < 0:
+                findings.append(f"{SIDECAR_WRITER}::write does not create the file")
+            if asked < 0 or (0 <= created < asked):
+                findings.append(f"{SIDECAR_WRITER}::write does not ask nodeExists before newFile")
+            if locked < 0 or (0 <= asked < locked):
+                findings.append(f"{SIDECAR_WRITER}::write does not take the lock before nodeExists")
+    findings += [
+        f"{name} creates a file outside the sidecar writer"
+        for name, text in sorted(sources.items())
+        if name != SIDECAR_WRITER and NEWFILE_CALL in php_code(text)
+    ]
+    controller = sources.get(EXPORT_CONTROLLER)
+    if controller is None:
+        findings.append(f"{EXPORT_CONTROLLER} is missing")
+    else:
+        lines = controller.splitlines()
+        at = next((index for index, line in enumerate(lines) if _SIDECAR_FUNCTION.search(line)), None)
+        if at is None:
+            findings.append(f"{EXPORT_CONTROLLER} has no sidecar")
+        elif any(CSRF_WAIVER in attribute for attribute in _attributes_above(lines, at)):
+            findings.append(f"{EXPORT_CONTROLLER}::sidecar waives the CSRF check")
+    return findings
+
+
+def test_rule20_new_files_are_created_in_the_sidecar_writer_only() -> None:
+    assert sidecar_creation_findings(_lib_sources()) == []
+
+
+def test_self_rule20_fires_on_a_second_creator_and_on_a_missing_check() -> None:
+    sources = _lib_sources()
+
+    second = {**sources, "php/lib/Service/Other.php": "<?php\n$folder->newFile($name, $content);\n"}
+    assert sidecar_creation_findings(second) == ["php/lib/Service/Other.php creates a file outside the sidecar writer"]
+    # A call in a comment is no call.
+    commented = {**sources, "php/lib/Service/Other.php": "<?php\n// $folder->newFile($name, $content);\n"}
+    assert sidecar_creation_findings(commented) == []
+
+    unasked = _mutated(sources, SIDECAR_WRITER, "$parent->nodeExists(", "$this->stillThere(")
+    assert sidecar_creation_findings(unasked) == [f"{SIDECAR_WRITER}::write does not ask nodeExists before newFile"]
+
+    unlocked = _mutated(sources, SIDECAR_WRITER, "$this->locking->acquireLock(", "$this->locking->nothing(")
+    assert sidecar_creation_findings(unlocked) == [f"{SIDECAR_WRITER}::write does not take the lock before nodeExists"]
+
+    no_creation = _mutated(sources, SIDECAR_WRITER, "$parent->newFile(", "$this->nothing(")
+    assert sidecar_creation_findings(no_creation) == [f"{SIDECAR_WRITER}::write does not create the file"]
+
+    waived = _mutated(
+        sources,
+        EXPORT_CONTROLLER,
+        "\tpublic function sidecar(",
+        "\t#[\\OCP\\AppFramework\\Http\\Attribute\\NoCSRFRequired]\n\tpublic function sidecar(",
+    )
+    assert sidecar_creation_findings(waived) == [f"{EXPORT_CONTROLLER}::sidecar waives the CSRF check"]
+
+    assert sidecar_creation_findings({}) == [f"{SIDECAR_WRITER} is missing", f"{EXPORT_CONTROLLER} is missing"]

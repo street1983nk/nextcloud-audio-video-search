@@ -1,13 +1,41 @@
 name: Deploy through HaRP
 
-# The integration proof every ExApp needs before a store release: a throwaway
-# Nextcloud with AppAPI, a real HaRP container, the image of this commit pushed
-# into a local registry, and the ExApp installed through the deploy daemon the
-# way an admin installs it. Lean form of Findling's deploy-harp.yml.
+# The integration proof of both halves before a store release: a throwaway
+# Nextcloud with AppAPI, the PHP app audio_video_search, a real HaRP container,
+# the backend image of this commit pushed into a local registry and the ExApp
+# installed through the deploy daemon the way an admin installs it. Lean form
+# of Findling's deploy-harp.yml.
 #
-# What it proves: the container starts behind HaRP with mutual TLS on the FRP
-# tunnel, AppAPI reaches /heartbeat and /init, PUT /enabled registers the
-# declarative settings form, and the ADMIN route answers through the HaRP proxy.
+# What it proves, on six legs (Nextcloud 33, 34 and 35, each on amd64 and on
+# arm64, natively and not emulated):
+#   - the container starts behind HaRP with mutual TLS on the FRP tunnel,
+#     AppAPI reaches /heartbeat and /init, PUT /enabled registers the form,
+#   - a test result seeded over the real path (occ audio_video_search:sample,
+#     the container reads the file through the content gateway) is found by
+#     the owner, by a member of the team folder and by the recipient of a
+#     share, and a user without read access gets no entry at all,
+#   - WebDAV answers a byte range with 206, so the playback page can seek,
+#   - Playwright walks the three UI surfaces (search hit, playback page, admin
+#     section) and leaves screenshots at 375, 768 and 1280 px, light and dark,
+#     plus high contrast at 1280 and German and French at 375 px light and
+#     1280 px dark, as an artifact for the owner's review,
+#   - phase 3 (plan 03-18): with the speech models in the volume a spoken
+#     clip is found as preliminary within minutes and the hit lands on the
+#     word, the states S1 to S5 and P1 to P13 of UI-SPEC 03 are walked with
+#     screenshots, the contrast of the preview note is measured, and the
+#     playback page of an excluded user asks the container nothing,
+#   - no test file name ends up in the Nextcloud log or the container log,
+#   - lockstep at runtime (plan 10): a backend a minor apart gives
+#     version_drift and an empty search, a patch apart gives
+#     version_patch_differs and the hits, an unregistered backend gives
+#     backend_missing, and a disabled PHP app makes the container refuse
+#     /sample with companion_missing.
+#
+# The second job, upgrade, installs both halves at the released 0.2.0 (built
+# out of its commit), seeds them and updates them to the version of this
+# commit (occ upgrade and app_api:app:update); state.db, the test results, the
+# schema steps of state.db from 2 to 4 and the column origin of oc_avs_queue
+# have to survive (plan 10, PLAT-01, plans 02-21, 03-19 and 04-05).
 on:
   push:
     branches:
@@ -26,26 +54,68 @@ concurrency:
 
 env:
   APP_ID: audio_video_search
+  BACKEND_APP_ID: audio_video_search_backend
   HARP_IMAGE: ghcr.io/nextcloud/nextcloud-appapi-harp@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39
   LOCAL_REGISTRY: 'localhost:5000'
   LOCAL_IMAGE_TAG: 'citest'
-  ADMIN_PASS: 'skeleton-ci-only'
+  NC_URL: 'http://localhost:8080'
+  # Test-only values of a throwaway instance that dies with the runner. No
+  # repository secret enters this job (T-01-41).
+  ADMIN_PASS: 'avs-ci-admin-2026-11'
+  ALICE_PASS: 'avs-ci-alice-2026-11'
+  BOB_PASS: 'avs-ci-bob-2026-11'
+  CAROL_PASS: 'avs-ci-carol-2026-11'
+  MALLORY_PASS: 'avs-ci-mallory-2026-11'
+  DORA_PASS: 'avs-ci-dora-2026-11'
+  ELKE_PASS: 'avs-ci-elke-2026-11'
+  FLEUR_PASS: 'avs-ci-fleur-2026-11'
+  OSKAR_PASS: 'avs-ci-oskar-2026-11'
 
 jobs:
   deploy-harp:
-    name: deploy-harp ${{ matrix.server-version }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    name: deploy-harp ${{ matrix.server-version }} ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # An estimate until the first green run measures it: image build, HaRP,
+    # seed, the browser download, eleven Playwright projects and the three
+    # registrations of the drift steps (plan 10), 75 min so far. Plan 03-18
+    # adds the speech models (0.67 GB on a cache miss), the preview of about
+    # 20 test files (03-15 measured 3.5 to 7.4 s per file with the start of the
+    # engine child, the 40 min speech file needs a few minutes) and the step
+    # @preview with its own limit of 45 min below: 120 min in all. Plan 04-14
+    # adds the step @phase4 (two short speech clips, the search and export
+    # specs, limit 30 min) and the download proof with its uv environment:
+    # 150 min. Plan 04-17 adds the export and sidecar specs to that step (the
+    # partial window of a second 40 min file, two stops of the container,
+    # Firefox for the track) and raises its limit to 60 min: 180 min until a
+    # green run measures it.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
+        # Three server versions on two architectures, as an include list
+        # because every server version brings its own PHP floor (8.2 for 33
+        # and 34, 8.3 for 35). arm64 runs the identical step list on the native
+        # runner; HARP_IMAGE is pinned by index digest, so the same line pulls
+        # the arm64 half there.
         include:
           - server-version: stable33
             php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable33
+            php-version: '8.2'
+            runner: ubuntu-24.04-arm
           - server-version: stable34
             php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable34
+            php-version: '8.2'
+            runner: ubuntu-24.04-arm
           - server-version: stable35
             php-version: '8.3'
+            runner: ubuntu-24.04
+          - server-version: stable35
+            php-version: '8.3'
+            runner: ubuntu-24.04-arm
     steps:
       # The server checkout comes first: actions/checkout empties its target.
       - name: Check out nextcloud/server
@@ -74,25 +144,134 @@ jobs:
           extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
           coverage: none
 
-      - name: Install Nextcloud and enable AppAPI
+      - name: Install Nextcloud in debug mode and enable AppAPI
         run: |
           mkdir data
           ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
           ./occ config:system:set trusted_domains 1 --value=127.0.0.1
           ./occ config:system:set trusted_domains 2 --value=localhost
+          # occ audio_video_search:sample and the debug block of the admin
+          # section exist in debug mode only.
+          ./occ config:system:set debug --value=true --type=boolean
           NEXTCLOUD_HOST=0.0.0.0 composer run serve > "${RUNNER_TEMP}/php-server.log" 2>&1 &
           for _ in $(seq 1 30); do
-            curl -sf http://localhost:8080/status.php > /dev/null && break
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
             sleep 2
           done
-          curl -sf http://localhost:8080/status.php
+          curl -sf "${NC_URL}/status.php"
           ./occ app:enable -vvv -f app_api
+
+      # Before the ExApp: the container asks the handshake route of the PHP
+      # app at its start, and only a confirmed companion unlocks /sample.
+      - name: Install the PHP app
+        run: |
+          mv app-src/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          ./occ app:list | grep -A1 "${APP_ID}"
 
       - name: Start a local registry and push the image of this commit
         run: |
           docker run -d -p 5000:5000 --name registry registry:2
-          docker build -t "${LOCAL_REGISTRY}/${APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src
-          docker push "${LOCAL_REGISTRY}/${APP_ID}:${LOCAL_IMAGE_TAG}"
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}"
+
+      # Before the clips: fetch_speech.py turns them into WAV with it, and its
+      # sha256 is part of the clip key. make-testmedia.sh uses the same one.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      # The speech models and the speech clips of phase 3 (plan 03-18, the way
+      # of plan 03-17 in discovery-e2e.yml), with the cache keys of python.yml:
+      # MODEL_SHA256 of models/catalog.py; the member sha256 of
+      # ci/media/fetch_speech.py plus the sha256 of the ffmpeg that turned them
+      # into WAV (here the one of the runner). Both files only hold constants
+      # and stdlib imports, so the python3 of the runner reads them.
+      - name: Cache keys of the speech models and clips
+        id: speech-keys
+        run: |
+          set -euo pipefail
+          MODELS_KEY="avs-models-$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["MODEL_SHA256"])' app-src/backend/src/audio_video_search_backend/models/catalog.py)"
+          FFMPEG_SHA256="$(sha256sum "$(command -v ffmpeg)" | cut -c1-64)"
+          SPEECH_KEY="avs-speech-$(python3 -I -c 'import hashlib, runpy, sys; m = runpy.run_path(sys.argv[1]); print(hashlib.sha256(",".join([*sorted(c.member_sha256 for c in m["CLIPS"]), sys.argv[2]]).encode()).hexdigest())' app-src/ci/media/fetch_speech.py "$FFMPEG_SHA256")"
+          echo "models=$MODELS_KEY" >> "$GITHUB_OUTPUT"
+          echo "speech=$SPEECH_KEY" >> "$GITHUB_OUTPUT"
+
+      # A cache entry is only a place to keep the files (T-03-59): the verdict
+      # files of procure are not cached, so the container hashes every model
+      # file again when /init checks them.
+      - name: Restore the speech models
+        id: models-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/avs-models
+            !${{ runner.temp }}/avs-models/**/*.verified.json
+          key: ${{ steps.speech-keys.outputs.models }}
+
+      # The downloader of the image of this commit, the one /init would run
+      # (fixed URL, host allowlist, fixed sha256), as the user of the runner so
+      # the cache can keep what it wrote.
+      - name: Fetch the speech models on a cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/avs-models"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${RUNNER_TEMP}/avs-models:/avs-models" \
+            --entrypoint /app/.venv/bin/python \
+            "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -m audio_video_search_backend.models.procure --root /avs-models
+
+      - name: Restore the speech clips
+        id: speech-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/avs-speech
+          key: ${{ steps.speech-keys.outputs.speech }}
+
+      - name: Fetch the speech clips on a cache miss
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: python3 -I app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+
+      # The member sha256 binds (fetch_speech.py checks it at the fetch); the WAV
+      # sha256 depends on the ffmpeg build and only warns, as in python.yml. The
+      # runner context is not allowed in a job env, so the paths go through
+      # GITHUB_ENV and hold for every later step: make-testmedia.sh and the
+      # step @preview read them.
+      - name: Check the speech clips and hand them to the tests
+        run: |
+          set -euo pipefail
+          python3 -I -c 'import hashlib, pathlib, runpy, sys; m = runpy.run_path(sys.argv[1]); d = pathlib.Path(sys.argv[2]); [print(f"::warning::{c.name} wav sha256 {h} differs from {c.wav_sha256} (other ffmpeg build)") for c in m["CLIPS"] if (h := hashlib.sha256((d / c.name).read_bytes()).hexdigest()) != c.wav_sha256]' app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+          WORD="$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["EXPECTED_WORD"])' app-src/ci/media/fetch_speech.py)"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_de.wav"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+          {
+            echo "AVS_SPEECH_DE=${RUNNER_TEMP}/avs-speech/speech_de.wav"
+            echo "AVS_SPEECH_TR=${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+            echo "AVS_SPEECH_WORD=${WORD}"
+          } >> "$GITHUB_ENV"
+          # Plan 04-14: the paths of the S7 clips and their measured target forms
+          # (AVS_SPEECH_S7_*, AVS_S7_TARGETS) for the seed and search-quality.spec.ts;
+          # exit 3 when a clip is missing.
+          python3 -I app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech" --s7-env >> "$GITHUB_ENV"
+
+      # The air gap way of plan 03-07: the files lie in the persistent storage
+      # before the app is installed. HaRP reuses an existing volume of this name
+      # at create (see the upgrade job below), and a fresh named volume takes
+      # over owner and mode of the directory of the image, so the copy runs as
+      # uid 10001 like the container. No verdict file goes in.
+      - name: Put the speech models into the volume of the ExApp
+        run: |
+          set -euo pipefail
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          docker volume create "${volume}"
+          docker run --rm --user 10001:10001 \
+            -v "${volume}:/nc_app_${BACKEND_APP_ID}_data" \
+            -v "${RUNNER_TEMP}/avs-models/models:/avs-models:ro" \
+            --entrypoint sh "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -c 'cp -R /avs-models "$1/models" && find "$1/models" -name "*.verified.json" -delete && echo "model files: $(find "$1/models" -type f | wc -l)"' \
+            sh "/nc_app_${BACKEND_APP_ID}_data"
 
       - name: Start HaRP
         run: |
@@ -102,7 +281,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/certs"
           docker run -d --name appapi-harp --net host \
             -e HP_SHARED_KEY="${harp_key}" \
-            -e NC_INSTANCE_URL="http://localhost:8080" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${RUNNER_TEMP}/certs:/certs" \
             "${HARP_IMAGE}"
@@ -147,9 +326,9 @@ jobs:
       - name: Point a temporary info.xml at the local registry
         run: |
           sed -e "s|<registry>ghcr.io</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
-              -e "s|<image>street1983nk/${APP_ID}</image>|<image>${APP_ID}</image>|" \
+              -e "s|<image>street1983nk/${BACKEND_APP_ID}</image>|<image>${BACKEND_APP_ID}</image>|" \
               -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${LOCAL_IMAGE_TAG}</image-tag>|" \
-              app-src/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
+              app-src/backend/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
           grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-citest.xml"
 
       - name: Register the HaRP daemon and install the ExApp through it
@@ -160,12 +339,12 @@ jobs:
             --harp --harp_frp_address localhost:8782 \
             --harp_shared_key "${HARP_SHARED_KEY}" \
             --net host --set-default
-          timeout 600 ./occ app_api:app:register "${APP_ID}" harp_proxy_host \
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
             --info-xml "${RUNNER_TEMP}/info-citest.xml" --wait-finish
 
       - name: The container runs as 10001, is healthy and the app is enabled
         run: |
-          container=$(docker ps --filter "name=nc_app_${APP_ID}" --format '{{.Names}}' | head -n 1)
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
           test -n "${container}" || { docker ps -a; exit 1; }
           echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
           test "$(docker exec "${container}" id -u)" = "10001"
@@ -175,19 +354,509 @@ jobs:
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' "${container}")" = "healthy"
           timeout 30 ./occ app_api:app:list | tee app-list.txt
-          grep -q "${APP_ID}" app-list.txt
+          grep -q "${BACKEND_APP_ID}" app-list.txt
 
-      - name: The settings form is registered and the admin route answers through HaRP
+      # /init found both models in the volume and fetched nothing: AppAPI holds
+      # init 100, and the log of the container has a "model procure" line with
+      # outcome present for each model, none with another outcome, and
+      # "models ready". Without the models the step @preview would wait for
+      # hits that never come.
+      - name: The models came from the volume, not from the network
+        run: |
+          set -euo pipefail
+          status=$(sqlite3 data/owncloud.db "SELECT status FROM oc_ex_apps WHERE appid='${BACKEND_APP_ID}'")
+          echo "AppAPI status ${status}"
+          jq -e '.init == 100' <<< "${status}"
+          docker logs "${EXAPP_CONTAINER}" 2>&1 \
+            | jq -cR 'fromjson? | select(.msg == "model procure" or .msg == "models ready")' > procure-lines.json
+          cat procure-lines.json
+          for model in silero parakeet; do
+            jq -e -s --arg m "${model}" 'any(.[]; .msg == "model procure" and .model == $m and .outcome == "present")' procure-lines.json
+          done
+          if jq -e -s 'any(.[]; .msg == "model procure" and .outcome != "present")' procure-lines.json; then
+            echo "a model was fetched or failed at /init although it lay in the volume"
+            exit 1
+          fi
+          jq -e -s 'any(.[]; .msg == "models ready")' procure-lines.json
+
+      # Owner 06.11.: the German word list is part of the image, and with it the
+      # compound splitter finds "frist" inside "Kündigungsfrist".
+      - name: The image carries the German word list and splits compounds
+        run: |
+          docker exec "${EXAPP_CONTAINER}" python -c '
+          from audio_video_search_backend.index import wordlist
+          from audio_video_search_backend.index.analyzer import cached_german_analyzer
+          entries = wordlist.load_constituents()
+          assert len(entries) > 200000, len(entries)
+          chain = cached_german_analyzer(wordlist.wordlist_hash(entries), entries)
+          tokens = chain.analyze("Kündigungsfrist")
+          assert set(chain.analyze("frist")) <= set(tokens), tokens
+          print(len(entries), "entries, Kündigungsfrist ->", tokens)
+          '
+
+      - name: The settings form is registered and the status answers through HaRP
         run: |
           # PUT /enabled registered the form into AppAPI's table ex_settings_forms.
           forms=$(sqlite3 data/owncloud.db "SELECT appid || ':' || formid FROM oc_ex_settings_forms")
           echo "registered forms: ${forms}"
-          grep -qx "${APP_ID}:${APP_ID}_admin" <<<"${forms}"
+          grep -qx "${BACKEND_APP_ID}:${BACKEND_APP_ID}_admin" <<<"${forms}"
           code=$(curl -s -o status.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
-            "http://localhost:8090/exapps/${APP_ID}/status")
+            "http://localhost:8090/exapps/${BACKEND_APP_ID}/status")
           cat status.json; echo
           test "${code}" = "200"
-          jq -e --arg id "${APP_ID}" '.app_id == $id' status.json
+          jq -e --arg id "${BACKEND_APP_ID}" '.app_id == $id' status.json
+          # The container found the PHP app at its start.
+          jq -e '.companion == "ok"' status.json
+
+      # ffmpeg is there since "Install ffmpeg"; AVS_SPEECH_DE and AVS_SPEECH_TR
+      # from GITHUB_ENV make the script add the media of phase 3.
+      - name: Make the test media
+        run: bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Seed users, team folder, shares, media and test results
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          FILEIDS_ENV: ${{ github.workspace }}/app-src/ci/fileids.env
+          SERVER_VERSION: ${{ matrix.server-version }}
+          AVS_PHASE3_MEDIA: '1'
+          AVS_PHASE4_MEDIA: '1'
+        run: |
+          bash app-src/ci/seed.sh
+          cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
+
+      # The ordinary OCS route, for every kind of reader. Every entry points at
+      # the playback route with the time mark and carries both attributes.
+      - name: The OCS search honours read access
+        run: |
+          search() {
+            curl -sfS -u "$1:$2" -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+              "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche" > "search-$1.json"
+          }
+          shape='.ocs.data.entries | all(
+            (.resourceUrl | contains("/apps/audio_video_search/play/") and contains("t=44.4"))
+            and (.subline | startswith("0:44 · "))
+            and (.attributes.fileId | type == "string")
+            and (.attributes.path | type == "string"))'
+
+          search alice "${ALICE_PASS}"
+          jq -e '.ocs.data.entries | length >= 2' search-alice.json
+          jq -e "${shape}" search-alice.json
+
+          search carol "${CAROL_PASS}"
+          jq -e --arg id "${FILEID_TEAM}" '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-carol.json
+          jq -e "${shape}" search-carol.json
+
+          search bob "${BOB_PASS}"
+          jq -e --arg id "${FILEID_WEBM}" '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-bob.json
+          jq -e "${shape}" search-bob.json
+
+          search mallory "${MALLORY_PASS}"
+          jq -e '.ocs.data.entries | length == 0' search-mallory.json
+
+      # Owner 17.11.2026 (T-04-25, T-04-50, E-1): the container routes with
+      # user data are not declared in backend/appinfo/info.xml, so neither
+      # proxy forwards them; only the signed exAppRequest of the PHP app, which
+      # checks read access, exclusions and the download policy first, reaches
+      # them (the step above and @phase4 prove that way for bob). Both proxies
+      # answer a route they do not know with 404: HaRP v0.4.5 (the HARP_IMAGE
+      # digest) haproxy_agent.py "No defined route" -> not_found -> haproxy.cfg
+      # "return status 404"; AppAPI ExAppProxyController::prepareProxy "route
+      # does not pass the access check" -> NotFoundResponse. Every refused
+      # request counts toward the HaRP ban of 127.0.0.1 (HP_BLACKLIST_COUNT 10
+      # in 300 s, and Nextcloud reaches HaRP from the same address), so HaRP
+      # gets exactly four. Positive control on the same ways afterwards: the
+      # admin reaches the ADMIN route /status, which also shows no ban.
+      - name: Container routes with user data are not reachable past the PHP app
+        run: |
+          set -euo pipefail
+          backend_lines() {
+            docker logs "${EXAPP_CONTAINER}" 2>&1 \
+              | jq -R --arg request "$1" 'fromjson? | select(.logger == "uvicorn.access" and ((.msg // "") | contains($request)))' \
+              | jq -s length
+          }
+          probe() {
+            code=$(curl -s -o probe-body.txt -w '%{http_code}' -u "bob:${BOB_PASS}" \
+              -H 'Content-Type: application/json' --data "$2" "$1")
+            echo "bob POST $1: ${code}"
+            test "${code}" = "404"
+            if grep -q '"known"' probe-body.txt; then
+              echo "the answer of $1 came from the container"
+              exit 1
+            fi
+          }
+          body=$(jq -cn --argjson id "${FILEID_OGG}" '{fileId: $id, format: "vtt", atMs: 0, term: "Audiosuche", userId: "alice", limit: 5, offset: 0}')
+          before=()
+          for route in /search /excerpt /export /export/meta; do
+            before+=("$(backend_lines "POST ${route} ")")
+          done
+          for route in /search /excerpt /export /export/meta; do
+            probe "http://localhost:8090/exapps/${BACKEND_APP_ID}${route}" "${body}"
+            probe "${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}${route}" "${body}"
+          done
+          index=0
+          for route in /search /excerpt /export /export/meta; do
+            after=$(backend_lines "POST ${route} ")
+            echo "container lines POST ${route}: ${before[${index}]} -> ${after}"
+            test "${after}" = "${before[${index}]}"
+            index=$((index + 1))
+          done
+          for url in "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" \
+                     "${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}/status"; do
+            code=$(curl -s -o control-status.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" "${url}")
+            echo "admin GET ${url}: ${code}"
+            test "${code}" = "200"
+            jq -e --arg id "${BACKEND_APP_ID}" '.app_id == $id' control-status.json
+          done
+
+      # The playback page seeks inside the medium, and that needs a byte range.
+      - name: WebDAV answers a byte range with 206
+        run: |
+          range() {
+            code=$(curl -s -u "$1:$2" -H "Range: bytes=1000-1999" -o /dev/null -w "%{http_code}" \
+              "${NC_URL}/remote.php/dav/files/$1/$3")
+            echo "range request of $1: ${code}"
+            test "${code}" = "206"
+          }
+          range alice "${ALICE_PASS}" tone-90s.webm
+          range carol "${CAROL_PASS}" Team/tone-90s.webm
+          range bob "${BOB_PASS}" tone-90s.webm
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      # --ignore-scripts: npm ci installs exactly the lock file with its
+      # integrity hashes and runs no install script (T-01-SC).
+      - name: Install Playwright and its browser
+        working-directory: app-src/ci/playwright
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium firefox
+
+      - name: Playwright on the running instance
+        working-directory: app-src/ci/playwright
+        run: npx playwright test --grep-invert "@disabled|@unreachable|@nodebug|@drift|@patch|@missing|@preview|@phase4"
+
+      # Phase 3 (plan 03-18): the core path (upload, preliminary hit within
+      # minutes, the click lands on the word) and the states of the search and
+      # the playback page (UI-SPEC 03, S1 to S5 and P1 to P13), right after the
+      # main run, while debug mode is on and the backend runs. The main run
+      # leaves @preview out, so nothing runs twice. preview.spec.ts lowers the
+      # longest recording to 1 hour for the singular of A10 through AVS_OCC and
+      # sets it back to 12; it uploads lang-40min.ogg out of AVS_MEDIA_DIR when
+      # it needs the partial state. The window of the leak probe P11 lands in
+      # leak-probe.json for the next step.
+      - name: Playwright, core path and states of phase 3
+        id: preview
+        working-directory: app-src/ci/playwright
+        timeout-minutes: 45
+        env:
+          AVS_OCC: ${{ github.workspace }}/occ
+          AVS_MEDIA_DIR: ${{ runner.temp }}/testdata
+          AVS_LEAK_PROBE: ${{ github.workspace }}/leak-probe.json
+        run: AVS_PREVIEW_E2E=1 npx playwright test --grep @preview
+
+      # P11 of the UI-SPEC: the playback page of an excluded user asks the
+      # container nothing (D-02-16). The access log of the container names the
+      # route, not the file id (the id is in the body), so the proof is a time
+      # window: no POST /excerpt while the excluded user loaded the page, and
+      # at least one in the window of the positive control, where alice opened
+      # the same file. A window without a line in both would prove nothing.
+      # Also after a red step @preview, so its log is kept; not when the step
+      # never ran.
+      - name: The excerpt leak probe
+        if: ${{ !cancelled() && steps.preview.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          docker logs "${EXAPP_CONTAINER}" > logs/exapp-preview.log 2>&1
+          probe="${GITHUB_WORKSPACE}/leak-probe.json"
+          test -s "${probe}" || { echo "EXCERPT LEAK PROBE MISSING: preview.spec.ts wrote no window"; exit 1; }
+          cp "${probe}" logs/
+          cat "${probe}"; echo
+          excerpts_in() {
+            jq -R --arg from "$1" --arg to "$2" \
+              'fromjson? | select(.logger == "uvicorn.access" and ((.msg // "") | contains("POST /excerpt ")))
+                | select(.ts[0:23] >= $from[0:23] and .ts[0:23] <= $to[0:23])' logs/exapp-preview.log | jq -s length
+          }
+          probe_count=$(excerpts_in "$(jq -r '.probe.from' "${probe}")" "$(jq -r '.probe.to' "${probe}")")
+          control_count=$(excerpts_in "$(jq -r '.control.from' "${probe}")" "$(jq -r '.control.to' "${probe}")")
+          echo "excerpt requests: excluded user ${probe_count}, positive control ${control_count}"
+          if [ "${control_count}" -lt 1 ]; then
+            echo "EXCERPT LEAK PROBE INVALID: the positive control saw no /excerpt line"
+            exit 1
+          fi
+          if [ "${probe_count}" -ne 0 ]; then
+            echo "EXCERPT LEAK PROBE FAILED: the page of the excluded user asked the container"
+            exit 1
+          fi
+          echo "EXCERPT LEAK PROBE PASS"
+
+      # Phase 4 (plan 04-14): the search quality of UI-SPEC 04 (S6, S7, SRCH-04)
+      # in search-quality.spec.ts and the export, sidecar and track specs of
+      # plan 04-17, all tagged @phase4, which the main run leaves out. The S7
+      # forms come from AVS_S7_TARGETS (step "Check the speech clips"); the
+      # browser saves every download into AVS_DOWNLOADS_DIR for the parser proof
+      # after it, the pictures go to screenshots/phase4 for phase4-screens.
+      # export.spec.ts and sidecar.spec.ts (plan 04-17) change shares, the
+      # view-without-download switch and an exclusion only inside finally
+      # blocks, and stop the container of the backend with docker and
+      # EXAPP_CONTAINER (D2, E7), starting it again in finally; the track also
+      # runs in the project firefox-w1280-light.
+      - name: Playwright, search quality and export of phase 4
+        id: phase4
+        working-directory: app-src/ci/playwright
+        timeout-minutes: 60
+        env:
+          AVS_OCC: ${{ github.workspace }}/occ
+          AVS_MEDIA_DIR: ${{ runner.temp }}/testdata
+          AVS_DOWNLOADS_DIR: ${{ runner.temp }}/avs-downloads
+          AVS_SCREENSHOT_DIR: screenshots/phase4
+        run: AVS_PHASE4_E2E=1 npx playwright test --grep @phase4
+
+      # The download proof decodes with the ffmpeg the image ships (same BtbN
+      # release, asset and checksum as the ffmpeg stage of the Dockerfile, for
+      # the architecture of the leg; tests/test_workflows.py holds them in step).
+      # Its path goes to the test only, not into GITHUB_ENV, so no later step
+      # picks it up by accident.
+      - name: Install the pinned LGPL ffmpeg for the download proof
+        if: ${{ !cancelled() && steps.phase4.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          FFMPEG_RELEASE=autobuild-2026-10-31-12-59
+          FFMPEG_BUILD=ffmpeg-n8.1.3-27-g8dca1586f4
+          FFMPEG_AMD64_SHA256=a64f3171e6ad1f7d358d28890a907ee478c331d1177ec696a93418f79ac3f1f3
+          FFMPEG_ARM64_SHA256=2ea30086a637e3f0ad0f49a1b38db34121422b85e93cc82df2e01d9ee5200809
+          case "$(uname -m)" in
+            x86_64) FFMPEG_ARCH=linux64-lgpl-8.1; FFMPEG_SHA256="${FFMPEG_AMD64_SHA256}" ;;
+            aarch64) FFMPEG_ARCH=linuxarm64-lgpl-8.1; FFMPEG_SHA256="${FFMPEG_ARM64_SHA256}" ;;
+            *) echo "no pinned ffmpeg for $(uname -m)"; exit 1 ;;
+          esac
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/btbn-ffmpeg.tar.xz" \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/${FFMPEG_BUILD}-${FFMPEG_ARCH}.tar.xz"
+          echo "${FFMPEG_SHA256}  $RUNNER_TEMP/btbn-ffmpeg.tar.xz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/btbn-ffmpeg"
+          tar -C "$RUNNER_TEMP/btbn-ffmpeg" --strip-components=2 -xJf "$RUNNER_TEMP/btbn-ffmpeg.tar.xz" \
+            "${FFMPEG_BUILD}-${FFMPEG_ARCH}/bin/ffmpeg"
+          "$RUNNER_TEMP/btbn-ffmpeg/ffmpeg" -version
+
+      - name: Install uv for the download proof
+        if: ${{ !cancelled() && steps.phase4.outcome != 'skipped' }}
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.11.7'
+          enable-cache: true
+          cache-dependency-glob: app-src/backend/uv.lock
+
+      # EXP-01, EXP-02, EXP-04 on the files the browser really downloaded: SRT
+      # and VTT through webvtt-py, srt and ffmpeg, line 2 of a TXT is T35, no
+      # file says BITV. With AVS_DOWNLOADS_DIR set an empty or missing folder
+      # fails (T-04-59), and under CI=true a missing ffmpeg fails as well.
+      - name: The parsers on the real downloads of phase 4
+        if: ${{ !cancelled() && steps.phase4.outcome != 'skipped' }}
+        working-directory: app-src/backend
+        env:
+          CI: 'true'
+          AVS_DOWNLOADS_DIR: ${{ runner.temp }}/avs-downloads
+          AVS_FFMPEG: ${{ runner.temp }}/btbn-ffmpeg/ffmpeg
+          # "Install the PHP app" moved app-src/php to apps/audio_video_search.
+          AVS_L10N_DIR: ${{ github.workspace }}/apps/audio_video_search/l10n
+        run: |
+          test -f "${AVS_L10N_DIR}/de.json"
+          uv sync --frozen
+          uv run pytest tests/test_downloaded_subtitles.py -q -rs
+
+      # Synthetic media and FLEURS speech (CC-BY-4.0) on a throwaway instance:
+      # nothing in here is private (T-04-53).
+      - name: Upload the pictures and downloads of phase 4
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phase4-screens-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: |
+            app-src/ci/playwright/screenshots/phase4/
+            ${{ runner.temp }}/avs-downloads/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Playwright with the backend disabled
+        working-directory: app-src/ci/playwright
+        run: |
+          timeout 120 "${GITHUB_WORKSPACE}/occ" app_api:app:disable "${BACKEND_APP_ID}"
+          status=0
+          npx playwright test --grep @disabled || status=$?
+          timeout 300 "${GITHUB_WORKSPACE}/occ" app_api:app:enable "${BACKEND_APP_ID}"
+          exit "${status}"
+
+      - name: Playwright with the backend unreachable
+        working-directory: app-src/ci/playwright
+        run: |
+          docker stop "${EXAPP_CONTAINER}"
+          status=0
+          npx playwright test --grep @unreachable || status=$?
+          docker start "${EXAPP_CONTAINER}"
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+              "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" || true)
+            [ "${code}" = "200" ] && break
+            sleep 2
+          done
+          test "${code}" = "200"
+          exit "${status}"
+
+      - name: Playwright without debug mode
+        working-directory: app-src/ci/playwright
+        run: |
+          "${GITHUB_WORKSPACE}/occ" config:system:set debug --value=false --type=boolean
+          npx playwright test --grep @nodebug
+
+      # -- Lockstep in the running instance (plan 10, PLAT-02) -------------------
+      #
+      # Owner rule of 06.11.: a difference in major or minor is an error with an
+      # admin banner and an empty search, a difference in the patch part is a
+      # hint and the search works, an unknown version is never ok. The steps
+      # below register the backend again at a chosen version (ci/redeploy.sh:
+      # same image, AppAPI hands <version> to the container as APP_VERSION) and
+      # read the verdict where the admin reads it (ci/admin-state.sh, the route
+      # behind "Check again"). The versions are derived from the PHP app of this
+      # commit, so the steps keep their meaning after the next version bump.
+      - name: Drift versions next to the version of this commit
+        run: |
+          own=$(sed -n 's|.*<version>\([^<]*\)</version>.*|\1|p' apps/audio_video_search/appinfo/info.xml | head -n 1)
+          if [[ ! "${own}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "apps/audio_video_search/appinfo/info.xml carries no major.minor.patch version ('${own}')"
+            exit 1
+          fi
+          major=${BASH_REMATCH[1]}
+          minor=${BASH_REMATCH[2]}
+          patch=${BASH_REMATCH[3]}
+          {
+            echo "OWN_VERSION=${own}"
+            echo "INFO_XML=${RUNNER_TEMP}/info-citest.xml"
+            echo "DRIFT_MINOR_VERSION=${major}.$((minor + 1)).0"
+            echo "DRIFT_PATCH_VERSION=${major}.${minor}.$((patch + 1))"
+          } >> "${GITHUB_ENV}"
+          echo "own ${own}, minor drift ${major}.$((minor + 1)).0, patch drift ${major}.${minor}.$((patch + 1))"
+
+      # The baseline the drift is measured against: the untouched pair is ok.
+      # Debug mode comes back on first: the step before switched it off, and
+      # the test results are only searchable with it.
+      - name: Drift baseline, the untouched pair is ok
+        run: |
+          ./occ config:system:set debug --value=true --type=boolean
+          bash app-src/ci/admin-state.sh state-baseline.json
+          jq -e --arg v "${OWN_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-baseline.json
+
+      # Direction one of the error: the container is a minor ahead. Every
+      # answer of the search has to be HTTP 200 with no entry, never an error
+      # status: the unified search asks every provider in parallel, and a
+      # provider that fails costs the user the other groups as well.
+      - name: Drift 1, backend a minor ahead gives version_drift and an empty search
+        run: |
+          bash app-src/ci/redeploy.sh "${DRIFT_MINOR_VERSION}"
+          bash app-src/ci/admin-state.sh state-drift.json
+          jq -e --arg own "${OWN_VERSION}" --arg b "${DRIFT_MINOR_VERSION}" \
+            '.state == "version_drift" and .own == $own and .backend == $b' state-drift.json
+          code=$(curl -s -o search-drift.json -w '%{http_code}' -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche")
+          test "${code}" = "200"
+          jq -e '.ocs.data.entries | length == 0' search-drift.json
+          cd app-src/ci/playwright
+          AVS_BACKEND_VERSION="${DRIFT_MINOR_VERSION}" npx playwright test --grep @drift
+
+      # Only the patch part differs: a hint, and the search works. The hits
+      # come out of the volume the earlier registrations left behind, so this
+      # step also shows that an unregister without the data flag keeps it.
+      - name: Drift 2, backend a patch apart gives version_patch_differs and the hits
+        run: |
+          bash app-src/ci/redeploy.sh "${DRIFT_PATCH_VERSION}"
+          bash app-src/ci/admin-state.sh state-patch.json
+          jq -e --arg own "${OWN_VERSION}" --arg b "${DRIFT_PATCH_VERSION}" \
+            '.state == "version_patch_differs" and .own == $own and .backend == $b' state-patch.json
+          code=$(curl -s -o search-patch.json -w '%{http_code}' -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche")
+          test "${code}" = "200"
+          jq -e --arg id "${FILEID_WEBM}" \
+            '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-patch.json
+          cd app-src/ci/playwright
+          AVS_BACKEND_VERSION="${DRIFT_PATCH_VERSION}" npx playwright test --grep @patch
+
+      # The other half is gone: unregistered the way an admin removes it, and
+      # without the data flag, so the volume stays for the way back.
+      - name: Drift 3, backend unregistered gives backend_missing and an empty search
+        run: |
+          timeout 300 ./occ app_api:app:unregister "${BACKEND_APP_ID}"
+          bash app-src/ci/admin-state.sh state-missing.json
+          jq -e '.state == "backend_missing"' state-missing.json
+          code=$(curl -s -o search-missing.json -w '%{http_code}' -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche")
+          test "${code}" = "200"
+          jq -e '.ocs.data.entries | length == 0' search-missing.json
+          cd app-src/ci/playwright
+          npx playwright test --grep @missing
+
+      - name: Back to the matching pair, state ok and the hits again
+        run: |
+          bash app-src/ci/redeploy.sh "${OWN_VERSION}"
+          bash app-src/ci/admin-state.sh state-back.json
+          jq -e --arg v "${OWN_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-back.json
+          curl -sfS -o search-back.json -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche"
+          jq -e '.ocs.data.entries | length >= 2' search-back.json
+
+      # Drift 4, the other direction (VALIDATION test_handshake, integration
+      # part): the PHP app goes away and the container notices on its own. It
+      # asks the handshake route again once its answer is older than 30 s
+      # (companion.STALE_SECONDS), so /status turns to missing within a minute,
+      # and a signed /sample through HaRP refuses with companion_missing
+      # before it touches the content gateway.
+      - name: Drift 4, PHP app disabled gives companion missing and companion_missing
+        run: |
+          companion_state() {
+            curl -s -o companion-status.json -u "admin:${ADMIN_PASS}" \
+              "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" || true
+            jq -r '.companion // "none"' companion-status.json 2>/dev/null || echo none
+          }
+          wait_for() {
+            for _ in $(seq 1 45); do
+              [ "$(companion_state)" = "$1" ] && return 0
+              sleep 2
+            done
+            echo "the container did not report companion $1 within 90 s"
+            cat companion-status.json || true
+            return 1
+          }
+          ./occ app:disable audio_video_search
+          wait_for missing
+          jq -n --argjson id "${FILEID_WEBM}" '{fileId: $id, userId: "alice", atMs: 0}' > sample-request.json
+          code=$(curl -s -o sample-refused.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+            -H 'Content-Type: application/json' --data @sample-request.json \
+            "http://localhost:8090/exapps/${BACKEND_APP_ID}/sample")
+          cat sample-refused.json; echo
+          test "${code}" = "200"
+          jq -e '.error == "companion_missing"' sample-refused.json
+          ./occ app:enable audio_video_search
+          wait_for ok
+          bash app-src/ci/admin-state.sh state-companion-back.json
+          jq -e '.state == "ok"' state-companion-back.json
+
+      # Owner rule: no path and no file name in a log. The seed and the
+      # requests above named every test file, so a name in these logs came
+      # out of the code under test.
+      - name: No test file name in the Nextcloud log or the container log
+        run: |
+          docker logs "${EXAPP_CONTAINER}" > exapp-check.log 2>&1
+          touch data/nextcloud.log
+          if grep -nE 'tone-90s|broken\.webm|locked\.webm|speech_de\.wav|stille-60s|kaputt\.mp3|geschuetzt\.m4a|lang-12h01|lang-40min|viele-stellen|zwei-stellen|tuerkisch\.wav|ohne-ton\.mp4|s7-zahlwort|s7-ziffer|s7-video|s7-ablage|S7-.{1,12}bung' data/nextcloud.log exapp-check.log; then
+            echo "a test file name reached a log"
+            exit 1
+          fi
 
       - name: Collect the logs
         if: always()
@@ -197,11 +866,522 @@ jobs:
           [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
           cp data/nextcloud.log logs/ 2>/dev/null || true
           cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
+          cp search-*.json state-*.json sample-refused.json logs/ 2>/dev/null || true
 
       - name: Upload the logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: deploy-harp-logs-${{ matrix.server-version }}
+          name: deploy-harp-logs-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: logs/
+          retention-days: 7
+
+      # Synthetic media, test users of a throwaway instance: nothing in here is
+      # private (T-01-41). The screenshots are what the owner reviews.
+      - name: Upload the Playwright report and the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: |
+            app-src/ci/playwright/playwright-report/
+            app-src/ci/playwright/test-results/
+            app-src/ci/playwright/screenshots/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # The upgrade proof of both halves (plan 10, PLAT-01, plans 02-21 and
+  # 03-19). The previous version is the release 0.2.0, built out of its own
+  # commit (PREV_COMMIT, the tip of phase-02) with git worktree: both halves
+  # are installed, seeded and searched at 0.2.0, then moved to the version of
+  # this commit the way an update moves them. The PHP app by swapping its
+  # directory and occ upgrade (which runs its migration), the ExApp by
+  # app_api:app:update with the new info.xml.
+  #
+  # A positive control before the update makes sure the old state is really
+  # old: state.db at schema_version 2 without the table preview_job and with
+  # the sample of 0.2.0 in sample_ref (with its transcript), and oc_avs_queue
+  # in the Nextcloud database without the column origin. Without it the job
+  # could pass on a store that was never migrated.
+  #
+  # 0.2.0 needs no speech model, 0.3.0 does: the models go into the volume
+  # after the control and before the update (the air gap way of plan 03-07,
+  # as in the job deploy-harp), and /init of 0.3.0 has to find them there.
+  #
+  # What has to survive, and is compared before against after: the state.db
+  # in the volume of the container (same inode, so the same file and not a new
+  # one), the test results (same file ids found by the same search, same
+  # sampleCount, the sample in sample_ref with its transcript), the schema
+  # steps to 4 with the table preview_job and the columns of 04-05, the column origin of the PHP
+  # migration, and at the end the admin state ok and an answer of occ
+  # audio_video_search:status --json with byPreview.
+  #
+  # Assumption A5 of the research, read in the sources before this job was
+  # written: app_api:app:update (lib/Command/ExApp/Update.php, stable33 to
+  # stable35) calls DockerActions::deployExAppHarp, which removes the old
+  # container with removeExApp(..., ignoreIfNotExists: true), so remove_data
+  # stays false, and HaRP (haproxy_agent.py) deletes the volume only with
+  # remove_data and reuses an existing one at create. This job is the proof
+  # on the running thing.
+  upgrade:
+    name: upgrade ${{ matrix.server-version }} ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # An estimate until the first green run measures it: two image builds
+    # (the second mostly from the layer cache), HaRP, the seed and the update,
+    # plus the speech models of 0.3.0 (0.67 GB on a cache miss, plan 03-19).
+    timeout-minutes: 60
+    env:
+      PREV_VERSION: '0.2.0'
+      PREV_COMMIT: 'a99565a2243f5c1e11adfb71fc2909a1b6c88fe8'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every server version on amd64, and the newest on arm64 as well: the
+        # update path does not differ by architecture, the image build does.
+        include:
+          - server-version: stable33
+            php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable34
+            php-version: '8.2'
+            runner: ubuntu-24.04
+          - server-version: stable35
+            php-version: '8.3'
+            runner: ubuntu-24.04
+          - server-version: stable35
+            php-version: '8.3'
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server-version }}
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: ${{ matrix.server-version }}
+          path: apps/app_api
+
+      # The server repository no longer carries apps/viewer, but core/shipped.json
+      # lists viewer as always enabled, so app:disable refuses it and app:list
+      # does not show it. Updater::checkAppsRequirements then stops occ upgrade
+      # on stable33 and stable34 with "The files of the app viewer were not
+      # correctly replaced". A release tarball carries viewer; this checkout
+      # does the same with the viewer branch of the same server version.
+      - name: Check out nextcloud/viewer like a release tarball carries it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/viewer
+          ref: ${{ matrix.server-version }}
+          path: apps/viewer
+
+      # The whole history, so the commit of 0.2.0 is there for git worktree.
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+          fetch-depth: 0
+
+      # prev/ is the release 0.2.0 out of its own commit, curr/ is this commit
+      # as it is. Every place the lockstep gate looks has to say PREV_VERSION in
+      # prev/, so a wrong commit ends the job here and not as a puzzle later.
+      - name: Prepare the previous version 0.2.0 and the current one
+        run: |
+          cp -R app-src curr
+          git -C app-src worktree add --detach "${GITHUB_WORKSPACE}/prev" "${PREV_COMMIT}"
+          test "$(git -C prev rev-parse HEAD)" = "${PREV_COMMIT}"
+          test "$(grep -c "<version>${PREV_VERSION}</version>" prev/php/appinfo/info.xml)" = "1"
+          test "$(grep -c "<version>${PREV_VERSION}</version>" prev/backend/appinfo/info.xml)" = "1"
+          test "$(grep -c "<image-tag>${PREV_VERSION}</image-tag>" prev/backend/appinfo/info.xml)" = "1"
+          test "$(grep -c "^version = \"${PREV_VERSION}\"" prev/backend/pyproject.toml)" = "1"
+          grep -A1 '^name = "audio-video-search-backend"$' prev/backend/uv.lock | grep -qx "version = \"${PREV_VERSION}\""
+          curr_version=$(sed -n 's|.*<version>\([^<]*\)</version>.*|\1|p' curr/php/appinfo/info.xml | head -n 1)
+          test -n "${curr_version}"
+          test "${curr_version}" != "${PREV_VERSION}"
+          echo "CURR_VERSION=${curr_version}" >> "${GITHUB_ENV}"
+          echo "previous ${PREV_VERSION}, current ${curr_version}"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Nextcloud in debug mode and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          ./occ config:system:set debug --value=true --type=boolean
+          NEXTCLOUD_HOST=0.0.0.0 composer run serve > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
+            sleep 2
+          done
+          curl -sf "${NC_URL}/status.php"
+          ./occ app:enable -vvv -f app_api
+
+      - name: Install the PHP app at 0.2.0
+        run: |
+          cp -R prev/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          test "$(./occ config:app:get audio_video_search installed_version)" = "${PREV_VERSION}"
+
+      - name: Build both images and push them into a local registry
+        run: |
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${PREV_VERSION}" ./prev/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${PREV_VERSION}"
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${CURR_VERSION}" ./curr/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${CURR_VERSION}"
+
+      - name: Point both info.xml at the local registry
+        run: |
+          for side in prev curr; do
+            sed -e "s|<registry>ghcr.io</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+                -e "s|<image>street1983nk/${BACKEND_APP_ID}</image>|<image>${BACKEND_APP_ID}</image>|" \
+                "${side}/backend/appinfo/info.xml" > "${RUNNER_TEMP}/info-${side}.xml"
+            grep -E '<version>[^<]*</version>|<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-${side}.xml"
+          done
+          grep -q "<image-tag>${PREV_VERSION}</image-tag>" "${RUNNER_TEMP}/info-prev.xml"
+          grep -q "<image-tag>${CURR_VERSION}</image-tag>" "${RUNNER_TEMP}/info-curr.xml"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Register the HaRP daemon and install the ExApp at 0.2.0
+        run: |
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-prev.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      - name: Make the test media
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Seed users, team folder, shares, media and test results at 0.2.0
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          FILEIDS_ENV: ${{ github.workspace }}/app-src/ci/fileids.env
+          SERVER_VERSION: ${{ matrix.server-version }}
+        run: |
+          bash app-src/ci/seed.sh
+          cat app-src/ci/fileids.env >> "${GITHUB_ENV}"
+
+      # Everything the update has to keep, on record before it runs.
+      - name: Before the update, 0.2.0 is ok, seeded and found
+        run: |
+          curl -sfS -o status-before.json -u "admin:${ADMIN_PASS}" \
+            "http://localhost:8090/exapps/${BACKEND_APP_ID}/status"
+          cat status-before.json; echo
+          jq -e --arg v "${PREV_VERSION}" \
+            '.appVersion == $v and .schemaVersion == 2 and .companion == "ok" and .sampleCount >= 1' status-before.json
+          bash app-src/ci/admin-state.sh state-before.json
+          jq -e --arg v "${PREV_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-before.json
+          curl -sfS -o search-before.json -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche"
+          jq -e --arg id "${FILEID_WEBM}" \
+            '[.ocs.data.entries[] | select(.attributes.fileId == $id)] | length == 1' search-before.json
+          jq -c '[.ocs.data.entries[].attributes.fileId] | sort' search-before.json > hits-before.json
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          {
+            echo "VOLUME_CREATED=$(docker volume inspect --format '{{.CreatedAt}}' "${volume}")"
+            echo "STATE_DB_INODE=$(docker exec "${EXAPP_CONTAINER}" sh -c 'stat -c %i "${APP_PERSISTENT_STORAGE}/state.db"')"
+            echo "SAMPLE_COUNT=$(jq -r '.sampleCount' status-before.json)"
+          } >> "${GITHUB_ENV}"
+          echo "hits $(cat hits-before.json), volume ${volume}"
+
+      # The positive control (plans 02-21 and 03-19): the old state has to be
+      # the one of 0.2.0, read straight from the files and not through the app.
+      # state.db at schema_version 2 without the table preview_job, next to the
+      # sample in sample_ref with its transcript (current), so an empty or
+      # wrong file cannot pass; oc_avs_queue of the PHP migration of 0.2.0 with
+      # its column file_id but without origin, the column of 0.3.0.
+      - name: Before the update, the old schema is really there
+        run: |
+          docker exec -i "${EXAPP_CONTAINER}" python - "${FILEID_WEBM}" <<'PY' || { echo "upgrade positive control failed: state.db is not the one of 0.2.0"; exit 1; }
+          import os, sqlite3, sys
+          db = sqlite3.connect(os.path.join(os.environ["APP_PERSISTENT_STORAGE"], "state.db"))
+          version = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+          tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+          sample = db.execute(
+              "SELECT s.media_id, c.version_id FROM sample_ref s JOIN current c ON c.media_id = s.media_id"
+              " WHERE s.file_id = ?", (int(sys.argv[1]),)).fetchone()
+          print(f"schema_version {version}, preview_job {'preview_job' in tables}, sample_ref with transcript {sample}")
+          sys.exit(0 if version == ("2",) and "preview_job" not in tables and sample is not None else 1)
+          PY
+          python3 - data/owncloud.db <<'PY' || { echo "upgrade positive control failed: oc_avs_queue is not the one of 0.2.0"; exit 1; }
+          import sqlite3, sys
+          columns = [row[1] for row in sqlite3.connect(sys.argv[1]).execute("PRAGMA table_info(oc_avs_queue)")]
+          print(f"oc_avs_queue columns {columns}")
+          sys.exit(0 if "file_id" in columns and "origin" not in columns else 1)
+          PY
+
+      # 0.3.0 needs the speech models, 0.2.0 does not (plan 03-19). They go
+      # into the volume the old container uses, after the control and before
+      # the update, the air gap way of plan 03-07 and the cache of the job
+      # deploy-harp (same key, verdict files neither cached nor copied), so
+      # /init of 0.3.0 finds them and fetches nothing.
+      - name: Cache key of the speech models
+        id: model-key
+        run: |
+          set -euo pipefail
+          MODELS_KEY="avs-models-$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["MODEL_SHA256"])' curr/backend/src/audio_video_search_backend/models/catalog.py)"
+          echo "models=$MODELS_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the speech models
+        id: models-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/avs-models
+            !${{ runner.temp }}/avs-models/**/*.verified.json
+          key: ${{ steps.model-key.outputs.models }}
+
+      - name: Fetch the speech models on a cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/avs-models"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${RUNNER_TEMP}/avs-models:/avs-models" \
+            --entrypoint /app/.venv/bin/python \
+            "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${CURR_VERSION}" \
+            -m audio_video_search_backend.models.procure --root /avs-models
+
+      - name: Put the speech models into the volume before the update
+        run: |
+          set -euo pipefail
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          docker volume inspect "${volume}" > /dev/null
+          docker run --rm --user 10001:10001 \
+            -v "${volume}:/nc_app_${BACKEND_APP_ID}_data" \
+            -v "${RUNNER_TEMP}/avs-models/models:/avs-models:ro" \
+            --entrypoint sh "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${CURR_VERSION}" \
+            -c 'cp -R /avs-models "$1/models" && find "$1/models" -name "*.verified.json" -delete && echo "model files: $(find "$1/models" -type f | wc -l)"' \
+            sh "/nc_app_${BACKEND_APP_ID}_data"
+
+      # The old container must never run into the maintenance window of occ
+      # upgrade: a 0.2.0 capture that reads the 503 of the maintenance judges
+      # it with the old code (the code unavailable exists only from 0.3.0 on)
+      # and hides the file at once; exactly that turned the run of e6c0de9
+      # red. docker stop instead of app_api:app:disable, so the enable flow of
+      # app_api:app:update stays the one of every run. The work stock is
+      # emptied while nobody can claim it: these snapshots compare the
+      # standing hits across the update and nothing else; the pipeline itself
+      # is covered by the main legs.
+      - name: Stop the old container before the maintenance window
+        run: |
+          docker stop "${EXAPP_CONTAINER}"
+          python3 - data/owncloud.db <<'PY'
+          import sqlite3
+          import sys
+
+          db = sqlite3.connect(sys.argv[1])
+          gone = db.execute("DELETE FROM oc_avs_queue").rowcount
+          db.commit()
+          print(f"emptied oc_avs_queue, {gone} rows")
+          PY
+
+      # The PHP half: the directory goes and the new one takes its place, the
+      # way Installer::updateAppstoreApp does it. occ upgrade then runs the app
+      # update, because OC_Util::needUpgrade answers true for an enabled app
+      # whose code is newer than its installed_version (stable33 to stable35).
+      # Exit 0 is success; 3 is accepted as in Findling, but installed_version
+      # has to move either way, otherwise "nothing to do" would pass as an
+      # update.
+      - name: Update the PHP app with occ upgrade
+        run: |
+          rm -rf apps/audio_video_search
+          cp -R curr/php apps/audio_video_search
+          status=0
+          ./occ upgrade || status=$?
+          case "${status}" in
+            0|3) echo "occ upgrade answered ${status}" ;;
+            *) echo "occ upgrade answered ${status}, which is neither success nor up to date"; exit 1 ;;
+          esac
+          installed=$(./occ config:app:get audio_video_search installed_version)
+          echo "installed_version ${installed}"
+          test "${installed}" = "${CURR_VERSION}"
+
+      - name: Update the ExApp with app_api:app:update
+        run: |
+          timeout 600 ./occ app_api:app:update audio_video_search_backend \
+            --info-xml "${RUNNER_TEMP}/info-curr.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          image=$(docker inspect --format '{{.Config.Image}}' "${container}")
+          echo "${container} runs ${image}"
+          case "${image}" in
+            *":${CURR_VERSION}") ;;
+            *) echo "the updated container does not run the image of ${CURR_VERSION}"; exit 1 ;;
+          esac
+
+      - name: After the update, state.db, test results and schema survived
+        run: |
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o status-after.json -w '%{http_code}' -u "admin:${ADMIN_PASS}" \
+              "http://localhost:8090/exapps/${BACKEND_APP_ID}/status" || true)
+            [ "${code}" = "200" ] && break
+            sleep 2
+          done
+          cat status-after.json; echo
+          jq -e --arg v "${CURR_VERSION}" --argjson n "${SAMPLE_COUNT}" \
+            '.appVersion == $v and .schemaVersion == 4 and .sampleCount == $n and .companion == "ok"' status-after.json
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          created=$(docker volume inspect --format '{{.CreatedAt}}' "${volume}")
+          inode=$(docker exec "${EXAPP_CONTAINER}" sh -c 'stat -c %i "${APP_PERSISTENT_STORAGE}/state.db"')
+          echo "volume created ${created} (before ${VOLUME_CREATED}), state.db inode ${inode} (before ${STATE_DB_INODE})"
+          test "${created}" = "${VOLUME_CREATED}"
+          test "${inode}" = "${STATE_DB_INODE}"
+          bash app-src/ci/admin-state.sh state-after.json
+          jq -e --arg v "${CURR_VERSION}" '.state == "ok" and .own == $v and .backend == $v' state-after.json
+          curl -sfS -o search-after.json -u "alice:${ALICE_PASS}" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NC_URL}/ocs/v2.php/search/providers/${APP_ID}/search?term=Audiosuche"
+          jq -c '[.ocs.data.entries[].attributes.fileId] | sort' search-after.json > hits-after.json
+          echo "hits before $(cat hits-before.json), after $(cat hits-after.json)"
+          cmp hits-before.json hits-after.json
+
+      # /init of 0.3.0 found both models in the volume and fetched nothing:
+      # AppAPI holds init 100, and the log of the updated container has a
+      # "model procure" line with outcome present for each model, none with
+      # another outcome, and "models ready" (as in the job deploy-harp).
+      - name: After the update, the models came from the volume
+        run: |
+          set -euo pipefail
+          status=$(sqlite3 data/owncloud.db "SELECT status FROM oc_ex_apps WHERE appid='${BACKEND_APP_ID}'")
+          echo "AppAPI status ${status}"
+          jq -e '.init == 100' <<< "${status}"
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}"
+          docker logs "${container}" 2>&1 \
+            | jq -cR 'fromjson? | select(.msg == "model procure" or .msg == "models ready")' > procure-lines.json
+          cat procure-lines.json
+          for model in silero parakeet; do
+            jq -e -s --arg m "${model}" 'any(.[]; .msg == "model procure" and .model == $m and .outcome == "present")' procure-lines.json
+          done
+          if jq -e -s 'any(.[]; .msg == "model procure" and .outcome != "present")' procure-lines.json; then
+            echo "a model was fetched or failed at /init of 0.3.0 although it lay in the volume"
+            exit 1
+          fi
+          jq -e -s 'any(.[]; .msg == "models ready")' procure-lines.json
+
+      # The schema steps themselves (plans 02-21, 03-19 and 04-05): state.db at
+      # 4 in the same file with the table preview_job and the columns of step
+      # 4 (words_de/en/fr in preview_job, language in media), the sample of 0.2.0 still in
+      # sample_ref with its transcript (current), no row of file_ref left with
+      # state sample or a storage_id that is not a number, the tables of the
+      # PHP migrations in place with the column origin in oc_avs_queue, and
+      # occ status answers with JSON that carries byPreview.
+      - name: After the update, the migration of both halves ran
+        run: |
+          docker exec -i "${EXAPP_CONTAINER}" python - "${FILEID_WEBM}" <<'PY'
+          import os, sqlite3, sys
+          db = sqlite3.connect(os.path.join(os.environ["APP_PERSISTENT_STORAGE"], "state.db"))
+          file_id = int(sys.argv[1])
+          version = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+          tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+          sample = db.execute(
+              "SELECT s.media_id, c.version_id FROM sample_ref s JOIN current c ON c.media_id = s.media_id"
+              " WHERE s.file_id = ?", (file_id,)).fetchone()
+          left = db.execute(
+              "SELECT COUNT(*) FROM file_ref WHERE state = 'sample' OR typeof(storage_id) <> 'integer'").fetchone()
+          preview_columns = {row[1] for row in db.execute("PRAGMA table_info(preview_job)")}
+          media_columns = {row[1] for row in db.execute("PRAGMA table_info(media)")}
+          step4 = {"words_de", "words_en", "words_fr"} <= preview_columns and "language" in media_columns
+          print(f"schema_version {version}, preview_job {'preview_job' in tables}, columns of step 4 {step4}, sample_ref with transcript {sample}, old rows left {left}")
+          sys.exit(0 if version == ("4",) and "preview_job" in tables and step4 and sample is not None and left == (0,) else 1)
+          PY
+          python3 - data/owncloud.db <<'PY'
+          import sqlite3, sys
+          db = sqlite3.connect(sys.argv[1])
+          names = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+          wanted = ("oc_avs_queue", "oc_avs_crawl", "oc_avs_storage")
+          columns = [row[1] for row in db.execute("PRAGMA table_info(oc_avs_queue)")]
+          print({name: name in names for name in wanted}, f"oc_avs_queue columns {columns}")
+          sys.exit(0 if all(name in names for name in wanted) and "origin" in columns else 1)
+          PY
+          ./occ audio_video_search:status --json > occ-status-after.json
+          cat occ-status-after.json; echo
+          jq -e 'has("queue") and has("crawl") and has("byPreview")' occ-status-after.json
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" logs/ 2>/dev/null || true
+          cp status-*.json state-*.json search-*.json hits-*.json occ-status-*.json procure-lines.json logs/ 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-logs-${{ matrix.server-version }}-${{ matrix.runner }}
           path: logs/
           retention-days: 7

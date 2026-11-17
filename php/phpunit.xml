@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	The unit suite of the PHP app, in Findling's strict posture: a warning, a
+	notice or a risky verdict ends the run. failOnDeprecation is not set, because
+	the suite runs inside the autoload space of nextcloud/server and a server
+	deprecation is nothing this repository can fix. failOnEmptyTestSuite keeps a
+	run that executes nothing from reporting success; php.yml checks the executed
+	test count on top of it.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+	bootstrap="tests/bootstrap.php"
+	cacheDirectory=".phpunit.cache"
+	colors="true"
+	executionOrder="depends,defects"
+	beStrictAboutOutputDuringTests="true"
+	beStrictAboutCoverageMetadata="false"
+	failOnRisky="true"
+	failOnWarning="true"
+	failOnNotice="true"
+	failOnEmptyTestSuite="true"
+	displayDetailsOnTestsThatTriggerWarnings="true"
+	displayDetailsOnTestsThatTriggerNotices="true"
+	displayDetailsOnTestsThatTriggerErrors="true"
+	displayDetailsOnIncompleteTests="true"
+	displayDetailsOnSkippedTests="true">
+	<testsuites>
+		<testsuite name="unit">
+			<directory>tests/Unit</directory>
+		</testsuite>
+	</testsuites>
+	<source>
+		<include>
+			<directory suffix=".php">lib</directory>
+		</include>
+	</source>
+</phpunit>

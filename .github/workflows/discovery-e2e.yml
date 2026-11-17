@@ -1,0 +1,788 @@
+name: Discovery acceptance
+
+# The acceptance test of phase 2 (D-02-07): the whole discovery path on a real
+# Samba server, compared against a count that never runs code of this app.
+# Findling #25 passed three times because only the single parts were tested;
+# this job tests how they play together.
+#
+# Two jobs:
+#   discovery     a throwaway Nextcloud with AppAPI, HaRP, the PHP app and the
+#                 backend image of this commit, Samba on the runner, an S3
+#                 server, a team folder with ACL, shares and reshares,
+#                 files_accesscontrol, exclusions set before the first run, and
+#                 then one phase after the other (ci/discovery/topology.sh for
+#                 the operations, truth/compare/controls for the verdict).
+#                 One leg per push, the six legs of deploy-harp.yml by hand
+#                 with legs=all.
+#   leak-control  the positive control of the read proof (D-02-01a, D-02-10):
+#                 an image built out of a copy of backend/ with
+#                 ci/leak-control/read-proof-off.patch applied, pushed into the
+#                 local registry of the runner only. It has to show the leak
+#                 the main legs must never show. The image never leaves the
+#                 runner: no registry login, no package permission, no saved
+#                 image, no artifact of it and no cache export.
+#
+# The job stays red until the discovery exists (MVP: the failing acceptance
+# test comes first, plan 02-01). The truth, the ledger, the comparison and the
+# controls (plan 02-04) live in ci/discovery: truth.sh never runs code of this
+# app, compare.sh tests itself before it judges, and every statement about the
+# access log or Samba has a positive control.
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: 'one leg (stable33 on amd64) or all six legs'
+        required: false
+        default: 'one'
+        type: choice
+        options:
+          - one
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discovery-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ID: audio_video_search
+  BACKEND_APP_ID: audio_video_search_backend
+  HARP_IMAGE: ghcr.io/nextcloud/nextcloud-appapi-harp@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39
+  # MinIO publishes no community image any more (Docker Hub and quay.io refuse
+  # an anonymous pull, checked 2026-11-07), so the S3 mount runs against
+  # SeaweedFS 4.52 and its S3 gateway, pinned by index digest (amd64 and arm64).
+  S3_IMAGE: chrislusf/seaweedfs@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
+  S3_PORT: '8333'
+  # weed server starts a volume server on 8080 by default, the port of the
+  # Nextcloud server (push 2 of phase 2: bind: address already in use). It gets
+  # a port of its own; the gate keeps it apart from every other port here.
+  S3_VOLUME_PORT: '8380'
+  LOCAL_REGISTRY: 'localhost:5000'
+  LOCAL_IMAGE_TAG: 'citest'
+  NC_URL: 'http://localhost:8080'
+  # Test-only values of a throwaway instance that dies with the runner. No
+  # repository secret enters this workflow (T-02-04).
+  ADMIN_PASS: 'avs-ci-admin-2026-11'
+  ANA_PASS: 'avs-ci-ana-2026-11'
+  BEN_PASS: 'avs-ci-ben-2026-11'
+  CEM_PASS: 'avs-ci-cem-2026-11'
+  DAN_PASS: 'avs-ci-dan-2026-11'
+  EVA_PASS: 'avs-ci-eva-2026-11'
+  FRITZ_PASS: 'avs-ci-fritz-2026-11'
+  S3_ACCESS_KEY: 'avsciaccess202611'
+  S3_SECRET_KEY: 'avs-ci-s3-secret-2026-11'
+
+jobs:
+  discovery:
+    name: discovery ${{ matrix.server-version }} ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # An estimate until the first green run measures it: image build, HaRP,
+    # Samba, the topology and one wait per phase (each up to 900 s). Plus 30
+    # minutes for phase 3 (plan 03-17): about 670 MB of models on a cache miss,
+    # and the preview of every test medium and of the speech clip. Plan 03-15
+    # measured 3.5 to 7.4 s per file with the start of the engine child on a
+    # laptop; about 40 media files at twice that on a runner are 10 minutes,
+    # the rest is reserve for the waits of the phase search-parity.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        # legs=all: the six legs of deploy-harp.yml; otherwise one leg.
+        include: ${{ fromJSON(inputs.legs == 'all' && '[{"server-version":"stable33","php-version":"8.2","runner":"ubuntu-24.04"},{"server-version":"stable33","php-version":"8.2","runner":"ubuntu-24.04-arm"},{"server-version":"stable34","php-version":"8.2","runner":"ubuntu-24.04"},{"server-version":"stable34","php-version":"8.2","runner":"ubuntu-24.04-arm"},{"server-version":"stable35","php-version":"8.3","runner":"ubuntu-24.04"},{"server-version":"stable35","php-version":"8.3","runner":"ubuntu-24.04-arm"}]' || '[{"server-version":"stable33","php-version":"8.2","runner":"ubuntu-24.04"}]') }}
+    env:
+      SERVER_VERSION: ${{ matrix.server-version }}
+      IDS_ENV: ${{ github.workspace }}/app-src/ci/discovery/ids.env
+    steps:
+      # The server checkout comes first: actions/checkout empties its target.
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server-version }}
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: ${{ matrix.server-version }}
+          path: apps/app_api
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Samba, smbclient, sqlite3, jq and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y samba smbclient sqlite3 jq ffmpeg
+
+      # The built-in server directly, not through the serve script of composer: it
+      # sets PHP_CLI_SERVER_WORKERS itself and passes no ini option. A
+      # download of a file Samba denies can hang without an answer (Findling
+      # A6); eight workers and a 120 s limit keep the server answering
+      # (T-02-03). The server log is the access log the comparison counts.
+      - name: Install Nextcloud in debug mode and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          ./occ config:system:set overwrite.cli.url --value="${NC_URL}"
+          ./occ config:system:set debug --value=true --type=boolean
+          # Info lines too: SchedulerJob, ExclusionClearJob and the crawl planning log on info.
+          ./occ log:manage --level=info
+          ./occ config:system:set skeletondirectory --value=''
+          PHP_CLI_SERVER_WORKERS=8 php -d max_execution_time=120 -S 0.0.0.0:8080 -t ./ \
+            > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
+            sleep 2
+          done
+          curl -sf "${NC_URL}/status.php"
+          ./occ app:enable -vvv -f app_api
+
+      - name: Enable files_external, files_accesscontrol and the PHP app
+        run: |
+          ./occ app:enable files_external
+          ./occ app:install files_accesscontrol || ./occ app:enable files_accesscontrol
+          ./occ app:list | grep -q 'files_accesscontrol'
+          mv app-src/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          ./occ app:list | grep -A1 "${APP_ID}"
+
+      # Background jobs every 15 s instead of the web cron of a quiet instance:
+      # the first crawl, the rescan and the exclusion jobs run in cron. Only
+      # after the apps are enabled: a cron.php that begins earlier cannot build
+      # the jobs of the app and removes them from the job list (push 7).
+      - name: Run cron every 15 seconds
+        run: |
+          ./occ background:cron
+          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
+
+      # A red step when the S3 server does not start, never a skipped one.
+      - name: Start the S3 server
+        run: |
+          mkdir -p "${RUNNER_TEMP}/s3"
+          jq -n --arg k "${S3_ACCESS_KEY}" --arg s "${S3_SECRET_KEY}" \
+            '{identities: [{name: "avs", credentials: [{accessKey: $k, secretKey: $s}],
+              actions: ["Admin", "Read", "Write", "List", "Tagging"]}]}' > "${RUNNER_TEMP}/s3/s3.json"
+          docker run -d --name avs-s3 --net host \
+            -v "${RUNNER_TEMP}/s3:/etc/avs-s3:ro" \
+            "${S3_IMAGE}" server -dir=/data -volume.port="${S3_VOLUME_PORT}"             -s3 -s3.port="${S3_PORT}" -s3.config=/etc/avs-s3/s3.json
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${S3_PORT}/" || true)
+            case "${code}" in 200|403) exit 0 ;; esac
+            sleep 2
+          done
+          docker logs avs-s3 || true
+          exit 1
+
+      - name: Make the test media
+        run: bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Samba share with per user views
+        env:
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: bash app-src/ci/discovery/topology.sh samba
+
+      # Without it the run is invalid: ana reads gesperrt.webm, ben is refused
+      # at the Samba server itself (plan 02-04).
+      - name: Samba positive control
+        run: bash app-src/ci/discovery/controls.sh samba
+
+      # Users, mounts, team folder, shares, the access control rule and the
+      # exclusions, all before the backend exists (D-02-05).
+      - name: Topology part A, before the backend is registered
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: bash app-src/ci/discovery/topology.sh part-a
+
+      # The main legs build the code as checked out: a patched backend/ here
+      # would hide the leak the control leg has to show (T-02-02).
+      - name: Start a local registry and push the image of this commit
+        run: |
+          git -C app-src diff --quiet -- backend/
+          test -z "$(git -C app-src status --porcelain -- backend/)"
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" ./app-src/backend
+          docker push "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}"
+
+      # The speech models and the speech clips of phase 3 (plan 03-17), with the
+      # cache keys of python.yml: MODEL_SHA256 of models/catalog.py; the member
+      # sha256 of ci/media/fetch_speech.py plus the sha256 of the ffmpeg that
+      # turned them into WAV (here the one of the runner). Both files only hold
+      # constants and stdlib imports, so the python3 of the runner reads them.
+      - name: Cache keys of the speech models and clips
+        id: speech-keys
+        run: |
+          set -euo pipefail
+          MODELS_KEY="avs-models-$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["MODEL_SHA256"])' app-src/backend/src/audio_video_search_backend/models/catalog.py)"
+          FFMPEG_SHA256="$(sha256sum "$(command -v ffmpeg)" | cut -c1-64)"
+          SPEECH_KEY="avs-speech-$(python3 -I -c 'import hashlib, runpy, sys; m = runpy.run_path(sys.argv[1]); print(hashlib.sha256(",".join([*sorted(c.member_sha256 for c in m["CLIPS"]), sys.argv[2]]).encode()).hexdigest())' app-src/ci/media/fetch_speech.py "$FFMPEG_SHA256")"
+          echo "models=$MODELS_KEY" >> "$GITHUB_OUTPUT"
+          echo "speech=$SPEECH_KEY" >> "$GITHUB_OUTPUT"
+
+      # A cache entry is only a place to keep the files (T-03-59): the verdict
+      # files of procure are not cached, so the container hashes every model
+      # file again when /init checks them.
+      - name: Restore the speech models
+        id: models-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/avs-models
+            !${{ runner.temp }}/avs-models/**/*.verified.json
+          key: ${{ steps.speech-keys.outputs.models }}
+
+      # The downloader of the image of this commit, the one /init would run
+      # (fixed URL, host allowlist, fixed sha256), as the user of the runner so
+      # the cache can keep what it wrote.
+      - name: Fetch the speech models on a cache miss
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/avs-models"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "${RUNNER_TEMP}/avs-models:/avs-models" \
+            --entrypoint /app/.venv/bin/python \
+            "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -m audio_video_search_backend.models.procure --root /avs-models
+
+      - name: Restore the speech clips
+        id: speech-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/avs-speech
+          key: ${{ steps.speech-keys.outputs.speech }}
+
+      - name: Fetch the speech clips on a cache miss
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: python3 -I app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+
+      # The member sha256 binds (fetch_speech.py checks it at the fetch); the WAV
+      # sha256 depends on the ffmpeg build and only warns, as in python.yml. The
+      # runner context is not allowed in a job env, so the paths go through
+      # GITHUB_ENV and hold for every later step of the job.
+      - name: Check the speech clips and hand them to the phases
+        run: |
+          set -euo pipefail
+          python3 -I -c 'import hashlib, pathlib, runpy, sys; m = runpy.run_path(sys.argv[1]); d = pathlib.Path(sys.argv[2]); [print(f"::warning::{c.name} wav sha256 {h} differs from {c.wav_sha256} (other ffmpeg build)") for c in m["CLIPS"] if (h := hashlib.sha256((d / c.name).read_bytes()).hexdigest()) != c.wav_sha256]' app-src/ci/media/fetch_speech.py "${RUNNER_TEMP}/avs-speech"
+          WORD="$(python3 -I -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["EXPECTED_WORD"])' app-src/ci/media/fetch_speech.py)"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_de.wav"
+          test -s "${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+          {
+            echo "AVS_SPEECH_DE=${RUNNER_TEMP}/avs-speech/speech_de.wav"
+            echo "AVS_SPEECH_TR=${RUNNER_TEMP}/avs-speech/speech_tr.wav"
+            echo "AVS_SPEECH_WORD=${WORD}"
+          } >> "$GITHUB_ENV"
+
+      # The air gap way of plan 03-07: the files lie in the persistent storage
+      # before the app is installed. HaRP reuses an existing volume of this name
+      # at create (see the upgrade job of deploy-harp.yml), and a fresh named
+      # volume takes over owner and mode of the directory of the image, so the
+      # copy runs as uid 10001 like the container. No verdict file goes in.
+      - name: Put the speech models into the volume of the ExApp
+        run: |
+          set -euo pipefail
+          volume="nc_app_${BACKEND_APP_ID}_data"
+          docker volume create "${volume}"
+          docker run --rm --user 10001:10001 \
+            -v "${volume}:/nc_app_${BACKEND_APP_ID}_data" \
+            -v "${RUNNER_TEMP}/avs-models/models:/avs-models:ro" \
+            --entrypoint sh "${LOCAL_REGISTRY}/${BACKEND_APP_ID}:${LOCAL_IMAGE_TAG}" \
+            -c 'cp -R /avs-models "$1/models" && find "$1/models" -name "*.verified.json" -delete && echo "model files: $(find "$1/models" -type f | wc -l)"' \
+            sh "/nc_app_${BACKEND_APP_ID}_data"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Register the HaRP daemon and install the ExApp through it
+        run: |
+          sed -e "s|<registry>[^<]*</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+              -e "s|<image>[^<]*</image>|<image>${BACKEND_APP_ID}</image>|" \
+              -e "s|<image-tag>[^<]*</image-tag>|<image-tag>${LOCAL_IMAGE_TAG}</image-tag>|" \
+              app-src/backend/appinfo/info.xml > "${RUNNER_TEMP}/info-citest.xml"
+          grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-citest.xml"
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-citest.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      # /init found both models in the volume and fetched nothing: AppAPI holds
+      # init 100, and the log of the container has a "model procure" line with
+      # outcome present for each model, none with procured, and "models ready".
+      - name: The models came from the volume, not from the network
+        run: |
+          set -euo pipefail
+          status=$(sqlite3 data/owncloud.db "SELECT status FROM oc_ex_apps WHERE appid='${BACKEND_APP_ID}'")
+          echo "AppAPI status ${status}"
+          jq -e '.init == 100' <<< "${status}"
+          docker logs "${EXAPP_CONTAINER}" 2>&1 \
+            | jq -cR 'fromjson? | select(.msg == "model procure" or .msg == "models ready")' > procure-lines.json
+          cat procure-lines.json
+          for model in silero parakeet; do
+            jq -e -s --arg m "${model}" 'any(.[]; .msg == "model procure" and .model == $m and .outcome == "present")' procure-lines.json
+          done
+          if jq -e -s 'any(.[]; .msg == "model procure" and .outcome != "present")' procure-lines.json; then
+            echo "a model was fetched or failed at /init although it lay in the volume"
+            exit 1
+          fi
+          jq -e -s 'any(.[]; .msg == "models ready")' procure-lines.json
+
+      # The last step of the setup. The phases run only after it succeeded:
+      # without the instance every phase would only wait out its limit.
+      - name: Topology part B, after the backend is registered
+        id: setup
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: |
+          bash app-src/ci/discovery/topology.sh part-b
+          cat "${IDS_ENV}" >> "${GITHUB_ENV}"
+
+      # The checks have to be able to fail: three shifted expectations and an
+      # access log line injected for a never fetched file, each on its own.
+      - name: Self tests of the comparison
+        env:
+          OCC: ./occ
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
+        run: bash app-src/ci/discovery/compare.sh --self-test
+
+      - name: Wait until the work stock is complete
+        env:
+          OCC: ./occ
+        run: bash app-src/ci/discovery/compare.sh wait
+
+      # Without a line for a file the backend certainly fetched, every "never
+      # fetched" and "no new download" of the phases is worthless.
+      - name: Access log positive control
+        env:
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
+        run: bash app-src/ci/discovery/controls.sh access-log
+
+      # One phase after the other: test results and controls, snapshot,
+      # operation, wait, truth, comparison. A FAIL stops nothing: every phase
+      # judges only its own checks against the truth of the current file
+      # system, and the last step turns the list into the verdict. Each wait is
+      # bounded (WAIT_LIMIT) and the step as a whole too, so the verdict and the
+      # logs always come before the limit of the job.
+      # With the models in the volume the preview fetches every test medium
+      # through the gateway. The phases count gateway lines per file id, so they
+      # start only after that came to rest (bounded, never a verdict).
+      - name: Let the preview of the test media come to rest
+        env:
+          OCC: ./occ
+        run: bash app-src/ci/discovery/parity.sh settle
+
+      - name: Run the phases
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 110
+        env:
+          WAIT_LIMIT: '300'
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
+        run: |
+          set +e
+          d=app-src/ci/discovery
+          : > results.txt
+          id_of() { sed -n "s/^$1=//p" "${IDS_ENV}" | tail -n 1; }
+          ./occ config:app:set audio_video_search sample_visible --value=true --type=boolean
+          for phase in initial read-proof shares access-control upload overwrite copy rename tag move-cross \
+            trash restore exclude-user-after exclude-storage-after exclude-after reprove vanish delete-user \
+            reattach foreign-change search-parity play-leak; do
+            echo "::group::phase ${phase}"
+            ok=1
+            # play-leak (plan 03-18b, D-03-24) has a verdict of its own: the
+            # leak probe P12 on the real play page (playpage.sh), never active
+            # (search-parity's Samba copy) and revoked (pages saved in reprove).
+            # A few curl calls only, so the deadlines stay as they are.
+            if [ "${phase}" = play-leak ]; then
+              bash "${d}/playpage.sh" check | tee "compare-${phase}.txt"
+              grep -E '^FAIL |^P12 [^ ]+ (FAIL|INVALID) |SELF-TEST FAILED' "compare-${phase}.txt" >> results.txt
+              if [ "${ok}" = 1 ] && grep -qx 'PLAY CONTROL SHOWED THE DIFF p12a' "compare-${phase}.txt" \
+                && grep -qx 'PLAY CONTROL SHOWED THE DIFF p12b' "compare-${phase}.txt" \
+                && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
+                echo "PHASE PASS ${phase}" >> results.txt
+              else
+                echo "PHASE FAIL ${phase}" >> results.txt
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+            # search-parity (plan 03-17) has a verdict of its own: the hits of the
+            # search against WebDAV (parity.sh), not the counts of compare.sh.
+            # The clip lands, the preview and the index finish, the positive
+            # controls show the shared and the trash copy as hits, then the share
+            # is revoked and the copy trashed, and only then the verdict.
+            if [ "${phase}" = search-parity ]; then
+              if ! { bash "${d}/parity.sh" baseline \
+                && bash "${d}/topology.sh" parity_place \
+                && ./occ audio_video_search:rescan --storage="$(id_of STORAGE_SMB_ANA)"; }; then
+                echo "FAIL ${phase}:operation" >> results.txt
+                ok=0
+              fi
+              bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
+              # The step that failed, as parity.sh names it (wait_preview or
+              # wait_index); a failure without such a line is said as well.
+              if ! bash "${d}/parity.sh" wait > "wait-${phase}.txt"; then
+                grep '^FAIL ' "wait-${phase}.txt" >> results.txt \
+                  || echo "FAIL ${phase}:wait_without_reason" >> results.txt
+                ok=0
+              fi
+              cat "wait-${phase}.txt"
+              bash "${d}/parity.sh" before | tee "before-${phase}.txt"
+              grep '^FAIL ' "before-${phase}.txt" >> results.txt && ok=0
+              bash "${d}/topology.sh" parity_revoke || { echo "FAIL ${phase}:revoke" >> results.txt; ok=0; }
+              bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
+              bash "${d}/parity.sh" check | tee "compare-${phase}.txt"
+              grep '^FAIL \|SELF-TEST FAILED' "compare-${phase}.txt" >> results.txt
+              if [ "${ok}" = 1 ] && grep -qx 'PARITY CONTROL SHOWED THE DIFF' "compare-${phase}.txt" \
+                && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
+                echo "PHASE PASS ${phase}" >> results.txt
+              else
+                echo "PHASE FAIL ${phase}" >> results.txt
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+            bash "${d}/compare.sh" prepare "${phase}" | tee "prepare-${phase}.txt" || ok=0
+            grep '^FAIL ' "prepare-${phase}.txt" >> results.txt
+            bash "${d}/compare.sh" mark "${phase}" || ok=0
+            # P12 revoked (play-leak): cem's play page while his reference is
+            # still active; this never changes the verdict of reprove.
+            if [ "${phase}" = reprove ]; then
+              bash "${d}/playpage.sh" before-revoke | tee play-before-revoke.txt
+            fi
+            case "${phase}" in
+              initial | read-proof | shares) true ;;
+              access-control) bash "${d}/topology.sh" access_control ;;
+              upload)
+                bash "${d}/topology.sh" upload_new \
+                  && bash "${d}/compare.sh" appear "$(id_of UPLOAD_ID)" "$(id_of UPLOAD_AT)" 300 ;;
+              overwrite) bash "${d}/topology.sh" overwrite ;;
+              copy) bash "${d}/topology.sh" copy_in_home ;;
+              rename) bash "${d}/topology.sh" rename_in_home ;;
+              tag) bash "${d}/topology.sh" tag_file ;;
+              move-cross) bash "${d}/topology.sh" move_home_to_team ;;
+              trash) bash "${d}/topology.sh" trash_file ;;
+              restore) bash "${d}/topology.sh" restore_file ;;
+              exclude-user-after) bash "${d}/topology.sh" exclude_user_after && bash "${d}/compare.sh" exclusions ;;
+              exclude-storage-after) bash "${d}/topology.sh" exclude_storage_after && bash "${d}/compare.sh" exclusions ;;
+              exclude-after) bash "${d}/topology.sh" exclude_after && bash "${d}/compare.sh" exclusions ;;
+              reprove) bash "${d}/topology.sh" revoke_cem && ./occ audio_video_search:reconcile --reprove ;;
+              vanish) bash "${d}/topology.sh" vanish_cem && ./occ audio_video_search:reconcile ;;
+              delete-user) bash "${d}/topology.sh" delete_dan && ./occ audio_video_search:reconcile ;;
+              reattach) bash "${d}/topology.sh" reattach ;;
+              foreign-change)
+                bash "${d}/topology.sh" foreign_change \
+                  && ./occ audio_video_search:rescan --storage="$(id_of STORAGE_SMB_ANA)" ;;
+            esac
+            [ $? = 0 ] || { echo "FAIL ${phase}:operation" >> results.txt; ok=0; }
+            bash "${d}/compare.sh" wait || { echo "FAIL ${phase}:wait" >> results.txt; ok=0; }
+            bash "${d}/truth.sh" "${phase}" || { echo "FAIL ${phase}:truth" >> results.txt; ok=0; }
+            bash "${d}/compare.sh" "${phase}" | tee "compare-${phase}.txt"
+            grep '^FAIL ' "compare-${phase}.txt" >> results.txt
+            # P12 revoked: the same page after the revocation, judged in play-leak.
+            if [ "${phase}" = reprove ]; then
+              bash "${d}/playpage.sh" after-revoke | tee play-after-revoke.txt
+            fi
+            if [ "${ok}" = 1 ] && grep -qx "PHASE PASS ${phase}" "compare-${phase}.txt"; then
+              echo "PHASE PASS ${phase}" >> results.txt
+            else
+              echo "PHASE FAIL ${phase}" >> results.txt
+            fi
+            echo "::endgroup::"
+          done
+          exit 0
+
+      - name: The verdict of all phases
+        if: always()
+        run: |
+          test -f results.txt || { echo "no results, the phases did not run"; exit 1; }
+          cat results.txt
+          passed=$(grep -c '^PHASE PASS ' results.txt || true)
+          echo "${passed} of 22 phases passed"
+          ! grep -q '^PHASE FAIL ' results.txt && [ "${passed}" = 22 ]
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          docker logs avs-s3 > logs/s3.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          # A copy of state.db of the throwaway instance, for the review of a red run.
+          if [ -n "${EXAPP_CONTAINER:-}" ]; then
+            db=$(docker exec "${EXAPP_CONTAINER}" sh -c 'printf %s "${APP_PERSISTENT_STORAGE}/state.db"' || true)
+            [ -n "${db}" ] && docker cp "${EXAPP_CONTAINER}:${db}" logs/state.db || true
+          fi
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
+          cp app-src/ci/discovery/ids.env logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json truth-*.json prepare-*.txt compare-*.txt results.txt procure-lines.json before-*.txt wait-*.txt play-*.txt play-*.html logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/avs-discovery/ledger.tsv" logs/ 2>/dev/null || true
+          sudo tail -n 300 /var/log/samba/log.smbd > logs/smbd.log 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: discovery-logs-${{ matrix.server-version }}-${{ matrix.runner }}
+          path: logs/
+          retention-days: 7
+
+  leak-control:
+    name: leak-control
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      SERVER_VERSION: stable33
+      IDS_ENV: ${{ github.workspace }}/app-src/ci/discovery/ids.env
+      LEAK_IMAGE: localhost:5000/audio_video_search_backend:leak-control
+    steps:
+      - name: Check out nextcloud/server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: stable33
+          submodules: recursive
+
+      - name: Check out nextcloud/app_api
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/app_api
+          ref: stable33
+          path: apps/app_api
+
+      - name: Check out this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: app-src
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.2'
+          extensions: mbstring, iconv, fileinfo, intl, sqlite, pdo_sqlite, gd, zip
+          coverage: none
+
+      - name: Install Samba, smbclient, sqlite3, jq and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y samba smbclient sqlite3 jq ffmpeg
+
+      - name: Install Nextcloud in debug mode and enable AppAPI
+        run: |
+          mkdir data
+          ./occ maintenance:install --database=sqlite --admin-user admin --admin-pass "${ADMIN_PASS}"
+          ./occ config:system:set trusted_domains 1 --value=127.0.0.1
+          ./occ config:system:set trusted_domains 2 --value=localhost
+          ./occ config:system:set overwrite.cli.url --value="${NC_URL}"
+          ./occ config:system:set debug --value=true --type=boolean
+          # Info lines too: SchedulerJob, ExclusionClearJob and the crawl planning log on info.
+          ./occ log:manage --level=info
+          ./occ config:system:set skeletondirectory --value=''
+          PHP_CLI_SERVER_WORKERS=8 php -d max_execution_time=120 -S 0.0.0.0:8080 -t ./ \
+            > "${RUNNER_TEMP}/php-server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf "${NC_URL}/status.php" > /dev/null && break
+            sleep 2
+          done
+          curl -sf "${NC_URL}/status.php"
+          ./occ app:enable -vvv -f app_api
+          ./occ app:enable files_external
+          mv app-src/php apps/audio_video_search
+          ./occ app:enable audio_video_search
+          # Cron only after the apps: an earlier cron.php removes their jobs (push 7).
+          ./occ background:cron
+          (while true; do php cron.php; sleep 15; done) > "${RUNNER_TEMP}/cron.log" 2>&1 &
+
+      # The patch goes onto a copy under RUNNER_TEMP, never onto the checkout;
+      # backend/ of the checkout has to be clean afterwards (D-02-10). Only
+      # backend/ can be asked: the PHP app was moved out of the checkout above.
+      # The runner context exists only inside steps, so LEAK_ROOT is set here.
+      - name: Build the control image out of a patched copy
+        env:
+          LEAK_ROOT: ${{ runner.temp }}/leak-backend
+        run: |
+          mkdir -p "${LEAK_ROOT}"
+          cp -a app-src/backend "${LEAK_ROOT}/backend"
+          git -C "${LEAK_ROOT}" apply --check "${GITHUB_WORKSPACE}/app-src/ci/leak-control/read-proof-off.patch"
+          git -C "${LEAK_ROOT}" apply "${GITHUB_WORKSPACE}/app-src/ci/leak-control/read-proof-off.patch"
+          git -C app-src diff --quiet -- backend/
+          docker run -d -p 5000:5000 --name registry registry:2
+          docker build -t "${LEAK_IMAGE}" "${LEAK_ROOT}/backend"
+          docker push "${LEAK_IMAGE}"
+
+      - name: Start HaRP
+        run: |
+          harp_key=$(openssl rand -hex 16)
+          echo "::add-mask::${harp_key}"
+          echo "HARP_SHARED_KEY=${harp_key}" >> "${GITHUB_ENV}"
+          mkdir -p "${RUNNER_TEMP}/certs"
+          docker run -d --name appapi-harp --net host \
+            -e HP_SHARED_KEY="${harp_key}" \
+            -e NC_INSTANCE_URL="${NC_URL}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/certs:/certs" \
+            "${HARP_IMAGE}"
+          for _ in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+              -H "harp-shared-key: ${harp_key}" -H 'docker-engine-port: 24000' \
+              http://localhost:8780/exapps/app_api/v1.44/_ping || true)
+            [ "${code}" = "200" ] && exit 0
+            sleep 2
+          done
+          docker logs appapi-harp || true
+          exit 1
+
+      - name: Put one address in front of Nextcloud and HaRP
+        run: |
+          cat > "${RUNNER_TEMP}/exapps-proxy.conf" <<'CONF'
+          server {
+            listen 8090;
+            location /exapps/ {
+              proxy_pass http://127.0.0.1:8780;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+            location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+            }
+          }
+          CONF
+          docker run -d --name exapps-proxy --net host \
+            -v "${RUNNER_TEMP}/exapps-proxy.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8090/status.php > /dev/null && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Make the test media
+        run: bash app-src/ci/make-testmedia.sh "${RUNNER_TEMP}/testdata"
+
+      - name: Samba share and the control topology
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+        run: |
+          bash app-src/ci/discovery/topology.sh samba
+          bash app-src/ci/discovery/controls.sh samba
+          bash app-src/ci/discovery/topology.sh control
+
+      - name: Register the HaRP daemon and install the control image
+        run: |
+          sed -e "s|<registry>[^<]*</registry>|<registry>${LOCAL_REGISTRY}</registry>|" \
+              -e "s|<image>[^<]*</image>|<image>${BACKEND_APP_ID}</image>|" \
+              -e "s|<image-tag>[^<]*</image-tag>|<image-tag>leak-control</image-tag>|" \
+              app-src/backend/appinfo/info.xml > "${RUNNER_TEMP}/info-leak.xml"
+          grep -E '<registry>|<image>|<image-tag>' "${RUNNER_TEMP}/info-leak.xml"
+          timeout 30 ./occ app_api:daemon:register \
+            harp_proxy_host "Harp Proxy (Host)" docker-install http localhost:8780 \
+            http://localhost:8090 \
+            --harp --harp_frp_address localhost:8782 \
+            --harp_shared_key "${HARP_SHARED_KEY}" \
+            --net host --set-default
+          timeout 600 ./occ app_api:app:register "${BACKEND_APP_ID}" harp_proxy_host \
+            --info-xml "${RUNNER_TEMP}/info-leak.xml" --wait-finish
+          container=$(docker ps --filter "name=nc_app_${BACKEND_APP_ID}" --format '{{.Names}}' | head -n 1)
+          test -n "${container}" || { docker ps -a; exit 1; }
+          echo "EXAPP_CONTAINER=${container}" >> "${GITHUB_ENV}"
+
+      - name: The control leg shows the leak
+        env:
+          OCC: ./occ
+          MEDIA_DIR: ${{ runner.temp }}/testdata
+          ACCESS_LOG: ${{ runner.temp }}/php-server.log
+        run: bash app-src/ci/discovery/controls.sh leak
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker logs appapi-harp > logs/harp.log 2>&1 || true
+          [ -n "${EXAPP_CONTAINER:-}" ] && docker logs "${EXAPP_CONTAINER}" > logs/exapp.log 2>&1 || true
+          cp data/nextcloud.log logs/ 2>/dev/null || true
+          cp "${RUNNER_TEMP}/php-server.log" "${RUNNER_TEMP}/cron.log" logs/ 2>/dev/null || true
+          cp occ-*.txt occ-*.json logs/ 2>/dev/null || true
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: leak-control-logs
+          path: logs/
+          retention-days: 7

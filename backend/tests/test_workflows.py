@@ -1,0 +1,1021 @@
+"""Triggers, size and secret reach of the workflows, read as text.
+
+- Every workflow file stays under GitHub's 500 KB cap (Findling plan 41-08: a
+  larger file is refused before any job starts).
+- A push block names branches or tags, and every tag pattern is the release
+  pattern, so no stray tag starts a workflow (Findling plan 31-01).
+- release.yml and store-submit.yml have no pull_request trigger: that absence
+  is what keeps the signing key and the store token away from forks.
+- store-submit.yml runs by hand only.
+- Only those two files name the signing keys (APP_PRIVATE_KEY,
+  BACKEND_PRIVATE_KEY) or the store token.
+- The ExApp half lives in backend/: python.yml runs its gates there, docker.yml
+  builds the image out of it, deploy-harp.yml builds the same context, and
+  Dependabot watches the Dockerfile and the uv lock file there.
+"""
+
+import re
+from pathlib import Path
+
+from audio_video_search_backend import APP_ID
+from tests.conftest import REPO_ROOT
+
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+CAP_BYTES = 500 * 1024
+RELEASE_TAG = "'v[0-9]+.[0-9]+.[0-9]+'"
+SECRET_HOLDERS = frozenset({"release.yml", "store-submit.yml"})
+REQUIRED = ("python.yml", "php.yml", "docker.yml", "release.yml", "store-submit.yml", "deploy-harp.yml", "security.yml")
+
+
+def workflow_files() -> list[Path]:
+    return sorted(WORKFLOWS.glob("*.yml"))
+
+
+def on_block(source: str) -> str:
+    """The text of the top level on: block."""
+    match = re.search(r"^on:\n(.*?)(?=^\S)", source, re.MULTILINE | re.DOTALL)
+    assert match is not None
+    return match.group(1)
+
+
+def tag_patterns(source: str) -> list[str]:
+    block = on_block(source)
+    tags = re.search(r"^ {4}tags:\n((?: {6}- .*\n)+)", block, re.MULTILINE)
+    return [line.strip()[2:] for line in tags.group(1).splitlines()] if tags else []
+
+
+def test_the_required_workflows_exist() -> None:
+    names = {path.name for path in workflow_files()}
+
+    assert set(REQUIRED) <= names
+
+
+def test_every_workflow_is_under_the_size_cap() -> None:
+    assert [path.name for path in workflow_files() if path.stat().st_size >= CAP_BYTES] == []
+
+
+def test_push_blocks_name_branches_or_release_tags_only() -> None:
+    for path in workflow_files():
+        source = path.read_text(encoding="utf-8")
+        block = on_block(source)
+        if "  push:" not in block:
+            continue
+        assert re.search(r"^ {4}(branches|tags):", block, re.MULTILINE), path.name
+        assert all(pattern == RELEASE_TAG for pattern in tag_patterns(source)), path.name
+
+
+def test_the_signing_workflows_cannot_be_started_from_a_pull_request() -> None:
+    for name in SECRET_HOLDERS:
+        assert "pull_request" not in on_block((WORKFLOWS / name).read_text(encoding="utf-8")), name
+
+
+def test_the_store_submission_runs_by_hand_only() -> None:
+    block = on_block((WORKFLOWS / "store-submit.yml").read_text(encoding="utf-8"))
+
+    assert re.findall(r"^ {2}(\w+):", block, re.MULTILINE) == ["workflow_dispatch"]
+
+
+def test_only_the_signing_workflows_name_the_key_or_the_store_token() -> None:
+    for path in workflow_files():
+        source = path.read_text(encoding="utf-8")
+        if path.name not in SECRET_HOLDERS:
+            assert "APP_PRIVATE_KEY" not in source, path.name
+            assert "BACKEND_PRIVATE_KEY" not in source, path.name
+            assert "APPSTORE_TOKEN" not in source, path.name
+
+
+def test_the_signing_workflows_refuse_other_repositories() -> None:
+    # One repository carries both halves; its name follows the PHP app.
+    repository = "street1983nk/nextcloud-audio-video-search"
+    for name in SECRET_HOLDERS:
+        assert f'"{repository}"' in (WORKFLOWS / name).read_text(encoding="utf-8"), name
+
+
+def test_the_store_submission_checks_the_image_before_it_submits() -> None:
+    source = (WORKFLOWS / "store-submit.yml").read_text(encoding="utf-8")
+
+    assert source.index("imagetools inspect") < source.index("api/v1/apps/releases")
+    assert "docker logout ghcr.io" in source
+
+
+def backend_findings(sources: dict[str, str]) -> list[str]:
+    """Every place where a workflow or Dependabot misses the backend/ half."""
+    findings = []
+    python = sources.get("python.yml", "")
+    if not re.search(r"^defaults:\n  run:\n    working-directory: backend$", python, re.MULTILINE):
+        findings.append("python.yml does not run in backend/")
+    docker = sources.get("docker.yml", "")
+    if "context: backend\n" not in docker or "file: backend/Dockerfile\n" not in docker:
+        findings.append("docker.yml does not build out of backend/")
+    if f"IMAGE: ghcr.io/street1983nk/{APP_ID}\n" not in docker:
+        findings.append("docker.yml does not push the backend image")
+    harp = sources.get("deploy-harp.yml", "")
+    if f"BACKEND_APP_ID: {APP_ID}\n" not in harp or "./app-src/backend\n" not in harp:
+        findings.append("deploy-harp.yml does not deploy the backend")
+    dependabot = sources.get("dependabot.yml", "")
+    for ecosystem in ("docker", "uv"):
+        if not re.search(rf'package-ecosystem: {ecosystem}\n(?:    #.*\n)*    directory: "/backend"', dependabot):
+            findings.append(f"dependabot {ecosystem} does not watch /backend")
+    return findings
+
+
+def real_sources() -> dict[str, str]:
+    sources = {path.name: path.read_text(encoding="utf-8") for path in workflow_files()}
+    sources["dependabot.yml"] = (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    return sources
+
+
+def test_workflows_and_dependabot_work_on_the_backend_half() -> None:
+    assert backend_findings(real_sources()) == []
+
+
+def test_the_backend_rule_fires_on_the_old_root_layout() -> None:
+    old = {
+        name: source.replace("working-directory: backend", "working-directory: .")
+        .replace("context: backend", "context: .")
+        .replace("./app-src/backend", "./app-src")
+        .replace('"/backend"', '"/"')
+        for name, source in real_sources().items()
+    }
+
+    assert backend_findings(old) == [
+        "python.yml does not run in backend/",
+        "docker.yml does not build out of backend/",
+        "deploy-harp.yml does not deploy the backend",
+        "dependabot docker does not watch /backend",
+        "dependabot uv does not watch /backend",
+    ]
+
+
+def test_the_tag_pattern_parser_sees_a_stray_pattern() -> None:
+    sample = "on:\n  push:\n    tags:\n      - 'v[0-9]+.[0-9]+.[0-9]+'\n      - 'source-*'\njobs:\n"
+
+    assert tag_patterns(sample) == [RELEASE_TAG, "'source-*'"]
+
+
+# -- the integration proof: six legs, both apps, Playwright --------------------
+
+HARP_LEGS = frozenset(
+    (server, runner)
+    for server in ("stable33", "stable34", "stable35")
+    for runner in ("ubuntu-24.04", "ubuntu-24.04-arm")
+)
+
+
+def harp_source() -> str:
+    return (WORKFLOWS / "deploy-harp.yml").read_text(encoding="utf-8")
+
+
+def matrix_legs(source: str) -> list[tuple[str, str]]:
+    """(server-version, runner) of every include entry, read as text.
+
+    An entry starts with "- server-version:" and ends at the next entry or at
+    the first line indented less than the entry, so a key of one entry never
+    leaks into the next one.
+    """
+    match = re.search(r"^( *)include:\n((?:\1 +.*\n|\s*\n)+)", source, re.MULTILINE)
+    if match is None:
+        return []
+    legs: list[tuple[str, str]] = []
+    for entry in re.split(r"^ *- (?=server-version:)", match.group(2), flags=re.MULTILINE)[1:]:
+        server = re.search(r"server-version:\s*['\"]?([\w.-]+)", entry)
+        runner = re.search(r"runner:\s*['\"]?([\w.-]+)", entry)
+        legs.append((server.group(1) if server else "", runner.group(1) if runner else ""))
+    return legs
+
+
+def steps_of(source: str) -> list[tuple[str, str]]:
+    """(name, text) of every named step of the job."""
+    chunks = re.split(r"^      - name: ", source, flags=re.MULTILINE)[1:]
+    return [(chunk.split("\n", 1)[0].strip(), chunk) for chunk in chunks]
+
+
+def harp_findings(source: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the integration proof."""
+    findings: list[str] = []
+    legs = matrix_legs(source)
+    findings += [
+        f"deploy-harp.yml misses the leg {server} on {runner}" for server, runner in sorted(HARP_LEGS - set(legs))
+    ]
+    findings += [
+        f"deploy-harp.yml runs the unknown leg {server} on {runner}" for server, runner in sorted(set(legs) - HARP_LEGS)
+    ]
+    if not re.search(r"^ {4}runs-on: \$\{\{ matrix\.runner \}\}$", source, re.MULTILINE):
+        findings.append("deploy-harp.yml does not run on the runner of the matrix")
+    if not re.search(r"^ {6}fail-fast: false$", source, re.MULTILINE):
+        findings.append("deploy-harp.yml stops every leg when one fails (fail-fast is not false)")
+    if not re.search(r"app:enable audio_video_search$", source, re.MULTILINE):
+        findings.append("deploy-harp.yml does not enable the PHP app")
+    if "npx playwright test" not in source:
+        findings.append("deploy-harp.yml runs no playwright test")
+    for name, text in steps_of(source):
+        if "actions/upload-artifact@" in text and not re.search(r"^ {8}if: always\(\)$", text, re.MULTILINE):
+            findings.append(f"deploy-harp.yml uploads without if: always() in '{name}'")
+    return findings
+
+
+def test_the_integration_proof_holds_every_rule() -> None:
+    assert harp_findings(harp_source()) == []
+
+
+def test_the_matrix_parser_reads_six_legs() -> None:
+    assert set(matrix_legs(harp_source())) == HARP_LEGS
+
+
+def test_the_rule_fires_on_a_missing_arm64_leg() -> None:
+    source = harp_source()
+    broken = source.replace(
+        "          - server-version: stable35\n            php-version: '8.3'\n            runner: ubuntu-24.04-arm\n",
+        "",
+    )
+    assert broken != source
+
+    assert harp_findings(broken) == ["deploy-harp.yml misses the leg stable35 on ubuntu-24.04-arm"]
+
+
+def test_the_rule_fires_on_a_missing_server_version() -> None:
+    broken = harp_source().replace("server-version: stable34", "server-version: stable32")
+
+    assert harp_findings(broken) == [
+        "deploy-harp.yml misses the leg stable34 on ubuntu-24.04",
+        "deploy-harp.yml misses the leg stable34 on ubuntu-24.04-arm",
+        "deploy-harp.yml runs the unknown leg stable32 on ubuntu-24.04",
+        "deploy-harp.yml runs the unknown leg stable32 on ubuntu-24.04-arm",
+    ]
+
+
+def test_the_rule_fires_when_the_runner_does_not_come_from_the_matrix() -> None:
+    broken = harp_source().replace("runs-on: ${{ matrix.runner }}", "runs-on: ubuntu-24.04")
+
+    assert harp_findings(broken) == ["deploy-harp.yml does not run on the runner of the matrix"]
+
+
+def test_the_rule_fires_without_the_php_app() -> None:
+    broken = harp_source().replace("./occ app:enable audio_video_search\n", "./occ app:list\n")
+
+    assert harp_findings(broken) == ["deploy-harp.yml does not enable the PHP app"]
+
+
+def test_the_rule_fires_without_a_playwright_run() -> None:
+    broken = harp_source().replace("npx playwright test", "npx playwright --version")
+
+    assert harp_findings(broken) == ["deploy-harp.yml runs no playwright test"]
+
+
+def test_the_rule_fires_on_an_upload_without_if_always() -> None:
+    source = harp_source()
+    marker = "      - name: Upload the Playwright report and the screenshots\n        if: always()\n"
+    assert marker in source
+    broken = source.replace(marker, "      - name: Upload the Playwright report and the screenshots\n")
+
+    assert harp_findings(broken) == [
+        "deploy-harp.yml uploads without if: always() in 'Upload the Playwright report and the screenshots'"
+    ]
+
+
+def test_the_rule_fires_when_one_leg_stops_the_others() -> None:
+    broken = harp_source().replace("fail-fast: false", "fail-fast: true")
+
+    assert harp_findings(broken) == ["deploy-harp.yml stops every leg when one fails (fail-fast is not false)"]
+
+
+# -- the lifecycle proof: upgrade 0.1.0 to this commit, drift (plan 10, 02-21) --
+
+REDEPLOY = REPO_ROOT / "ci" / "redeploy.sh"
+# The step and the jq assertion it has to carry (the step name alone is no proof).
+DRIFT_STEPS = (
+    ("Drift 1", '.state == "version_drift"'),
+    ("Drift 2", '.state == "version_patch_differs"'),
+    ("Drift 3", '.state == "backend_missing"'),
+    ("Drift 4", '.error == "companion_missing"'),
+)
+ENV_TAGS = ("@disabled", "@unreachable", "@nodebug", "@drift", "@patch", "@missing")
+
+
+# The release 0.2.0 is the tip of origin/phase-02 (plan 03-19, before it 0.1.0
+# at the tip of origin/phase-01, plan 02-21): the upgrade job builds prev/ out
+# of exactly this commit, not out of its own one.
+PREV_COMMIT_0_2_0 = "a99565a2243f5c1e11adfb71fc2909a1b6c88fe8"
+_PREV_COMMIT = re.compile(r"^\s+PREV_COMMIT: '([0-9a-f]+)'$", re.MULTILINE)
+UPGRADE_BEFORE_STEP = "Before the update, the old schema is really there"
+UPGRADE_AFTER_STEP = "After the update, the migration of both halves ran"
+UPGRADE_MODEL_STEP = "Put the speech models into the volume before the update"
+UPGRADE_MODEL_KEY_STEP = "Cache key of the speech models"
+UPGRADE_MODEL_PROOF_STEP = "After the update, the models came from the volume"
+UPGRADE_UPDATE_STEP = "Update the ExApp with app_api:app:update"
+# What the positive control before the update names: the schema step 2 of
+# state.db without the table preview_job, the sample of 0.2.0 with its
+# transcript, and oc_avs_queue without the column origin of the PHP migration.
+BEFORE_CONTROL = (
+    "schema_version",
+    'version == ("2",)',
+    "preview_job",
+    "sample_ref",
+    "PRAGMA table_info(oc_avs_queue)",
+    '"origin" not in',
+    "upgrade positive control failed",
+)
+# What the check after the update names, in its own step: schema step 4 of
+# plan 04-05 with its columns in preview_job and media.
+AFTER_CHECK = (
+    'version == ("4",)',
+    "preview_job",
+    "PRAGMA table_info(preview_job)",
+    "PRAGMA table_info(media)",
+    '"words_de", "words_en", "words_fr"',
+    '"language" in media_columns',
+    "sample_ref",
+    "PRAGMA table_info(oc_avs_queue)",
+    '"origin" in',
+    "oc_avs_crawl",
+    "oc_avs_storage",
+    "audio_video_search:status --json",
+    'has("byPreview")',
+)
+
+
+def real_prev_findings(upgrade: str) -> list[str]:
+    """Every place where the upgrade job does not start from the real release 0.2.0."""
+    findings: list[str] = []
+    if "PREV_VERSION: '0.2.0'" not in upgrade:
+        findings.append("the upgrade job does not start from 0.2.0")
+    commit = _PREV_COMMIT.search(upgrade)
+    if commit is None or len(commit.group(1)) != 40:
+        findings.append("the upgrade job does not name the full commit of 0.2.0")
+    elif commit.group(1) != PREV_COMMIT_0_2_0:
+        findings.append("the upgrade job names another commit than the release 0.2.0")
+    steps = dict(steps_of(upgrade))
+    if "fetch-depth: 0" not in steps.get("Check out this app", ""):
+        findings.append("the upgrade job checks out this app without its history (fetch-depth: 0)")
+    if 'git -C app-src worktree add --detach "${GITHUB_WORKSPACE}/prev" "${PREV_COMMIT}"' not in upgrade:
+        findings.append("the upgrade job does not build prev/ with git worktree add from PREV_COMMIT")
+    if "cp -R app-src prev" in upgrade:
+        findings.append("the upgrade job still copies prev/ out of its own commit")
+    if ".schemaVersion == 2" not in upgrade:
+        findings.append("the upgrade job does not see schemaVersion 2 before the update")
+    before = steps.get(UPGRADE_BEFORE_STEP, "")
+    findings += [
+        f"the positive control before the update does not check {item}" for item in BEFORE_CONTROL if item not in before
+    ]
+    after = steps.get(UPGRADE_AFTER_STEP, "")
+    findings += [f"the check after the update does not look at {item}" for item in AFTER_CHECK if item not in after]
+    return findings
+
+
+def upgrade_model_findings(upgrade: str) -> list[str]:
+    """Every place where the update to 0.3.0 would wait for models that are not there.
+
+    0.2.0 needs no model; 0.3.0 does, and takes them from the volume (the
+    air gap way of plan 03-07, as the job deploy-harp does since plan 03-18).
+    """
+    findings: list[str] = []
+    steps = dict(steps_of(upgrade))
+    names = step_names(upgrade)
+    if not _HARP_MODEL_KEY.search(steps.get(UPGRADE_MODEL_KEY_STEP, "")):
+        findings.append("the upgrade job has no model key avs-models-<MODEL_SHA256 of catalog.py>")
+    restore = steps.get(HARP_MODEL_RESTORE_STEP, "")
+    if "key: ${{ steps.model-key.outputs.models }}" not in restore:
+        findings.append("the upgrade job does not restore the models under the model key")
+    if "!${{ runner.temp }}/avs-models/**/*.verified.json" not in restore:
+        findings.append("the upgrade job restores the models with their verdict files")
+    volume = steps.get(UPGRADE_MODEL_STEP, "")
+    if '-name "*.verified.json" -delete' not in volume:
+        findings.append("the upgrade job does not put the models into the volume without verdict files")
+    elif UPGRADE_UPDATE_STEP not in names or names.index(UPGRADE_MODEL_STEP) > names.index(UPGRADE_UPDATE_STEP):
+        findings.append("the upgrade job puts the models into the volume after the update")
+    if '.outcome != "present"' not in steps.get(UPGRADE_MODEL_PROOF_STEP, ""):
+        findings.append("the upgrade job does not prove that /init of 0.3.0 fetched no model")
+    return findings
+
+
+def job_text(source: str, job: str) -> str:
+    """The text of one top level job, up to the next job or the end."""
+    match = re.search(rf"^  {job}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source, re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else ""
+
+
+def lifecycle_findings(source: str, redeploy: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the upgrade and drift proof."""
+    findings: list[str] = []
+    upgrade = job_text(source, "upgrade")
+    if not upgrade:
+        return ["deploy-harp.yml has no job upgrade"]
+    findings += real_prev_findings(upgrade)
+    findings += upgrade_model_findings(upgrade)
+    if not re.search(r"app_api:app:update audio_video_search_backend \\\n\s+--info-xml ", upgrade):
+        findings.append("the upgrade job does not update the ExApp with app_api:app:update --info-xml")
+    if "./occ upgrade" not in upgrade:
+        findings.append("the upgrade job does not run occ upgrade")
+    for proof in ("STATE_DB_INODE", "VOLUME_CREATED", "cmp hits-before.json hits-after.json", ".schemaVersion == 4"):
+        if proof not in upgrade:
+            findings.append(f"the upgrade job does not compare {proof} before and after")
+    if "rm-data" in source or "rm-data" in redeploy:
+        findings.append("a registration step removes the data volume (rm-data)")
+    steps = steps_of(source)
+    for prefix, state in DRIFT_STEPS:
+        texts = [text for name, text in steps if name.startswith(prefix)]
+        if not texts:
+            findings.append(f"deploy-harp.yml has no step {prefix}")
+        elif state not in texts[0]:
+            findings.append(f"{prefix} does not assert {state}")
+    main_run = re.search(r'npx playwright test --grep-invert "([^"]*)"', source)
+    excluded = main_run.group(1).split("|") if main_run else []
+    findings += [f"the main Playwright run does not leave out {tag}" for tag in ENV_TAGS if tag not in excluded]
+    return findings
+
+
+def test_the_lifecycle_proof_holds_every_rule() -> None:
+    assert lifecycle_findings(harp_source(), REDEPLOY.read_text(encoding="utf-8")) == []
+
+
+def test_the_lifecycle_rule_fires_without_the_upgrade_job() -> None:
+    source = harp_source()
+    broken = source.replace("\n  upgrade:\n", "\n  upgrade-gone:\n")
+    assert broken != source
+
+    assert lifecycle_findings(broken, "") == ["deploy-harp.yml has no job upgrade"]
+
+
+def test_the_lifecycle_rule_fires_on_a_missing_update_and_occ_upgrade() -> None:
+    broken = (
+        harp_source()
+        .replace("app_api:app:update audio_video_search_backend", "app_api:app:list")
+        .replace("./occ upgrade", "./occ status")
+    )
+
+    assert lifecycle_findings(broken, "") == [
+        "the upgrade job does not update the ExApp with app_api:app:update --info-xml",
+        "the upgrade job does not run occ upgrade",
+    ]
+
+
+def test_the_lifecycle_rule_fires_on_a_lost_volume_or_a_lost_comparison() -> None:
+    source = harp_source()
+    broken = source.replace("cmp hits-before.json hits-after.json", "true")
+
+    assert lifecycle_findings(broken, "timeout 300 ./occ app_api:app:unregister x --rm-data") == [
+        "the upgrade job does not compare cmp hits-before.json hits-after.json before and after",
+        "a registration step removes the data volume (rm-data)",
+    ]
+
+
+def test_the_lifecycle_rule_fires_on_a_drift_step_without_its_state() -> None:
+    source = harp_source()
+    broken = source.replace('\'.state == "version_patch_differs"', '\'.state == "ok"').replace(
+        "- name: Drift 3,", "- name: Drift three,"
+    )
+    assert broken != source
+
+    assert lifecycle_findings(broken, "") == [
+        'Drift 2 does not assert .state == "version_patch_differs"',
+        "deploy-harp.yml has no step Drift 3",
+    ]
+
+
+def test_the_lifecycle_rule_fires_when_the_main_run_takes_the_drift_tests() -> None:
+    broken = harp_source().replace("|@drift|@patch|@missing", "")
+
+    assert lifecycle_findings(broken, "") == [
+        "the main Playwright run does not leave out @drift",
+        "the main Playwright run does not leave out @patch",
+        "the main Playwright run does not leave out @missing",
+    ]
+
+
+def test_the_upgrade_rule_fires_on_the_synthetic_previous_version() -> None:
+    source = harp_source()
+    upgrade = job_text(source, "upgrade")
+    broken = (
+        upgrade.replace("PREV_VERSION: '0.2.0'", "PREV_VERSION: '0.0.1'")
+        .replace(PREV_COMMIT_0_2_0, PREV_COMMIT_0_2_0[:7])
+        .replace("fetch-depth: 0", "fetch-depth: 1")
+        .replace("git -C app-src worktree add", "cp -R app-src prev # git -C app-src worktree drop")
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the upgrade job does not start from 0.2.0",
+        "the upgrade job does not name the full commit of 0.2.0",
+        "the upgrade job checks out this app without its history (fetch-depth: 0)",
+        "the upgrade job does not build prev/ with git worktree add from PREV_COMMIT",
+        "the upgrade job still copies prev/ out of its own commit",
+    ]
+
+
+def test_the_upgrade_rule_fires_on_another_commit() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    broken = upgrade.replace(PREV_COMMIT_0_2_0, "0" * 40)
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == ["the upgrade job names another commit than the release 0.2.0"]
+
+
+def test_the_upgrade_rule_fires_on_the_commit_of_0_1_0() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    broken = upgrade.replace(PREV_COMMIT_0_2_0, "82f1655481775a87f4fececa2e2b27d7c1f2f496").replace(
+        "PREV_VERSION: '0.2.0'", "PREV_VERSION: '0.1.0'"
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the upgrade job does not start from 0.2.0",
+        "the upgrade job names another commit than the release 0.2.0",
+    ]
+
+
+def test_the_upgrade_rule_fires_without_the_positive_control() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    broken = (
+        upgrade.replace("upgrade positive control failed", "x")
+        .replace("oc_avs_storage", "oc_avs_store")
+        .replace(".schemaVersion == 2", ".schemaVersion == 1")
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the upgrade job does not see schemaVersion 2 before the update",
+        "the positive control before the update does not check upgrade positive control failed",
+        "the check after the update does not look at oc_avs_storage",
+    ]
+
+
+def test_the_upgrade_rule_fires_when_the_control_misses_the_new_table_and_column() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    steps = dict(steps_of(upgrade))
+    before = steps[UPGRADE_BEFORE_STEP]
+    after = steps[UPGRADE_AFTER_STEP]
+    broken = upgrade.replace(
+        before, before.replace("preview_job", "preview_tab").replace('"origin" not in', '"origins" not in')
+    ).replace(after, after.replace('version == ("4",)', 'version == ("2",)').replace('has("byPreview")', 'has("x")'))
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the positive control before the update does not check preview_job",
+        'the positive control before the update does not check "origin" not in',
+        'the check after the update does not look at version == ("4",)',
+        'the check after the update does not look at has("byPreview")',
+    ]
+
+
+def test_the_upgrade_rule_fires_when_the_check_misses_the_columns_of_step_4() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    after = dict(steps_of(upgrade))[UPGRADE_AFTER_STEP]
+    broken = upgrade.replace(
+        after,
+        after.replace("PRAGMA table_info(media)", "PRAGMA table_info(medium)").replace(
+            '"language" in media_columns', '"lang" in media_columns'
+        ),
+    )
+    assert broken != upgrade
+
+    assert real_prev_findings(broken) == [
+        "the check after the update does not look at PRAGMA table_info(media)",
+        'the check after the update does not look at "language" in media_columns',
+    ]
+
+
+def test_the_upgrade_model_rule_holds_and_fires_without_the_models() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    assert upgrade_model_findings(upgrade) == []
+    steps = dict(steps_of(upgrade))
+    broken = upgrade.replace(
+        steps[UPGRADE_MODEL_STEP], steps[UPGRADE_MODEL_STEP].replace(" -delete", " -print")
+    ).replace('.outcome != "present"', '.outcome == "present"')
+    assert broken != upgrade
+
+    assert upgrade_model_findings(broken) == [
+        "the upgrade job does not put the models into the volume without verdict files",
+        "the upgrade job does not prove that /init of 0.3.0 fetched no model",
+    ]
+
+
+def test_the_upgrade_model_rule_fires_when_the_models_come_after_the_update() -> None:
+    upgrade = job_text(harp_source(), "upgrade")
+    steps = steps_of(upgrade)
+    names = [name for name, _text in steps]
+    model = names.index(UPGRADE_MODEL_STEP)
+    update = names.index(UPGRADE_UPDATE_STEP)
+    assert model < update
+    moved = [steps[i] for i in range(len(steps)) if i != model]
+    moved.insert(update, steps[model])
+    head = upgrade.split("      - name: ", 1)[0]
+    broken = head + "".join(f"      - name: {text}" for _name, text in moved)
+
+    assert upgrade_model_findings(broken) == ["the upgrade job puts the models into the volume after the update"]
+
+
+REDEPLOY = REPO_ROOT / "ci" / "redeploy.sh"
+_REQUIRED_VARIABLE = re.compile(r'^: "\$\{(\w+):\?', re.MULTILINE)
+
+
+def missing_redeploy_variables(script: str, workflow: str) -> list[str]:
+    """Variables ci/redeploy.sh insists on that deploy-harp.yml never provides.
+
+    A variable counts as provided when the workflow writes it into GITHUB_ENV
+    or names it under env. Push 8 ran every drift step into "INFO_XML is
+    required" because nobody exported it.
+    """
+    return [
+        name for name in _REQUIRED_VARIABLE.findall(script) if f"{name}=" not in workflow and f"{name}:" not in workflow
+    ]
+
+
+def test_deploy_harp_provides_what_redeploy_requires() -> None:
+    script = REDEPLOY.read_text(encoding="utf-8")
+    assert _REQUIRED_VARIABLE.findall(script), "ci/redeploy.sh names no required variable"
+    assert missing_redeploy_variables(script, harp_source()) == []
+
+
+def test_the_redeploy_rule_fires_on_a_variable_nobody_exports() -> None:
+    script = ': "${INFO_XML:?INFO_XML is required}"\n: "${ADMIN_PASS:?ADMIN_PASS is required}"\n'
+    assert missing_redeploy_variables(script, "env:\n  ADMIN_PASS: x\n") == ["INFO_XML"]
+    assert missing_redeploy_variables(script, 'env:\n  ADMIN_PASS: x\necho "INFO_XML=/tmp/i.xml"\n') == []
+
+
+# -- phase 3 in deploy-harp (plan 03-18) ------------------------------------------
+#
+# The models lie in the volume of the ExApp before it is registered (the way of
+# plan 03-17), keyed by MODEL_SHA256; the step @preview runs the core path and
+# the states of UI-SPEC 03 with AVS_PREVIEW_E2E=1 after the main run, which
+# leaves @preview out; the leak probe P11 needs its positive control.
+
+CATALOG = REPO_ROOT / "backend" / "src" / "audio_video_search_backend" / "models" / "catalog.py"
+PREVIEW_RUN = "AVS_PREVIEW_E2E=1 npx playwright test --grep @preview"
+MAIN_RUN_STEP = "Playwright on the running instance"
+PREVIEW_STEP = "Playwright, core path and states of phase 3"
+LEAK_STEP = "The excerpt leak probe"
+HARP_MODEL_KEY_STEP = "Cache keys of the speech models and clips"
+HARP_MODEL_RESTORE_STEP = "Restore the speech models"
+HARP_MODEL_VOLUME_STEP = "Put the speech models into the volume of the ExApp"
+HARP_MODEL_PROOF_STEP = "The models came from the volume, not from the network"
+HARP_CLIP_STEP = "Check the speech clips and hand them to the tests"
+REGISTER_STEP = "Register the HaRP daemon and install the ExApp through it"
+_HARP_MODEL_KEY = re.compile(r"avs-models-\$\(python3 -I -c '([^']*\bMODEL_SHA256\b[^']*)' \S*/models/catalog\.py\)")
+
+
+def step_names(job: str) -> list[str]:
+    return [name for name, _text in steps_of(job)]
+
+
+def preview_findings(source: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the acceptance of phase 3."""
+    findings: list[str] = []
+    job = job_text(source, "deploy-harp")
+    steps = dict(steps_of(job))
+    names = step_names(job)
+    main_run = re.search(r'npx playwright test --grep-invert "([^"]*)"', steps.get(MAIN_RUN_STEP, ""))
+    if main_run is None or "@preview" not in main_run.group(1).split("|"):
+        findings.append("the main Playwright run does not leave out @preview")
+    preview = steps.get(PREVIEW_STEP, "")
+    if PREVIEW_RUN not in preview:
+        findings.append("no step runs @preview with AVS_PREVIEW_E2E=1")
+    elif names.index(PREVIEW_STEP) < names.index(MAIN_RUN_STEP):
+        findings.append("the step @preview runs before the main Playwright run")
+    for variable in ("AVS_OCC:", "AVS_MEDIA_DIR:", "AVS_LEAK_PROBE:"):
+        if variable not in preview:
+            findings.append(f"the step @preview lacks {variable[:-1]}")
+    if not _HARP_MODEL_KEY.search(steps.get(HARP_MODEL_KEY_STEP, "")):
+        findings.append("the model cache key is not avs-models-<MODEL_SHA256 of catalog.py>")
+    restore = steps.get(HARP_MODEL_RESTORE_STEP, "")
+    if "key: ${{ steps.speech-keys.outputs.models }}" not in restore:
+        findings.append("the models are not restored under the model key")
+    if "!${{ runner.temp }}/avs-models/**/*.verified.json" not in restore:
+        findings.append("the verdict files of procure go into the cache")
+    hand = steps.get(HARP_CLIP_STEP, "")
+    findings += [
+        f"{name} is not handed to the tests"
+        for name in ("AVS_SPEECH_DE", "AVS_SPEECH_TR", "AVS_SPEECH_WORD")
+        if f'echo "{name}=' not in hand
+    ]
+    volume = steps.get(HARP_MODEL_VOLUME_STEP, "")
+    if '-name "*.verified.json" -delete' not in volume:
+        findings.append("the models do not go into the volume without verdict files")
+    if HARP_MODEL_VOLUME_STEP in names and names.index(HARP_MODEL_VOLUME_STEP) > names.index(REGISTER_STEP):
+        findings.append("the models go into the volume after the ExApp is registered")
+    if '.outcome != "present"' not in steps.get(HARP_MODEL_PROOF_STEP, ""):
+        findings.append("no step proves that /init fetched no model")
+    if "AVS_PHASE3_MEDIA: '1'" not in steps.get("Seed users, team folder, shares, media and test results", ""):
+        findings.append("the seed does not bring the media of phase 3")
+    leak = steps.get(LEAK_STEP, "")
+    for part in ("EXCERPT LEAK PROBE PASS", '"${control_count}" -lt 1', '"${probe_count}" -ne 0', "POST /excerpt "):
+        if part not in leak:
+            findings.append(f"the leak probe lacks {part}")
+    return findings
+
+
+def test_deploy_harp_holds_the_acceptance_of_phase_3() -> None:
+    assert preview_findings(harp_source()) == []
+
+
+def test_the_model_key_of_deploy_harp_prints_the_model_sha256_of_the_catalogue() -> None:
+    import subprocess
+    import sys
+
+    from audio_video_search_backend.models.catalog import MODEL_SHA256
+
+    found = _HARP_MODEL_KEY.search(dict(steps_of(job_text(harp_source(), "deploy-harp")))[HARP_MODEL_KEY_STEP])
+    assert found is not None
+    printed = subprocess.run(  # noqa: S603 - the interpreter of this test and a fixed file
+        [sys.executable, "-I", "-c", found.group(1), str(CATALOG)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    assert printed == MODEL_SHA256
+
+
+def test_the_phase_3_rule_fires_when_the_main_run_takes_preview_or_the_switch_is_gone() -> None:
+    source = harp_source()
+    broken = source.replace("|@missing|@preview", "|@missing").replace(
+        PREVIEW_RUN, "npx playwright test --grep @preview"
+    )
+    assert broken != source
+
+    assert preview_findings(broken) == [
+        "the main Playwright run does not leave out @preview",
+        "no step runs @preview with AVS_PREVIEW_E2E=1",
+    ]
+
+
+def test_the_phase_3_rule_fires_on_a_key_without_the_model_sha256_and_verdict_files() -> None:
+    source = harp_source()
+    job = job_text(source, "deploy-harp")
+    broken = job.replace('["MODEL_SHA256"]', '["MODELS"]').replace(
+        '-name "*.verified.json" -delete', '-name "*.tmp" -delete'
+    )
+    assert broken != job
+
+    assert preview_findings(f"jobs:\n  deploy-harp:\n{broken}") == [
+        "the model cache key is not avs-models-<MODEL_SHA256 of catalog.py>",
+        "the models do not go into the volume without verdict files",
+    ]
+
+
+def test_the_phase_3_rule_fires_when_the_models_come_after_the_registration() -> None:
+    job = job_text(harp_source(), "deploy-harp")
+    steps = re.split(r"(?=^      - name: )", job, flags=re.MULTILINE)
+    volume = next(chunk for chunk in steps if chunk.startswith(f"      - name: {HARP_MODEL_VOLUME_STEP}\n"))
+    register = next(chunk for chunk in steps if chunk.startswith(f"      - name: {REGISTER_STEP}\n"))
+    moved = job.replace(volume, "").replace(register, register + volume)
+    assert moved != job
+
+    assert preview_findings(f"jobs:\n  deploy-harp:\n{moved}") == [
+        "the models go into the volume after the ExApp is registered"
+    ]
+
+
+def test_the_phase_3_rule_fires_on_a_leak_probe_without_control_and_a_seed_without_media() -> None:
+    source = harp_source()
+    broken = source.replace('"${control_count}" -lt 1', '"${control_count}" -lt 0').replace(
+        "AVS_PHASE3_MEDIA: '1'", "AVS_PHASE3_MEDIA: '0'"
+    )
+    assert broken != source
+
+    assert preview_findings(broken) == [
+        "the seed does not bring the media of phase 3",
+        'the leak probe lacks "${control_count}" -lt 1',
+    ]
+
+
+# -- phase 4 in deploy-harp (plan 04-14) ------------------------------------------
+#
+# The step @phase4 runs search-quality.spec.ts and the specs of plan 04-17 after
+# the main run, which leaves @phase4 out; the parser proof on the real downloads
+# runs with AVS_DOWNLOADS_DIR, CI=true and the ffmpeg of the image; pictures and
+# downloads go into phase4-screens. The catch count of the prefix clause has to
+# run in the container only while 04-06-SUMMARY still names it open: 04-06
+# closed it with the real ngerman list (its table "ngerman-Einträge mit
+# Stamm-Präfix"), so the step stays optional, and when it is there it must not
+# be softened.
+
+PHASE4_RUN = "AVS_PHASE4_E2E=1 npx playwright test --grep @phase4"
+PHASE4_STEP = "Playwright, search quality and export of phase 4"
+PHASE4_FFMPEG_STEP = "Install the pinned LGPL ffmpeg for the download proof"
+DOWNLOADS_STEP = "The parsers on the real downloads of phase 4"
+PHASE4_UPLOAD_STEP = "Upload the pictures and downloads of phase 4"
+SEED_STEP = "Seed users, team folder, shares, media and test results"
+PREFIX_SUMMARY = REPO_ROOT / ".planning" / "phases" / "04-suchqualit-t-und-export" / "04-06-SUMMARY.md"
+PREFIX_DONE_MARK = "ngerman-Einträge mit Stamm-Präfix"
+DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
+_FFMPEG_PIN = re.compile(r"\b(FFMPEG_RELEASE|FFMPEG_BUILD|FFMPEG_AMD64_SHA256|FFMPEG_ARM64_SHA256)=([\w.-]+)")
+
+
+def prefix_catch_open(summary: str) -> bool:
+    """Whether 04-06-SUMMARY leaves the catch count against ngerman open (no table with numbers)."""
+    return PREFIX_DONE_MARK not in summary
+
+
+def ffmpeg_pin_values(text: str) -> dict[str, str]:
+    return dict(_FFMPEG_PIN.findall(text))
+
+
+def phase4_findings(source: str, summary: str, dockerfile: str) -> list[str]:
+    """Every place where deploy-harp.yml falls short of the proofs of phase 4."""
+    findings: list[str] = []
+    job = job_text(source, "deploy-harp")
+    steps = dict(steps_of(job))
+    names = step_names(job)
+    main_run = re.search(r'npx playwright test --grep-invert "([^"]*)"', steps.get(MAIN_RUN_STEP, ""))
+    if main_run is None or "@phase4" not in main_run.group(1).split("|"):
+        findings.append("the main Playwright run does not leave out @phase4")
+    phase4 = steps.get(PHASE4_STEP, "")
+    if PHASE4_RUN not in phase4:
+        findings.append("no step runs @phase4 with AVS_PHASE4_E2E=1")
+    elif names.index(PHASE4_STEP) < names.index(MAIN_RUN_STEP):
+        findings.append("the step @phase4 runs before the main Playwright run")
+    for variable in ("AVS_OCC:", "AVS_DOWNLOADS_DIR:", "AVS_SCREENSHOT_DIR:"):
+        if variable not in phase4:
+            findings.append(f"the step @phase4 lacks {variable[:-1]}")
+    if "--s7-env" not in steps.get(HARP_CLIP_STEP, ""):
+        findings.append("the S7 clips and their forms are not handed to the tests (--s7-env)")
+    if "AVS_PHASE4_MEDIA: '1'" not in steps.get(SEED_STEP, ""):
+        findings.append("the seed does not bring the media of phase 4")
+    downloads = steps.get(DOWNLOADS_STEP, "")
+    if "uv run pytest tests/test_downloaded_subtitles.py" not in downloads:
+        findings.append("no step runs tests/test_downloaded_subtitles.py")
+    for part in ("AVS_DOWNLOADS_DIR:", "CI: 'true'", "AVS_FFMPEG:", "AVS_L10N_DIR:"):
+        if part not in downloads:
+            findings.append(f"the download proof lacks {part.rstrip(':')}")
+    if DOWNLOADS_STEP in names and PHASE4_STEP in names and names.index(DOWNLOADS_STEP) < names.index(PHASE4_STEP):
+        findings.append("the download proof runs before the step @phase4")
+    upload = steps.get(PHASE4_UPLOAD_STEP, "")
+    if "name: phase4-screens" not in upload or "avs-downloads" not in upload:
+        findings.append("the pictures and downloads of phase 4 are not uploaded as phase4-screens")
+    pins = ffmpeg_pin_values(steps.get(PHASE4_FFMPEG_STEP, ""))
+    wanted = ffmpeg_pin_values(dockerfile)
+    findings += [
+        f"the ffmpeg of the download proof differs from the Dockerfile in {key}"
+        for key in sorted(wanted)
+        if pins.get(key) != wanted[key]
+    ]
+    prefix_steps = [(name, text) for name, text in steps_of(job) if "measure_prefix.py" in text]
+    if prefix_catch_open(summary) and not prefix_steps:
+        findings.append("04-06 leaves the catch count open and no step runs measure_prefix.py in the container")
+    for name, text in prefix_steps:
+        if "continue-on-error" in text or "|| true" in text:
+            findings.append(f"the catch count in '{name}' may fail without failing the run")
+    for name in (PHASE4_STEP, DOWNLOADS_STEP):
+        if "continue-on-error" in steps.get(name, ""):
+            findings.append(f"'{name}' may fail without failing the run")
+    return findings
+
+
+def _phase4_inputs() -> tuple[str, str, str]:
+    return harp_source(), PREFIX_SUMMARY.read_text(encoding="utf-8"), DOCKERFILE.read_text(encoding="utf-8")
+
+
+def test_deploy_harp_holds_the_proofs_of_phase_4() -> None:
+    assert phase4_findings(*_phase4_inputs()) == []
+
+
+def test_04_06_closed_the_catch_count_with_numbers() -> None:
+    """The reason the container step is optional: 04-06 holds the ngerman table (plan 04-14 SUMMARY names it)."""
+    _source, summary, _dockerfile = _phase4_inputs()
+
+    assert not prefix_catch_open(summary)
+
+
+def test_the_phase_4_rule_fires_when_the_main_run_takes_phase4_or_the_switch_is_gone() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    broken = source.replace("|@preview|@phase4", "|@preview").replace(PHASE4_RUN, "npx playwright test --grep @phase4")
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the main Playwright run does not leave out @phase4",
+        "no step runs @phase4 with AVS_PHASE4_E2E=1",
+    ]
+
+
+def test_the_phase_4_rule_fires_on_a_download_proof_without_ci_and_without_the_s7_forms() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    broken = source.replace("          CI: 'true'\n          AVS_DOWNLOADS_DIR", "          AVS_DOWNLOADS_DIR").replace(
+        "--s7-env", "--s7"
+    )
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the S7 clips and their forms are not handed to the tests (--s7-env)",
+        "the download proof lacks CI: 'true'",
+    ]
+
+
+def test_the_phase_4_rule_fires_on_another_ffmpeg_and_a_lost_artifact() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    arm64 = ffmpeg_pin_values(dockerfile)["FFMPEG_ARM64_SHA256"]
+    broken = source.replace(f"FFMPEG_ARM64_SHA256={arm64}", "FFMPEG_ARM64_SHA256=" + "0" * 64).replace(
+        "name: phase4-screens", "name: phase4-pictures"
+    )
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the pictures and downloads of phase 4 are not uploaded as phase4-screens",
+        "the ffmpeg of the download proof differs from the Dockerfile in FFMPEG_ARM64_SHA256",
+    ]
+
+
+def test_the_phase_4_rule_asks_for_the_catch_count_while_04_06_leaves_it_open() -> None:
+    source, _summary, dockerfile = _phase4_inputs()
+
+    assert phase4_findings(source, "Beifang: offen, Plan 04-14", dockerfile) == [
+        "04-06 leaves the catch count open and no step runs measure_prefix.py in the container"
+    ]
+
+
+def test_the_phase_4_rule_fires_on_a_softened_catch_count_step() -> None:
+    source, summary, dockerfile = _phase4_inputs()
+    step = (
+        "      - name: The catch count of the prefix clause in the container\n"
+        "        continue-on-error: true\n"
+        '        run: docker exec "${EXAPP_CONTAINER}" python -I /tmp/measure_prefix.py'
+        " --wordlist /usr/share/dict/ngerman\n"
+        "\n"
+    )
+    broken = source.replace(f"      - name: {DOWNLOADS_STEP}\n", step + f"      - name: {DOWNLOADS_STEP}\n")
+    assert broken != source
+
+    assert phase4_findings(broken, summary, dockerfile) == [
+        "the catch count in 'The catch count of the prefix clause in the container' may fail without failing the run"
+    ]
+
+
+# -- T-04-25, T-04-50, E-1: no way past the PHP app (owner 17.11.2026) -----------
+#
+# The routes with user data are not declared in backend/appinfo/info.xml
+# (tests/test_store_metadata.py). This rule holds the CI proof in deploy-harp.yml:
+# bob asks each of them on both proxy ways and gets 404, the container never
+# logs the request, and afterwards the admin reaches the ADMIN route /status on
+# the same two ways (the positive control that the ways work at all). The step
+# must come after the OCS search of bob, which proves the PHP way for him.
+
+PAST_PHP_STEP = "Container routes with user data are not reachable past the PHP app"
+PAST_PHP_ROUTES = ("/search", "/excerpt", "/export", "/export/meta")
+PAST_PHP_NEEDLES = (
+    ('-u "bob:${BOB_PASS}"', "bob does not ask"),
+    ('test "${code}" = "404"', "the refusal is not held to 404"),
+    ('"http://localhost:8090/exapps/${BACKEND_APP_ID}${route}"', "the HaRP way is not asked"),
+    ('"${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}${route}"', "the AppAPI proxy way is not asked"),
+    ('test "${after}" = "${before[${index}]}"', "the container log is not compared"),
+    ('-u "admin:${ADMIN_PASS}" "${url}"', "the admin control is missing"),
+    ('test "${code}" = "200"', "the admin control is not held to 200"),
+    ('"http://localhost:8090/exapps/${BACKEND_APP_ID}/status"', "the admin control misses the HaRP way"),
+    ('"${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}/status"', "the admin control misses the AppAPI way"),
+)
+
+
+def past_php_findings(source: str) -> list[str]:
+    """Where deploy-harp.yml falls short of the proof that no proxy reaches a user data route."""
+    steps = steps_of(source)
+    names = [name for name, _ in steps]
+    if PAST_PHP_STEP not in names:
+        return [f"deploy-harp.yml has no step '{PAST_PHP_STEP}'"]
+    text = dict(steps)[PAST_PHP_STEP]
+    findings: list[str] = []
+    if re.search(r"^ {8}continue-on-error:", text, re.MULTILINE):
+        findings.append("the proof past the PHP app may fail without failing the run")
+    if "set -euo pipefail" not in text:
+        findings.append("the proof past the PHP app does not stop at the first failure")
+    loop = re.search(r"for route in ([^;\n]+); do\n\s+probe ", text)
+    if loop is None or tuple(loop.group(1).split()) != PAST_PHP_ROUTES:
+        findings.append("the proof past the PHP app does not ask exactly /search /excerpt /export /export/meta")
+    findings += [message for needle, message in PAST_PHP_NEEDLES if needle not in text]
+    control = text.find('-u "admin:${ADMIN_PASS}"')
+    if control != -1 and control < text.find('probe "http://localhost:8090'):
+        findings.append("the admin control runs before the probes, so it does not show that HaRP still serves")
+    if "The OCS search honours read access" not in names or names.index(
+        "The OCS search honours read access"
+    ) > names.index(PAST_PHP_STEP):
+        findings.append("the proof past the PHP app runs before the OCS search of bob")
+    return findings
+
+
+def test_the_proof_past_the_php_app_holds_every_rule() -> None:
+    assert past_php_findings(harp_source()) == []
+
+
+def test_the_past_php_rule_fires_on_each_weakened_proof() -> None:
+    source = harp_source()
+    assert past_php_findings(source.replace(PAST_PHP_STEP, "Something else", 1)) == [
+        f"deploy-harp.yml has no step '{PAST_PHP_STEP}'"
+    ]
+    assert past_php_findings(source.replace('test "${code}" = "404"', 'test "${code}" != "200"', 1)) == [
+        "the refusal is not held to 404"
+    ]
+    assert past_php_findings(
+        source.replace(
+            "/search /excerpt /export /export/meta; do\n            probe", "/search /excerpt; do\n            probe", 1
+        )
+    ) == ["the proof past the PHP app does not ask exactly /search /excerpt /export /export/meta"]
+    assert past_php_findings(
+        source.replace('"${NC_URL}/index.php/apps/app_api/proxy/${BACKEND_APP_ID}${route}"', '"x"', 1)
+    ) == ["the AppAPI proxy way is not asked"]
+    assert past_php_findings(source.replace('test "${after}" = "${before[${index}]}"', "true", 1)) == [
+        "the container log is not compared"
+    ]
+    softened = source.replace(
+        f"      - name: {PAST_PHP_STEP}\n", f"      - name: {PAST_PHP_STEP}\n        continue-on-error: true\n", 1
+    )
+    assert past_php_findings(softened) == ["the proof past the PHP app may fail without failing the run"]
+    assert past_php_findings(
+        source.replace('-u "admin:${ADMIN_PASS}" "${url}"', '-u "bob:${BOB_PASS}" "${url}"', 1)
+    ) == ["the admin control is missing"]

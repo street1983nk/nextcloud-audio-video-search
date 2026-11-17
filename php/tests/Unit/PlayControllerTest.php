@@ -1,0 +1,1406 @@
+<?php
+
+declare(strict_types=1);
+
+namespace OCA\AudioVideoSearch\Tests\Unit;
+
+use OCA\AudioVideoSearch\AppInfo\Application;
+use OCA\AudioVideoSearch\Controller\PageController;
+use OCA\AudioVideoSearch\Service\DownloadPolicy;
+use OCA\AudioVideoSearch\Service\ExAppService;
+use OCA\AudioVideoSearch\Service\ExclusionService;
+use OCA\AudioVideoSearch\Service\ReaderContext;
+use OCA\AudioVideoSearch\Service\StorageService;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\TemplateResponse;
+use OCP\Files\Cache\IFileAccess;
+use OCP\Files\Config\IUserMountCache;
+use OCP\Files\File;
+use OCP\Files\Folder;
+use OCP\Files\IRootFolder;
+use OCP\Files\Storage\ISharedStorage;
+use OCP\Files\Storage\IStorage;
+use OCP\IAppConfig;
+use OCP\IDBConnection;
+use OCP\IGroupManager;
+use OCP\IL10N;
+use OCP\IRequest;
+use OCP\IURLGenerator;
+use OCP\IUser;
+use OCP\IUserManager;
+use OCP\IUserSession;
+use OCP\Share\IAttributes;
+use OCP\Share\IShare;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
+
+/**
+ * The playback page: recheck, start time, WebDAV address and the states.
+ *
+ * The file system is a double of the user folder, the container a double of
+ * ExAppService. Whatever the address says, the page only plays a file that
+ * FileAccess::readableFile confirms in the folder of the signed in user, and a
+ * file it cannot confirm leaves no name and no path in the page parameters.
+ *
+ * The exclusions are a double of ExclusionService, except in the one case
+ * that reads a broken rule list through the real service (plan 02-16b).
+ */
+#[CoversClass(PageController::class)]
+final class PlayControllerTest extends TestCase {
+	private const UID = 'alice';
+
+	/** The data contract of the export section (04-UI-SPEC), in this order. */
+	private const EXPORT_KEYS = [
+		'exportState',
+		'exportUntilClock',
+		'exportUntilIso',
+		'exportUrls',
+		'sidecarAllowed',
+		'sidecarName',
+		'sidecarUrl',
+		'trackUrl',
+		'trackLang',
+		'trackLabel',
+	];
+
+	/** The export parameters of a section without buttons, X3 apart from its state. */
+	private const NO_EXPORT = [
+		'exportState' => 'none',
+		'exportUntilClock' => '',
+		'exportUntilIso' => '',
+		'exportUrls' => [],
+		'sidecarAllowed' => false,
+		'sidecarName' => '',
+		'sidecarUrl' => '',
+		'trackUrl' => '',
+		'trackLang' => '',
+		'trackLabel' => '',
+	];
+
+	private string $uid = self::UID;
+	private mixed $t = '';
+
+	/** @var array<int, File> the files the user may read, by id */
+	private array $readable = [];
+
+	/** @var array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}|null */
+	private ?array $excerpt = null;
+
+	/** Set where the container must not be asked at all: excerpt() then expects never(). */
+	private bool $containerNeverAsked = false;
+
+	private bool $searchAllowed = true;
+	private bool $viewWithoutDownload = true;
+
+	/** @var list<array{string,int,int}> */
+	private array $excerptCalls = [];
+
+	private int $allowedCalls = 0;
+
+	/** @var list<string> the users a rule of the admin excludes */
+	private array $excludedUsers = [];
+
+	/** @var list<int> the files a rule of the admin excludes */
+	private array $excludedFiles = [];
+
+	private bool $exclusionsFail = false;
+
+	/**
+	 * The double keeps the rules it read like the real service (read once per
+	 * instance, again only after reload), for the tests about the rules of now.
+	 */
+	private bool $cachedRules = false;
+
+	/** @var array{users: list<string>, files: list<int>}|null the rules the double read last */
+	private ?array $ruleSnapshot = null;
+
+	/** @var list<string> the questions to the exclusions in their order */
+	private array $exclusionCalls = [];
+
+	/** The real service instead of the double, for the case of a rule list nobody can read. */
+	private ?ExclusionService $realExclusions = null;
+
+	/** @var list<string> every user the exclusions were asked about */
+	private array $askedUsers = [];
+
+	/** @var list<int> every file the exclusions were asked about */
+	private array $askedFiles = [];
+
+	/** @var list<string> every log line with its context, as one text */
+	private array $logged = [];
+
+	/** @var array<string, mixed>|null what ExAppService::exportMeta answers */
+	private ?array $exportMeta = null;
+
+	/** Set where the export must not reach the container: exportMeta() then expects never(). */
+	private bool $exportNeverAsked = false;
+
+	/** @var list<array{string,int}> */
+	private array $exportMetaCalls = [];
+
+	/** What isCreatable of the folder of the medium answers, or what it throws. */
+	private bool|\Throwable $creatable = true;
+
+	protected function setUp(): void {
+		parent::setUp();
+
+		$this->uid = self::UID;
+		$this->t = '';
+		$this->readable = [];
+		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
+		$this->containerNeverAsked = false;
+		$this->searchAllowed = true;
+		$this->viewWithoutDownload = true;
+		$this->excerptCalls = [];
+		$this->allowedCalls = 0;
+		$this->excludedUsers = [];
+		$this->excludedFiles = [];
+		$this->exclusionsFail = false;
+		$this->cachedRules = false;
+		$this->ruleSnapshot = null;
+		$this->exclusionCalls = [];
+		$this->realExclusions = null;
+		$this->askedUsers = [];
+		$this->askedFiles = [];
+		$this->logged = [];
+		$this->exportMeta = self::meta();
+		$this->exportNeverAsked = false;
+		$this->exportMetaCalls = [];
+		$this->creatable = true;
+	}
+
+	private function controller(): PageController {
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParam')->willReturnCallback(
+			fn (string $key, mixed $default = null): mixed => $key === 't' ? $this->t : $default,
+		);
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn($this->uid);
+		$session = $this->createMock(IUserSession::class);
+		$session->method('getUser')->willReturn($user);
+
+		$userFolder = $this->createMock(Folder::class);
+		$userFolder->method('getFirstNodeById')->willReturnCallback(fn (int $id): ?File => $this->readable[$id] ?? null);
+		$prefix = '/' . $this->uid . '/files';
+		$userFolder->method('getRelativePath')->willReturnCallback(
+			static fn (string $path): string => substr($path, strlen($prefix)),
+		);
+		$root = $this->createMock(IRootFolder::class);
+		$root->method('getUserFolder')->willReturnCallback(function (string $uid) use ($userFolder): Folder {
+			self::assertSame($this->uid, $uid);
+
+			return $userFolder;
+		});
+
+		$urls = $this->createMock(IURLGenerator::class);
+		$urls->method('getWebroot')->willReturn('/nc');
+		$urls->method('linkToRoute')->willReturnCallback(
+			static fn (string $route, array $parameters = []): string => '/nc/route/' . $route . ($parameters === [] ? '' : '?' . http_build_query($parameters)),
+		);
+
+		$appConfig = $this->createMock(IAppConfig::class);
+		$appConfig->method('getValueBool')->willReturnCallback(
+			fn (string $app, string $key, bool $default = false): bool => $app === 'core' && $key === 'shareapi_allow_view_without_download'
+				? $this->viewWithoutDownload
+				: $default,
+		);
+
+		$l10n = $this->createMock(IL10N::class);
+		$l10n->method('t')->willReturnCallback(
+			static fn (string $text, array|string $parameters = []): string => vsprintf($text, (array)$parameters),
+		);
+
+		$exApp = $this->createMock(ExAppService::class);
+		$exApp->method('searchAllowed')->willReturnCallback(function (): bool {
+			$this->allowedCalls++;
+
+			return $this->searchAllowed;
+		});
+		$exApp->expects($this->containerNeverAsked ? self::never() : self::any())
+			->method('excerpt')
+			->willReturnCallback(function (string $uid, int $fileId, int $startMs): ?array {
+				$this->excerptCalls[] = [$uid, $fileId, $startMs];
+
+				return $this->excerpt;
+			});
+		$exApp->expects($this->exportNeverAsked ? self::never() : self::any())
+			->method('exportMeta')
+			->willReturnCallback(function (string $uid, int $fileId): ?array {
+				$this->exportMetaCalls[] = [$uid, $fileId];
+
+				return $this->exportMeta;
+			});
+
+		$exclusions = $this->createMock(ExclusionService::class);
+		$exclusions->method('reload')->willReturnCallback(function (): void {
+			$this->exclusionCalls[] = 'reload';
+			$this->ruleSnapshot = null;
+		});
+		$exclusions->method('isExcludedUser')->willReturnCallback(function (string $uid): bool {
+			$this->exclusionCalls[] = 'user';
+			$this->askedUsers[] = $uid;
+			if ($this->exclusionsFail) {
+				throw new \RuntimeException('the rules are gone for alice and Sitzung.webm');
+			}
+
+			return in_array($uid, $this->rulesInForce()['users'], true);
+		});
+		$exclusions->method('isExcludedFile')->willReturnCallback(function (int $fileId): bool {
+			$this->exclusionCalls[] = 'file';
+			$this->askedFiles[] = $fileId;
+
+			return in_array($fileId, $this->rulesInForce()['files'], true);
+		});
+
+		$logger = $this->logger();
+
+		return new PageController(
+			$request,
+			$root,
+			$session,
+			$urls,
+			$appConfig,
+			$l10n,
+			$exApp,
+			new ReaderContext($session, $this->createMock(IUserManager::class)),
+			$logger,
+			$this->realExclusions ?? $exclusions,
+			new DownloadPolicy($logger),
+		);
+	}
+
+	/**
+	 * An answer of the container about a file it may speak about, in the
+	 * shape ExAppService::excerpt hands on.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}
+	 */
+	private static function found(array $fields): array {
+		return $fields + [
+			'known' => true,
+			'excerpt' => null,
+			'stage' => 'preview',
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		];
+	}
+
+	/**
+	 * The answer of the container about a file it may not speak about.
+	 *
+	 * @return array{known:bool,excerpt:?string,stage:?string,partial:bool,pendingHere:bool,reason:?string,limitHours:?int}
+	 */
+	private static function unknownFile(): array {
+		return [
+			'known' => false,
+			'excerpt' => null,
+			'stage' => null,
+			'partial' => false,
+			'pendingHere' => false,
+			'reason' => null,
+			'limitHours' => null,
+		];
+	}
+
+	/**
+	 * An answer of ExAppService::exportMeta about a file with a transcript.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return array<string, mixed>
+	 */
+	private static function meta(array $fields = []): array {
+		return $fields + ['known' => true, 'partial' => false, 'untilMs' => 0, 'language' => 'de'];
+	}
+
+	/**
+	 * The parameters of the export section out of all parameters of a page.
+	 *
+	 * @param array<string, mixed> $params
+	 * @return array<string, mixed>
+	 */
+	private static function exportPart(array $params): array {
+		return array_intersect_key($params, array_flip(self::EXPORT_KEYS));
+	}
+
+	/**
+	 * The excerpt block of a page as the server renders it: the template of
+	 * the response without the layout around it, cut to its section.
+	 */
+	private static function excerptBlock(TemplateResponse $response): string {
+		$blank = new TemplateResponse($response->getApp(), $response->getTemplateName(), $response->getParams(), TemplateResponse::RENDER_AS_BLANK);
+		$html = $blank->render();
+		self::assertSame(1, preg_match('#<section class="avs-excerpt"[^>]*>.*?</section>#s', $html, $match), 'no excerpt block in the page');
+
+		return $match[0];
+	}
+
+	/** A logger that keeps every line with its context as one text. */
+	private function logger(): LoggerInterface&MockObject {
+		$logger = $this->createMock(LoggerInterface::class);
+		foreach (['debug', 'info', 'notice', 'warning', 'error'] as $level) {
+			$logger->method($level)->willReturnCallback(function (string|\Stringable $message, array $context = []): void {
+				$this->logged[] = $message . ' ' . json_encode($context);
+			});
+		}
+
+		return $logger;
+	}
+
+	/**
+	 * What could tell two answers of the page apart.
+	 *
+	 * @return array{status: int, app: string, template: string, renderAs: string, params: array<string, mixed>}
+	 */
+	private static function answer(TemplateResponse $response): array {
+		return [
+			'status' => $response->getStatus(),
+			'app' => $response->getApp(),
+			'template' => $response->getTemplateName(),
+			'renderAs' => $response->getRenderAs(),
+			'params' => $response->getParams(),
+		];
+	}
+
+	/**
+	 * The answer of the page for a file the container has no transcript of.
+	 * Afterwards the container would hand out text again and every counter
+	 * starts over.
+	 *
+	 * @return array{status: int, app: string, template: string, renderAs: string, params: array<string, mixed>}
+	 */
+	private function answerWithoutTranscript(int $fileId): array {
+		$this->excerpt = self::unknownFile();
+		$this->exportMeta = ['known' => false];
+		$answer = self::answer($this->response($fileId));
+		self::assertSame('none', $answer['params']['excerptState']);
+		self::assertSame('', $answer['params']['excerpt']);
+		self::assertSame('', $answer['params']['excerptNote']);
+		self::assertSame(0, $answer['params']['excerptHours']);
+		self::assertSame('none', $answer['params']['exportState']);
+		self::assertCount(1, $this->excerptCalls);
+		self::assertCount(1, $this->exportMetaCalls);
+
+		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
+		$this->exportMeta = self::meta();
+		$this->exportMetaCalls = [];
+		$this->excerptCalls = [];
+		$this->allowedCalls = 0;
+		$this->askedUsers = [];
+		$this->askedFiles = [];
+
+		return $answer;
+	}
+
+	private function file(int $id, string $relativePath, string $mime = 'video/webm', ?IStorage $storage = null, bool $readable = true): File&MockObject {
+		$file = $this->createMock(File::class);
+		$file->method('getId')->willReturn($id);
+		$file->method('getName')->willReturn(basename($relativePath));
+		$file->method('getPath')->willReturn('/' . $this->uid . '/files/' . $relativePath);
+		$file->method('getMimetype')->willReturn($mime);
+		$file->method('isReadable')->willReturn($readable);
+		if ($storage === null) {
+			$storage = $this->createMock(IStorage::class);
+			$storage->method('instanceOfStorage')->willReturn(false);
+		}
+		$file->method('getStorage')->willReturn($storage);
+		$parent = $this->createMock(Folder::class);
+		$parent->method('isCreatable')->willReturnCallback(function (): bool {
+			if ($this->creatable instanceof \Throwable) {
+				throw $this->creatable;
+			}
+
+			return $this->creatable;
+		});
+		$file->method('getParent')->willReturn($parent);
+		$this->readable[$id] = $file;
+
+		return $file;
+	}
+
+	/** A received share whose download switch is set to $download (null: not set). */
+	private function sharedStorage(?bool $download): ISharedStorage&MockObject {
+		$attributes = $this->createMock(IAttributes::class);
+		$attributes->method('getAttribute')->willReturnCallback(
+			static fn (string $scope, string $key): ?bool => $scope === 'permissions' && $key === 'download' ? $download : null,
+		);
+		$share = $this->createMock(IShare::class);
+		$share->method('getAttributes')->willReturn($attributes);
+
+		$storage = $this->createMock(ISharedStorage::class);
+		$storage->method('instanceOfStorage')->willReturnCallback(
+			static fn (string $class): bool => $class === ISharedStorage::class,
+		);
+		$storage->method('getShare')->willReturn($share);
+
+		return $storage;
+	}
+
+	/** @return array<string, mixed> */
+	private function play(int $fileId): array {
+		return $this->response($fileId)->getParams();
+	}
+
+	/**
+	 * What the double of the exclusions answers with: the rules of the test
+	 * now, or with cachedRules the ones it read first since the last reload.
+	 *
+	 * @return array{users: list<string>, files: list<int>}
+	 */
+	private function rulesInForce(): array {
+		$now = ['users' => $this->excludedUsers, 'files' => $this->excludedFiles];
+		if (!$this->cachedRules) {
+			return $now;
+		}
+
+		return $this->ruleSnapshot ??= $now;
+	}
+
+	private function response(int $fileId): TemplateResponse {
+		return $this->controller()->play($fileId);
+	}
+
+	// -- the start time -----------------------------------------------------------
+
+	public function testAStartTimeInSecondsBecomesMillisecondsAndAClock(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$params = $this->play(7);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame('42.0', $params['startSeconds']);
+		self::assertSame('0:42', $params['startClock']);
+		self::assertSame('PT42S', $params['startIso']);
+		self::assertSame([[self::UID, 7, 42000]], $this->excerptCalls);
+	}
+
+	public function testFractionsAreKeptToMillisecondsAndShownCutToOneDecimal(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '754.25';
+
+		$params = $this->play(7);
+
+		self::assertSame([[self::UID, 7, 754250]], $this->excerptCalls);
+		self::assertSame('754.2', $params['startSeconds']);
+		self::assertSame('12:34', $params['startClock']);
+		self::assertSame('PT12M34S', $params['startIso']);
+	}
+
+	/** @return array<string, array{mixed}> */
+	public static function invalidStarts(): array {
+		return [
+			'letters' => ['abc'],
+			'negative' => ['-1'],
+			'beyond a day' => ['86401'],
+			'exponent' => ['1e3'],
+			'empty' => [''],
+			'too many decimals' => ['1.2345'],
+			'not a string' => [['42']],
+		];
+	}
+
+	#[DataProvider('invalidStarts')]
+	public function testAnInvalidStartIsZeroWithoutAnError(mixed $raw): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = $raw;
+
+		$response = $this->response(7);
+		$params = $response->getParams();
+
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame('ready', $params['state']);
+		self::assertSame('0.0', $params['startSeconds']);
+		self::assertSame('0:00', $params['startClock']);
+		self::assertSame('PT0S', $params['startIso']);
+		self::assertSame([[self::UID, 7, 0]], $this->excerptCalls);
+	}
+
+	public function testStartMsReadsTheBoundariesExactly(): void {
+		self::assertSame(86400000, PageController::startMs('86400'));
+		self::assertSame(0, PageController::startMs('86400.001'));
+		self::assertSame(5, PageController::startMs('0.005'));
+		self::assertSame(1500, PageController::startMs('1.5'));
+		self::assertSame(0, PageController::startMs(' 1'));
+		self::assertSame(0, PageController::startMs("1\n"));
+	}
+
+	// -- the address of the medium -------------------------------------------------
+
+	public function testTheSourceIsTheEncodedWebDavAddressWithTheFragmentOnlyAfterZero(): void {
+		$this->uid = 'max mustermann@example.org';
+		$this->file(9, 'Team A/Sitzung #1.webm');
+		$this->t = '42.0';
+
+		$params = $this->play(9);
+
+		$expected = '/nc/remote.php/dav/files/max%20mustermann%40example.org/Team%20A/Sitzung%20%231.webm';
+		self::assertSame($expected, $params['src']);
+		self::assertSame($expected . '#t=42.0', $params['mediaSrc']);
+
+		$this->excerptCalls = [];
+		$this->t = '';
+		$params = $this->play(9);
+		self::assertSame($expected, $params['mediaSrc']);
+	}
+
+	public function testVideoAndAudioPickTheirElement(): void {
+		$this->file(1, 'Film.webm', 'video/webm');
+		$this->file(2, 'Interview.ogg', 'audio/ogg');
+
+		self::assertSame('video', $this->play(1)['mediaTag']);
+		self::assertSame('audio', $this->play(2)['mediaTag']);
+	}
+
+	public function testTheNameIsTheHeadingAndTheDocumentTitle(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$params = $this->play(7);
+
+		self::assertSame('Sitzung.webm', $params['fileName']);
+		self::assertSame('Sitzung.webm', $params['pageTitle']);
+		self::assertSame('/nc/route/files.view.showFile?fileid=7', $params['filesUrl']);
+		self::assertTrue($params['downloadAllowed']);
+	}
+
+	public function testTheResponseIsTheUserLayoutOfThisApp(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$response = $this->response(7);
+
+		self::assertSame(Application::APP_ID, $response->getApp());
+		self::assertSame('play', $response->getTemplateName());
+		self::assertSame(TemplateResponse::RENDER_AS_USER, $response->getRenderAs());
+	}
+
+	// -- what may not be shown ------------------------------------------------------
+
+	/** @return array<string, array{string}> */
+	public static function unreadableCases(): array {
+		return [
+			'missing or foreign' => ['missing'],
+			'not readable' => ['closed'],
+		];
+	}
+
+	#[DataProvider('unreadableCases')]
+	public function testAFileTheUserCannotReadIsA404WithoutNameOrPath(string $case): void {
+		if ($case === 'closed') {
+			$this->file(5, 'Geheim/Personalsitzung.webm', readable: false);
+		}
+		$this->t = '42.0';
+
+		$response = $this->response(5);
+		$params = $response->getParams();
+
+		self::assertSame(Http::STATUS_NOT_FOUND, $response->getStatus());
+		self::assertSame('unavailable', $params['state']);
+		self::assertSame('', $params['fileName']);
+		self::assertSame('', $params['src']);
+		self::assertSame('', $params['mediaSrc']);
+		self::assertSame('Playback', $params['pageTitle']);
+		self::assertSame('/nc/route/files.view.index', $params['filesUrl']);
+		$flat = json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+		self::assertStringNotContainsString('Personalsitzung', $flat);
+		self::assertStringNotContainsString('Geheim', $flat);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAReadableFileThatIsNoMediumIsNamedButNotPlayed(): void {
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+
+		$response = $this->response(3);
+		$params = $response->getParams();
+
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame('not_media', $params['state']);
+		self::assertSame('Protokoll.txt', $params['fileName']);
+		self::assertSame('', $params['src']);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	// -- shares without download ----------------------------------------------------
+
+	public function testAShareWithoutDownloadIsBlockedWhenViewingIsNotAllowedEither(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->viewWithoutDownload = false;
+
+		$response = $this->response(4);
+		$params = $response->getParams();
+
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame('download_blocked', $params['state']);
+		self::assertSame('Sitzung.webm', $params['fileName']);
+		self::assertSame('', $params['src']);
+		self::assertSame('', $params['mediaSrc']);
+		self::assertFalse($params['downloadAllowed']);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAShareWithoutDownloadPlaysWhenViewingIsAllowedButOffersNoDownload(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->viewWithoutDownload = true;
+
+		$params = $this->play(4);
+
+		self::assertSame('ready', $params['state']);
+		self::assertNotSame('', $params['src']);
+		self::assertFalse($params['downloadAllowed']);
+	}
+
+	public function testAShareWithDownloadPlaysNormally(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(null));
+		$this->viewWithoutDownload = false;
+
+		$params = $this->play(4);
+
+		self::assertSame('ready', $params['state']);
+		self::assertTrue($params['downloadAllowed']);
+	}
+
+	// -- the excerpt ------------------------------------------------------------------
+
+	public function testTheExcerptStates(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$params = $this->play(7);
+		self::assertSame('ok', $params['excerptState']);
+		self::assertSame('der Haushalt wird beraten', $params['excerpt']);
+
+		$this->excerpt = self::unknownFile();
+		$params = $this->play(7);
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame('', $params['excerpt']);
+
+		$this->excerpt = null;
+		$params = $this->play(7);
+		self::assertSame('unavailable', $params['excerptState']);
+		self::assertSame('', $params['excerpt']);
+	}
+
+	public function testADriftOnRecordDoesNotAskTheContainer(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->searchAllowed = false;
+
+		$params = $this->play(7);
+
+		self::assertSame('unavailable', $params['excerptState']);
+		self::assertSame([], $this->excerptCalls);
+		self::assertSame('ready', $params['state']);
+	}
+
+	// -- the states A1 to A13 (plan 03-16, UI-SPEC surface 2) -----------------------------
+
+	/**
+	 * One case per state of the table, and the edges between them: what the
+	 * container answers and what the page gets as excerptState, excerpt,
+	 * excerptNote and excerptHours.
+	 *
+	 * @return array<string, array{?array<string, mixed>, string, string, string, int}>
+	 */
+	public static function excerptStates(): array {
+		$text = 'der Haushalt wird beraten';
+
+		return [
+			'A1 preview' => [['excerpt' => $text, 'stage' => 'preview'], 'ok', $text, 'preview', 0],
+			'A1 without a stage' => [['excerpt' => $text, 'stage' => null], 'ok', $text, 'preview', 0],
+			'A1 a sample is preliminary' => [['excerpt' => $text, 'stage' => 'sample'], 'ok', $text, 'preview', 0],
+			'A2 partial' => [['excerpt' => $text, 'stage' => 'preview', 'partial' => true], 'ok', $text, 'partial', 0],
+			'A2 partial beats final' => [['excerpt' => $text, 'stage' => 'final', 'partial' => true], 'ok', $text, 'partial', 0],
+			'A2 partial while the disk is full' => [['excerpt' => $text, 'partial' => true, 'reason' => 'disk_full'], 'ok', $text, 'partial', 0],
+			'A3 final' => [['excerpt' => $text, 'stage' => 'final'], 'ok', $text, '', 0],
+			'A4 pending here' => [['partial' => true, 'pendingHere' => true], 'pending_here', '', '', 0],
+			'A5 known without text and reason' => [[], 'none', '', '', 0],
+			'A5 a text of blanks' => [['excerpt' => "  \t "], 'none', '', '', 0],
+			'A6 no speech' => [['reason' => 'no_speech'], 'no_speech', '', '', 0],
+			'A7 damaged' => [['reason' => 'damaged'], 'skipped_damaged', '', '', 0],
+			'A8 protected' => [['reason' => 'protected'], 'skipped_protected', '', '', 0],
+			'A9 unsupported language' => [['reason' => 'unsupported_language'], 'unsupported_language', '', '', 0],
+			'A10 too long, twelve hours' => [['reason' => 'too_long', 'limitHours' => 12], 'too_long', '', '', 12],
+			'A10 too long, one hour' => [['reason' => 'too_long', 'limitHours' => 1], 'too_long', '', '', 1],
+			'A11 an unknown reason' => [['reason' => 'xyz'], 'skipped_other', '', '', 0],
+			'A11 a code of the container outside the list' => [['reason' => 'engine_failed'], 'skipped_other', '', '', 0],
+			'A11 too long without its limit' => [['reason' => 'too_long'], 'skipped_other', '', '', 0],
+			'A11 the limit belongs to too_long only' => [['reason' => 'no_speech', 'limitHours' => 12], 'no_speech', '', '', 0],
+			'A12 no answer' => [null, 'unavailable', '', '', 0],
+			'A13 disk full' => [['reason' => 'disk_full'], 'disk_full', '', '', 0],
+		];
+	}
+
+	/** @param array<string, mixed>|null $fields */
+	#[DataProvider('excerptStates')]
+	public function testTheContainerAnswerBecomesExactlyOneState(?array $fields, string $state, string $text, string $note, int $hours): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$this->excerpt = $fields === null ? null : self::found($fields);
+
+		$params = $this->play(7);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame($state, $params['excerptState']);
+		self::assertSame($text, $params['excerpt']);
+		self::assertSame($note, $params['excerptNote']);
+		self::assertSame($hours, $params['excerptHours']);
+		self::assertSame([[self::UID, 7, 42000]], $this->excerptCalls);
+	}
+
+	public function testEveryReasonOfTheListHasItsOwnStateAndNoOtherIsNamed(): void {
+		self::assertSame(
+			['no_speech', 'damaged', 'protected', 'unsupported_language', 'too_long', 'disk_full'],
+			array_keys(PageController::REASON_STATES),
+		);
+		$states = array_values(PageController::REASON_STATES);
+		self::assertSame($states, array_values(array_unique($states)));
+		self::assertNotContains(PageController::EXCERPT_NONE, $states);
+		self::assertNotContains(PageController::EXCERPT_SKIPPED_OTHER, $states);
+	}
+
+	public function testAFileTheContainerMayNotSpeakAboutIsNoTranscriptYet(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->excerpt = self::unknownFile();
+
+		$params = $this->play(7);
+
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame('', $params['excerpt']);
+		self::assertSame('', $params['excerptNote']);
+		self::assertSame(0, $params['excerptHours']);
+		self::assertCount(1, $this->excerptCalls);
+	}
+
+	public function testAPageWithoutAMediumCarriesNoNoteAndNoHours(): void {
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+
+		$params = $this->play(3);
+
+		self::assertSame('skipped', $params['excerptState']);
+		self::assertSame('', $params['excerptNote']);
+		self::assertSame(0, $params['excerptHours']);
+		self::assertSame('', $this->response(5)->getParams()['excerptNote']);
+		self::assertSame(0, $this->response(5)->getParams()['excerptHours']);
+	}
+
+	// -- the leak rule (UI-SPEC P11, T-03-54) ---------------------------------------------
+
+	/** @return array<string, array{string}> */
+	public static function exclusionKinds(): array {
+		return [
+			'excluded user' => ['user'],
+			'excluded file' => ['file'],
+			'question fails' => ['fails'],
+		];
+	}
+
+	#[DataProvider('exclusionKinds')]
+	public function testAnExcludedFileWithAReasonLooksLikeAnUnknownFileAndTheContainerIsNeverAsked(string $kind): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$unknown = $this->answerWithoutTranscript(7);
+
+		$this->excerpt = self::found(['reason' => 'no_speech']);
+		match ($kind) {
+			'user' => $this->excludedUsers = [self::UID],
+			'file' => $this->excludedFiles = [7],
+			'fails' => $this->exclusionsFail = true,
+		};
+		$this->containerNeverAsked = true;
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+		self::assertSame('none', $excluded['params']['excerptState']);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testTheExcerptBlockOfAnExcludedUserIsByteEqualToTheOneOfAnUnknownFile(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		// The reference: a file the container knows nothing about (P4).
+		$this->excerpt = self::unknownFile();
+		$unknown = self::excerptBlock($this->response(7));
+
+		// Positive control: with the reason given to a user who may see it,
+		// the block is a different one, so the comparison below can fail.
+		$this->excerpt = self::found(['excerpt' => 'der Haushalt wird beraten']);
+		$readable = self::excerptBlock($this->response(7));
+		self::assertNotSame($unknown, $readable);
+		self::assertStringContainsString('der Haushalt wird beraten', $readable);
+
+		// The probe: an excluded user opens a file with the reason no_speech (P11).
+		$this->excerpt = self::found(['reason' => 'no_speech']);
+		$this->excludedUsers = [self::UID];
+		$this->containerNeverAsked = true;
+		$this->excerptCalls = [];
+		$excluded = self::excerptBlock($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+		self::assertStringContainsString('avs-excerpt__hint', $excluded);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAnUnknownReasonNeverReachesThePage(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->excerpt = self::found(['reason' => 'xyz']);
+
+		$response = $this->response(7);
+		$params = $response->getParams();
+
+		self::assertSame('skipped_other', $params['excerptState']);
+		self::assertStringNotContainsString('xyz', json_encode($params, JSON_THROW_ON_ERROR));
+		$block = self::excerptBlock($response);
+		self::assertStringNotContainsString('xyz', $block);
+		self::assertStringContainsString('avs-excerpt__hint', $block);
+	}
+
+	// -- the exclusions (plan 02-16b) ---------------------------------------------------
+
+	public function testAnExcludedUserGetsTheAnswerOfAFileWithoutATranscriptAndTheContainerIsNeverAsked(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$withoutTranscript = $this->answerWithoutTranscript(7);
+
+		$this->excludedUsers = [self::UID];
+		$this->containerNeverAsked = true;
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($withoutTranscript, $excluded);
+		self::assertSame(Http::STATUS_OK, $excluded['status']);
+		self::assertSame([self::UID], $this->askedUsers);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+		self::assertStringNotContainsString('Haushalt', json_encode($excluded['params'], JSON_THROW_ON_ERROR));
+	}
+
+	public function testAnExcludedFileGetsTheAnswerOfAFileWithoutATranscriptAndTheContainerIsNeverAsked(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$withoutTranscript = $this->answerWithoutTranscript(7);
+
+		$this->excludedFiles = [7];
+		$this->containerNeverAsked = true;
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($withoutTranscript, $excluded);
+		self::assertSame([self::UID], $this->askedUsers);
+		self::assertSame([7], $this->askedFiles);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAFileExcludedBetweenTwoVisitsShowsNoExcerptOnTheSecond(): void {
+		$this->cachedRules = true;
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$before = self::answer($this->response(7));
+		$this->excludedFiles = [7];
+		$after = self::answer($this->response(7));
+
+		self::assertSame('ok', $before['params']['excerptState']);
+		self::assertSame('none', $after['params']['excerptState']);
+		self::assertSame('', $after['params']['excerpt']);
+		self::assertCount(1, $this->excerptCalls);
+	}
+
+	public function testEveryExcerptReadsTheRulesBeforeItAsksAnything(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$this->response(7);
+
+		self::assertSame(['reload', 'user', 'file'], $this->exclusionCalls);
+	}
+
+	public function testExclusionsThatCannotBeAskedShowNoExcerptAndLogNeitherUserNorFile(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$withoutTranscript = $this->answerWithoutTranscript(7);
+
+		$this->exclusionsFail = true;
+		$this->containerNeverAsked = true;
+		$failed = self::answer($this->response(7));
+
+		self::assertSame($withoutTranscript, $failed);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+		self::assertCount(1, $this->logged);
+		self::assertStringContainsString('RuntimeException', $this->logged[0]);
+		self::assertStringNotContainsString(self::UID, $this->logged[0]);
+		self::assertStringNotContainsString('Sitzung', $this->logged[0]);
+	}
+
+	public function testAnExclusionListThatCannotBeReadShowsNoExcerpt(): void {
+		// The real service over a stored value that is no JSON list: every
+		// doubt excludes, so nobody gets an excerpt until the list is repaired.
+		$stored = $this->createMock(IAppConfig::class);
+		$stored->method('getValueString')->willReturn('eva');
+		$this->realExclusions = new ExclusionService(
+			$stored,
+			$this->createMock(IUserMountCache::class),
+			$this->createMock(IGroupManager::class),
+			$this->createMock(IFileAccess::class),
+			$this->createMock(StorageService::class),
+			$this->createMock(IDBConnection::class),
+			$this->createMock(LoggerInterface::class),
+		);
+		$this->file(7, 'Sitzung.webm');
+
+		$params = $this->play(7);
+
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame('', $params['excerpt']);
+		self::assertSame(0, $this->allowedCalls);
+		self::assertSame([], $this->excerptCalls);
+	}
+
+	public function testAnExcludedUserGetsNoExcerptEitherWhileTheTwoHalvesDrifted(): void {
+		// The answer does not depend on the container: not "cannot be loaded".
+		$this->file(7, 'Sitzung.webm');
+		$this->searchAllowed = false;
+		$this->excludedUsers = [self::UID];
+
+		$params = $this->play(7);
+
+		self::assertSame('none', $params['excerptState']);
+		self::assertSame(0, $this->allowedCalls);
+	}
+
+	public function testTheMediumOfAnExcludedUserStillPlays(): void {
+		// The file is theirs to read through WebDAV; only the transcript is withheld.
+		$this->file(7, 'Sitzung.webm');
+		$this->excludedUsers = [self::UID];
+
+		$params = $this->play(7);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame('/nc/remote.php/dav/files/alice/Sitzung.webm', $params['src']);
+		self::assertSame('Sitzung.webm', $params['fileName']);
+	}
+
+	public function testAUserAndAFileThatAreNotExcludedAreAskedAboutOnceAndGetTheExcerpt(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->excludedUsers = ['bob'];
+		$this->excludedFiles = [8];
+
+		$params = $this->play(7);
+
+		self::assertSame('ok', $params['excerptState']);
+		self::assertSame('der Haushalt wird beraten', $params['excerpt']);
+		self::assertSame([self::UID], $this->askedUsers);
+		self::assertSame([7], $this->askedFiles);
+		self::assertSame([], $this->logged);
+	}
+
+	public function testTheExclusionsAreNotAskedWhereNoExcerptIsShownAnyway(): void {
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+		$this->excludedUsers = [self::UID];
+
+		self::assertSame('skipped', $this->play(3)['excerptState']);
+		self::assertSame(Http::STATUS_NOT_FOUND, $this->response(5)->getStatus());
+		self::assertSame([], $this->askedUsers);
+		self::assertSame([], $this->askedFiles);
+	}
+
+	// -- the export section (plan 04-11, 04-UI-SPEC X1 to X4) -------------------------------
+
+	/** A received share whose rules cannot be read: the verdict is UNKNOWN. */
+	private function unreadableShare(): ISharedStorage&MockObject {
+		$storage = $this->createMock(ISharedStorage::class);
+		$storage->method('instanceOfStorage')->willReturnCallback(
+			static fn (string $class): bool => $class === ISharedStorage::class,
+		);
+		$storage->method('getShare')->willThrowException(new \RuntimeException('share of alice on Sitzung.webm is gone'));
+
+		return $storage;
+	}
+
+	public function testEveryPageThatIsNotReadyHasNoExportSectionAndNeverAsksForOne(): void {
+		$this->exportNeverAsked = true;
+		$this->file(3, 'Protokoll.txt', 'text/plain');
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->viewWithoutDownload = false;
+
+		$notMedia = $this->play(3);
+		$blocked = $this->play(4);
+		$unavailable = $this->play(5);
+
+		self::assertSame('not_media', $notMedia['state']);
+		self::assertSame('download_blocked', $blocked['state']);
+		self::assertSame('unavailable', $unavailable['state']);
+		foreach ([$notMedia, $blocked, $unavailable] as $params) {
+			self::assertSame(self::NO_EXPORT, self::exportPart($params));
+		}
+		// The same set of keys on every page, the unavailable one included.
+		$keys = array_keys($this->play(3));
+		sort($keys);
+		$unavailableKeys = array_keys($unavailable);
+		sort($unavailableKeys);
+		self::assertSame($keys, $unavailableKeys);
+		self::assertSame([], $this->exportMetaCalls);
+	}
+
+	public function testABlockedShareThatMayBeViewedShowsTheHintOnlyAndNeverAsksTheContainerForAnExport(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->viewWithoutDownload = true;
+		$this->exportNeverAsked = true;
+
+		$params = $this->play(4);
+
+		self::assertSame('ready', $params['state']);
+		self::assertSame(['exportState' => 'blocked'] + self::NO_EXPORT, self::exportPart($params));
+		self::assertSame([], $this->exportMetaCalls);
+		$flat = json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+		self::assertStringNotContainsString('audio_video_search.export', $flat);
+	}
+
+	public function testABlockedShareThatIsAlsoExcludedIsTheSameBlockAndNoHintOfTheExclusion(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->exportNeverAsked = true;
+
+		$blocked = self::exportPart($this->play(4));
+
+		// Positive control: the exclusion does change the excerpt of the page.
+		$this->excludedUsers = [self::UID];
+		$excludedPage = $this->play(4);
+		self::assertSame('none', $excludedPage['excerptState']);
+		$excluded = self::exportPart($excludedPage);
+
+		self::assertSame('blocked', $excluded['exportState']);
+		self::assertSame($blocked, $excluded);
+		self::assertSame([], $this->exportMetaCalls);
+	}
+
+	public function testAShareWhoseRulesCannotBeReadPlaysButHasNoExportSection(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->unreadableShare());
+		$this->exportNeverAsked = true;
+
+		$params = $this->play(4);
+
+		self::assertSame('ready', $params['state']);
+		self::assertTrue($params['downloadAllowed']);
+		self::assertSame(self::NO_EXPORT, self::exportPart($params));
+		self::assertSame([], $this->exportMetaCalls);
+		foreach ($this->logged as $line) {
+			self::assertStringNotContainsString('Sitzung', $line);
+			self::assertStringNotContainsString(self::UID, $line);
+		}
+	}
+
+	public function testAnExcludedUserOrFileWithADownloadHasNoExportSectionAndTheExclusionsAreAskedOnce(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->exportNeverAsked = true;
+
+		$this->excludedUsers = [self::UID];
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame(['reload', 'user'], $this->exclusionCalls);
+
+		$this->excludedUsers = [];
+		$this->excludedFiles = [7];
+		$this->exclusionCalls = [];
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame(['reload', 'user', 'file'], $this->exclusionCalls);
+		self::assertSame([], $this->exportMetaCalls);
+		self::assertSame(0, $this->allowedCalls);
+	}
+
+	public function testADriftASilentContainerAndAnUnknownFileHaveNoExportSection(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$this->searchAllowed = false;
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame([], $this->exportMetaCalls);
+
+		$this->searchAllowed = true;
+		$this->exportMeta = null;
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+
+		$this->exportMeta = ['known' => false];
+		self::assertSame(self::NO_EXPORT, self::exportPart($this->play(7)));
+		self::assertSame([[self::UID, 7], [self::UID, 7]], $this->exportMetaCalls);
+	}
+
+	public function testAFinishedTranscriptOffersTheThreeFormatsTheSidecarAndTheTrack(): void {
+		$this->file(7, 'Ordner/Sitzung.webm');
+
+		$params = $this->play(7);
+
+		self::assertSame([
+			'exportState' => 'available',
+			'exportUntilClock' => '',
+			'exportUntilIso' => '',
+			'exportUrls' => [
+				'srt' => '/nc/route/audio_video_search.export.download?fileId=7&format=srt',
+				'vtt' => '/nc/route/audio_video_search.export.download?fileId=7&format=vtt',
+				'txt' => '/nc/route/audio_video_search.export.download?fileId=7&format=txt',
+			],
+			'sidecarAllowed' => true,
+			'sidecarName' => 'Sitzung.de.vtt',
+			'sidecarUrl' => '/nc/route/audio_video_search.export.sidecar?fileId=7',
+			'trackUrl' => '/nc/route/audio_video_search.export.track?fileId=7',
+			'trackLang' => 'de',
+			'trackLabel' => 'German, subtitle draft',
+		], self::exportPart($params));
+		self::assertSame(['srt', 'vtt', 'txt'], array_keys($params['exportUrls']));
+		self::assertSame([[self::UID, 7]], $this->exportMetaCalls);
+	}
+
+	public function testTheDownloadLinksCarryTheCheckedTimeMarkOfThePage(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '12.5';
+
+		$params = $this->play(7);
+
+		self::assertSame([
+			'srt' => '/nc/route/audio_video_search.export.download?fileId=7&format=srt&t=12.5',
+			'vtt' => '/nc/route/audio_video_search.export.download?fileId=7&format=vtt&t=12.5',
+			'txt' => '/nc/route/audio_video_search.export.download?fileId=7&format=txt&t=12.5',
+		], $params['exportUrls']);
+		// Sidecar and track have no way back; they stay without a mark.
+		self::assertSame('/nc/route/audio_video_search.export.sidecar?fileId=7', $params['sidecarUrl']);
+		self::assertSame('/nc/route/audio_video_search.export.track?fileId=7', $params['trackUrl']);
+
+		// The mark is written anew from the milliseconds, like startSeconds, never copied.
+		$this->t = '754.25';
+		self::assertSame('/nc/route/audio_video_search.export.download?fileId=7&format=srt&t=754.2', $this->play(7)['exportUrls']['srt']);
+		$this->t = '0042';
+		self::assertSame('/nc/route/audio_video_search.export.download?fileId=7&format=srt&t=42.0', $this->play(7)['exportUrls']['srt']);
+	}
+
+	/** @return array<string, array{mixed}> */
+	public static function startsWithoutAMark(): array {
+		return [
+			'none' => [''],
+			'zero' => ['0'],
+			'below a tenth' => ['0.05'],
+			'negative' => ['-1'],
+			'beyond a day' => ['86401'],
+			'markup' => ['1"><script>alert(1)</script>'],
+			'a second parameter' => ['5&format=txt'],
+			'not a string' => [['42']],
+		];
+	}
+
+	#[DataProvider('startsWithoutAMark')]
+	public function testAStartThatIsNoCheckedPositiveMarkLeavesTheDownloadLinksWithoutT(mixed $raw): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = $raw;
+
+		$params = $this->play(7);
+
+		foreach (['srt', 'vtt', 'txt'] as $format) {
+			self::assertSame('/nc/route/audio_video_search.export.download?fileId=7&format=' . $format, $params['exportUrls'][$format]);
+		}
+	}
+
+	public function testTheRenderedDownloadLinksCarryTheMarkEscaped(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '12.5';
+
+		$html = self::page($this->response(7));
+
+		self::assertSame(1, substr_count($html, 'href="/nc/route/audio_video_search.export.download?fileId=7&amp;format=srt&amp;t=12.5"'));
+		self::assertSame(3, substr_count($html, '&amp;t=12.5"'));
+	}
+
+	public function testAPartialTranscriptNamesTheEndOfTheLastFinishedPiece(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->exportMeta = self::meta(['partial' => true, 'untilMs' => 3723456, 'language' => 'fr']);
+
+		$params = $this->play(7);
+
+		self::assertSame('partial', $params['exportState']);
+		self::assertSame('1:02:03', $params['exportUntilClock']);
+		self::assertSame('PT1H2M3S', $params['exportUntilIso']);
+		self::assertSame('Sitzung.fr.vtt', $params['sidecarName']);
+		self::assertSame('fr', $params['trackLang']);
+		self::assertSame('French, subtitle draft', $params['trackLabel']);
+
+		$this->exportMeta = self::meta(['partial' => true, 'untilMs' => 65000, 'language' => 'en']);
+		$params = $this->play(7);
+		self::assertSame('1:05', $params['exportUntilClock']);
+		self::assertSame('PT1M5S', $params['exportUntilIso']);
+		self::assertSame('English, subtitle draft', $params['trackLabel']);
+	}
+
+	public function testTheSidecarIsOfferedOnlyWhereTheUserMayCreateAFile(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$this->creatable = false;
+		$params = $this->play(7);
+		self::assertSame('available', $params['exportState']);
+		self::assertFalse($params['sidecarAllowed']);
+		self::assertSame([], $this->logged);
+
+		$this->creatable = new \RuntimeException('storage of alice: Sitzung.webm');
+		$params = $this->play(7);
+		self::assertSame('available', $params['exportState']);
+		self::assertFalse($params['sidecarAllowed']);
+		self::assertCount(1, $this->logged);
+		self::assertStringContainsString('RuntimeException', $this->logged[0]);
+		self::assertStringNotContainsString('Sitzung', $this->logged[0]);
+		self::assertStringNotContainsString(self::UID, $this->logged[0]);
+	}
+
+	public function testATargetNameOverTheLimitIsNotNamedOnThePage(): void {
+		// 248 bytes of name and ".de.vtt" make exactly 255: still named.
+		$this->file(7, str_repeat('a', 248) . '.webm');
+		self::assertSame(str_repeat('a', 248) . '.de.vtt', $this->play(7)['sidecarName']);
+
+		// 125 x "ä" spelled out is 250 bytes "ae", with ".de.vtt" 257: still too long.
+		$this->file(8, str_repeat('ä', 125) . '.webm');
+		$params = $this->play(8);
+		self::assertSame('available', $params['exportState']);
+		self::assertSame('', $params['sidecarName']);
+	}
+
+	public function testTheSidecarNameOnThePageSpellsOutTheUmlaut(): void {
+		$this->file(7, 'S7-Übung.webm');
+
+		self::assertSame('S7-Uebung.de.vtt', $this->play(7)['sidecarName']);
+	}
+
+	public function testTheAnswersWithoutASectionAreTheSameForExcludedAndUnknown(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+		$unknown = $this->answerWithoutTranscript(7);
+
+		// Positive control: a file with a transcript has a different answer.
+		$withTranscript = self::answer($this->response(7));
+		self::assertNotSame($unknown, $withTranscript);
+		self::assertSame('available', $withTranscript['params']['exportState']);
+
+		$this->exportMetaCalls = [];
+		$this->excludedFiles = [7];
+		$this->exportNeverAsked = true;
+		$this->containerNeverAsked = true;
+		$excluded = self::answer($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+		self::assertSame([], $this->exportMetaCalls);
+	}
+
+	/** The page as the template renders it, without the layout around it. */
+	private static function page(TemplateResponse $response): string {
+		$blank = new TemplateResponse($response->getApp(), $response->getTemplateName(), $response->getParams(), TemplateResponse::RENDER_AS_BLANK);
+
+		return $blank->render();
+	}
+
+	public function testTheRenderedSectionOfAFinishedVideoHasTheLinksTheButtonAndTheTrack(): void {
+		$this->file(7, 'Sitzung.webm');
+
+		$html = self::page($this->response(7));
+
+		self::assertSame(3, substr_count($html, 'class="button avs-export__download"'));
+		self::assertLessThan(strpos($html, 'format=vtt'), strpos($html, 'format=srt'));
+		self::assertLessThan(strpos($html, 'format=txt'), strpos($html, 'format=vtt'));
+		self::assertStringContainsString('id="avs-sidecar"', $html);
+		self::assertSame(1, preg_match('#<track kind="subtitles" src="[^"]*audio_video_search\.export\.track[^"]*" srclang="de" label="German, subtitle draft">#', $html));
+		self::assertStringNotContainsString(' default', $html);
+		for ($number = 1; $number <= 7; $number++) {
+			self::assertStringContainsString('id="avs-sidecar-e' . $number . '"', $html);
+		}
+	}
+
+	public function testAnAudioFileGetsTheSectionButNoTrack(): void {
+		$this->file(7, 'Sitzung.mp3', 'audio/mpeg');
+
+		$html = self::page($this->response(7));
+
+		self::assertStringContainsString('avs-export__download', $html);
+		self::assertStringNotContainsString('<track', $html);
+	}
+
+	public function testTheRenderedBlockedSectionHasTheHintOnlyAndNoAddressOfTheExport(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+
+		$html = self::page($this->response(4));
+
+		self::assertStringContainsString('class="avs-export"', $html);
+		self::assertStringContainsString('avs-export__hint', $html);
+		foreach (['avs-export__download', 'avs-sidecar', '<track', 'audio_video_search.export', '/export/', '/track/', '/sidecar/'] as $absent) {
+			self::assertStringNotContainsString($absent, $html);
+		}
+	}
+
+	// -- the download entry of the native player (owner, UI acceptance 16.11.2026) -------------
+
+	public function testOnlyAClearAllowedLeavesTheDownloadEntryOfThePlayer(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->file(6, 'Geteilt/Offen.webm', storage: $this->sharedStorage(true));
+		$this->file(7, 'Sitzung.webm');
+		$this->file(8, 'Geteilt/Unklar.webm', storage: $this->unreadableShare());
+
+		self::assertTrue($this->play(4)['mediaNoDownload']);
+		self::assertTrue($this->play(8)['mediaNoDownload']);
+		// Positive control: an own file and a share with download keep the entry.
+		self::assertFalse($this->play(6)['mediaNoDownload']);
+		self::assertFalse($this->play(7)['mediaNoDownload']);
+		self::assertTrue($this->play(5)['mediaNoDownload']);
+	}
+
+	public function testTheRenderedMediumOfABlockedShareCarriesNoDownloadAndAnOpenOneDoesNot(): void {
+		$this->file(4, 'Geteilt/Sitzung.webm', storage: $this->sharedStorage(false));
+		$this->file(7, 'Sitzung.webm');
+		$this->file(8, 'Geteilt/Unklar.mp3', 'audio/mpeg', storage: $this->unreadableShare());
+		$this->exportNeverAsked = true;
+
+		$blocked = self::page($this->response(4));
+		self::assertSame(1, preg_match('#<video id="avs-media" [^>]*\bcontrols controlslist="nodownload" #', $blocked));
+		self::assertSame(1, preg_match('#<audio id="avs-media" [^>]*\bcontrols controlslist="nodownload" #', self::page($this->response(8))));
+
+		$this->exportNeverAsked = false;
+		$open = self::page($this->response(7));
+		self::assertStringContainsString('<video id="avs-media" ', $open);
+		self::assertStringNotContainsString('controlslist', $open);
+	}
+
+	public function testAPageWithoutASectionRendersTheSameBytesForExcludedAndUnknown(): void {
+		$this->file(7, 'Sitzung.webm');
+		$this->t = '42.0';
+
+		$this->excerpt = self::unknownFile();
+		$this->exportMeta = ['known' => false];
+		$unknown = self::page($this->response(7));
+		self::assertStringNotContainsString('avs-export', $unknown);
+
+		// Positive control: a file with a transcript renders the section.
+		$this->exportMeta = self::meta();
+		self::assertStringContainsString('avs-export', self::page($this->response(7)));
+
+		$this->excludedUsers = [self::UID];
+		$this->excerpt = self::found(['reason' => 'no_speech']);
+		$this->exportNeverAsked = true;
+		$this->containerNeverAsked = true;
+		$excluded = self::page($this->response(7));
+
+		self::assertSame($unknown, $excluded);
+	}
+
+	// -- the route ----------------------------------------------------------------------
+
+	public function testTheRouteNeedsASessionButNoAdminAndNoToken(): void {
+		$method = new \ReflectionMethod(PageController::class, 'play');
+		$names = array_map(static fn (\ReflectionAttribute $attribute): string => $attribute->getName(), $method->getAttributes());
+
+		self::assertContains(\OCP\AppFramework\Http\Attribute\NoAdminRequired::class, $names);
+		self::assertContains(\OCP\AppFramework\Http\Attribute\NoCSRFRequired::class, $names);
+		self::assertContains(\OCP\AppFramework\Http\Attribute\FrontpageRoute::class, $names);
+		self::assertNotContains(\OCP\AppFramework\Http\Attribute\PublicPage::class, $names);
+		self::assertNotContains(\OCP\AppFramework\Http\Attribute\ExAppRequired::class, $names);
+
+		foreach ($method->getAttributes(\OCP\AppFramework\Http\Attribute\FrontpageRoute::class) as $route) {
+			$arguments = $route->getArguments();
+			self::assertSame('GET', $arguments['verb']);
+			self::assertSame('/play/{fileId}', $arguments['url']);
+			self::assertSame(['fileId' => '\d+'], $arguments['requirements']);
+		}
+	}
+}

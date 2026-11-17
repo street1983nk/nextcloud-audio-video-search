@@ -1,0 +1,181 @@
+# Discovery acceptance test
+
+The acceptance test of phase 2 (D-02-07), run by the workflow
+`Discovery acceptance` (`.github/workflows/discovery-e2e.yml`). Findling #25
+passed three times because only the single parts were tested; this test runs
+the whole discovery path on a real Samba server and compares the result with a
+count that never runs code of this app.
+
+- `topology.sh` builds the instance and runs the operations of the phases.
+- `truth.sh` (plan 02-04) writes `truth-<phase>.json` out of find, smbclient,
+  the S3 API, sqlite3 on `data/owncloud.db` and sha256sum, never out of code of
+  this app.
+- `ledger.sh` notes every test result the test seeds itself, so the expected
+  `transcribed` is known without asking the app.
+- `compare.sh` waits for the work stock, compares each phase exactly and tests
+  itself first (`--self-test`: N_active+1, Y+1, transcribed+1 and an injected
+  access log line each have to fail on their own).
+- `controls.sh` holds the positive controls: `samba`, `access-log` and, in the
+  job `leak-control`, `leak`.
+- `common.sh` carries the order of the phases and the shared helpers; it is
+  sourced by the four scripts and stays free of app code like `truth.sh`.
+- `ids.env` is written in CI only; it is the one place that pairs a test file
+  with its file id.
+
+The job stays red until the discovery exists (plan 02-01: the failing
+acceptance test comes first). One leg runs per push; `workflow_dispatch` with
+`legs=all` runs the six legs of `deploy-harp.yml`. The second job,
+`leak-control`, runs an image built out of a patched copy of `backend/` without
+the read proof; it has to show the leak the main legs must never show
+(D-02-10). That image only ever lives in the local registry of the runner.
+
+## Persons
+
+| Person | Role |
+|--------|------|
+| ana | Samba and Nextcloud, owns the home media, the M3/M5 mounts and the shares |
+| ben | Samba and Nextcloud, denied `gesperrt.webm` by Samba, member of `team`, ACL in the team folder, excluded after the first run |
+| cem | Samba and Nextcloud, alone in `nur-cem/`, gets a reshare, loses `widerruf.webm` and later the mount M1 |
+| dan | own home medium, receives a share out of the SMB mount, is deleted |
+| eva | excluded before the first run, receives a share from ana |
+| fritz | member of the group `extern`, which is excluded before the first run |
+
+## Mounts
+
+| Mount | Backend and authentication | Users |
+|-------|----------------------------|-------|
+| M1 `/SMB` | smb, `password::logincredentials`, `timeout=20` (fallback: one personal `password::password` mount per user, logged) | ana, ben, cem |
+| M2 `/SMB-Sitzung` | smb, `password::sessioncredentials` | ana |
+| M3 `/SMB-Teil` | smb, `password::password`, root `gemeinsam` | ana |
+| M4 `/Lokal` | local | ana, cem |
+| M5 `/S3` | amazons3 against SeaweedFS (MinIO publishes no image any more) | ana |
+
+## Cases
+
+| Case | Statement | Decision |
+|------|-----------|----------|
+| SMB share in M1 for three users, `nur-ana/` and `nur-cem/` by Unix mode | every user's view is captured, one file reference per user and file | D-02-01, D-02-02 |
+| `doppelt/a.webm` and `doppelt/b.webm`, same bytes | two files, one content | D-02-01 |
+| `gesperrt.webm` with DENY READ for ben (A6) | ben's copy is unreadable, never attached, no hit for ben | D-02-01a |
+| leak-control image without the read proof | the same case shows the leak there, so the test can see it | D-02-01a, D-02-10 |
+| `widerruf.webm`, DENY READ for cem later | the renewed read proof removes cem's hits at once | D-02-12 |
+| `klein.ogg`, below 64 KiB | the read proof works on a file shorter than its window | D-02-01a |
+| M2 with session credentials | skipped with a reason, no file name in the message; M2 lies on the share of M1, so its files have the file ids of ana's M1 view and are captured through M1: they are fetched only as a user of such a mount (`sessionShared`), an id that only M2 reaches is never fetched. The access log names user and file id, not the mount | D-02-03 |
+| M3, same share with another root | the prefilter key normalises the root into the path | D-02-01 |
+| M4 local, M5 S3 | external storages are captured out of the box | DISC-02 |
+| team folder `Team`, ben `+read -share` on `frei/`, `-read` on `intern/` | one file reference per team folder file, the reader is a member who may read | D-02-02 |
+| shares ana to ben, reshare ben to cem, ana to eva, `/SMB/gemeinsam` ana to dan | a shared file stays one file id; recipients find it, the excluded eva does not | D-02-02, D-02-08 |
+| files_accesscontrol rule on the tag `avs-sperre` | the gateway answers access_control, the reference is unreadable | DISC-05 |
+| eva, group `extern`, folder `privat` excluded before the first run | never in the work stock, never in the access log | D-02-05, D-02-08 |
+| `upload_new`, `overwrite` | a new file is in the work stock within minutes; an overwrite gives a new content, the old one is orphaned | DISC-04, D-02-13 |
+| `copy_in_home`, `move_home_to_team` | same content, at most one download | DISC-06 |
+| `rename_in_home`, `tag_file` | no download, same content | DISC-06 |
+| `trash_file`, `restore_file` | trashed is not counted and not found, a restore brings it back without a download | D-02-09 |
+| `exclude_user_after` (ben) | ben's own storages go, ana's copies of the same share stay with their transcript | D-02-08, D-02-11 |
+| `exclude_storage_after` (M3) | M3's references go, the contents stay through M1 | D-02-04 |
+| `exclude_after` (folder `archiv-spaeter`) | x is forgotten, z keeps transcript and correction through `gemeinsam/` | D-02-04 |
+| `vanish_cem` (cem leaves M1) | cem's references are vanished and not counted | D-02-07 |
+| `delete_dan` | dan's references go, his content is only orphaned | D-02-13 |
+| `reattach` (dan's bytes into ana's home) | the new file attaches to the orphaned content and keeps its transcript | D-02-13 |
+| `foreign_change` (file replaced on the Samba side) | after a rescan the work stock holds the new hash | DISC-04 |
+
+## Phase search-parity (plan 03-17)
+
+The rights parity of the search in the HTTP path (SRCH-03), as the last phase
+of the same run. The job puts the speech models into the volume of the ExApp
+before it is registered (the air gap way of plan 03-07, cache key
+`avs-models-<MODEL_SHA256>` as in `python.yml`), and `/init` has to report 100
+with outcome `present` for both models and no download. The speech clip
+(`AVS_SPEECH_DE`, FLEURS DE, `ci/media/fetch_speech.py`) is the content; the
+search term is `AVS_SPEECH_WORD`.
+
+`topology.sh parity_place` puts the clip at these places:
+
+| Copy | Who reads it | Expected hit |
+|------|--------------|--------------|
+| `rede-geteilt.wav` in ana's home, shared with cem, the share revoked later | ana | ana; cem only before the revocation |
+| `rede-papierkorb.wav` in ana's home, deleted later (trash) | nobody after the deletion | ana only before the deletion |
+| `Team/rede-frei/rede.wav`, cem `+read -share` (cem joins `team`) | ana, cem, ben | ana, cem |
+| `Team/rede-intern/rede.wav`, cem `-read` | ana, ben | ana |
+| `rede-gesperrt.wav` on the Samba share, DENY READ for ana (ben is excluded and cem has no SMB mount any more by then) | ben only, who is excluded | none |
+| `rede-sperre.wav` in ana's home under the `avs-sperre` rule of files_accesscontrol (a tone first, then the tag, then the clip from the command line) | nobody | none |
+| `rede-eva.wav` in eva's home (excluded before the first run), shared with cem | eva, cem | none: excluded person and excluded owner |
+
+`parity.sh` holds the verdict:
+
+- Truth, without code of this app: every file of each person (ana, ben, cem,
+  eva, fritz; dan is deleted) through WebDAV PROPFIND folder by folder
+  (`oc:fileid`, `oc:owner-id`), every `.wav` fetched with GET as that person
+  and compared by `sha256sum` with the clip. Readable and the same bytes is an
+  expected hit, minus the rules the test itself set: the excluded persons (eva,
+  fritz, ben), copies they own, the folders `privat` and `archiv-spaeter` and
+  ana's mount `SMB-Teil`.
+- Product: `GET /ocs/v2.php/search/providers/audio_video_search/search` with
+  `limit=25` as each person, following the cursor to the last page.
+- Per person `parity <person> erwartet=<ids> gefunden=<ids>`, the same set,
+  no file id twice over the pages, every hit marked `Vorläufig`,
+  `Preliminary` or `Provisoire`; ana and cem need at least one hit each, so
+  "no hit for anybody" cannot pass. The truth has to say no as well: ana sees
+  the Samba and the files_accesscontrol copy and reads neither.
+- Self test before the verdict: an extra expected id, a missing id, a file id
+  twice and a hit without the preliminary word each have to fail on their own;
+  then `PARITY CONTROL SHOWED THE DIFF`, otherwise `PARITY SELF-TEST FAILED`
+  and no verdict.
+- `occ audio_video_search:status` serves the waiting only: the preview of the
+  clip is done (`byPreview.complete` above the count before the clip, nothing
+  running) and ana sees a first hit.
+- `parity.sh settle` runs once before the phases: with the models present the
+  preview fetches every test medium through the gateway, and those lines must
+  not fall into the window of a later phase. Bounded, never a verdict.
+
+## Phase play-leak (plan 03-18b, D-03-24)
+
+The leak probe P12 of the UI-SPEC on the real play page: a reference that is
+not `active` for the person who opens `/index.php/apps/audio_video_search/play/<fileId>?t=<s>`
+shows the excerpt block of a file without a transcript (A5), byte for byte,
+and nothing of the transcript, the reason or the stage. deploy-harp cannot
+reach the case (one reference per file id, read as the owner), so it lives
+here, as the 22nd phase. `playpage.sh` holds it:
+
+- `p12a`, never active: ana opens `SMB/rede-gesperrt.wav` (Samba denies her
+  the bytes before Nextcloud saw the file; the page is ready because Nextcloud
+  lists the file as readable, the read proof fails). The positive control is
+  `rede-geteilt.wav` in her home, the same clip, an active reference, opened
+  at the time mark of its first search hit; its block has to carry the clip
+  word. The probe uses the same time mark and must not be a hit of ana's search.
+- `p12b`, revoked: cem opens `SMB/widerruf.webm`. In the phase reprove,
+  `playpage.sh before-revoke` saves the reference and cem's page while his
+  reference is active (positive control), `playpage.sh after-revoke` saves his
+  page after `revoke_cem`, `reconcile --reprove` and `compare.sh reprove`,
+  before `vanish` takes his mount away. Neither gives a verdict of the phase.
+- The reference for A5 is ana's `privat/p.webm` (folder excluded before the
+  first run). `check` fetches it again and has to see the same bytes as in the
+  phase reprove.
+- Two independent patterns per probe: the bytes of the block against the
+  reference (`same_bytes`), and the structure against the literal texts of the
+  UI-SPEC table in English (`is_a5`: one label "Excerpt at this point", one hint
+  "There is no transcript for this file yet.", no excerpt, no note, neither the
+  clip word nor the sentence T5).
+- The state of the reference comes from two sources: `occ
+  audio_video_search:files --json --all` and a copy of `state.db` read with
+  sqlite3 of the runner. Both need a row, both have to agree, neither may say
+  `active`.
+- INVALID, never PASS: the page is not ready (no medium, no block), the
+  reference is active, unknown or the two sources disagree, or the control
+  shows no difference. Only `PLAY CONTROL SHOWED THE DIFF p12a` and `... p12b`,
+  both probes PASS and the self test give `PHASE PASS play-leak`.
+- `playpage.sh --self-test` runs offline on synthetic pages in a temporary
+  folder: the probe equal to the reference passes; a blockquote, the sentence
+  T5, one more space (bytes only, the structure alone passes) and another A5
+  text (both patterns) fail; a page without the block, a control equal to the
+  reference, an active reference, an unknown reference and two disagreeing
+  sources are INVALID. `check` runs it first; without `PLAY SELF-TEST PASSED`
+  there is no verdict.
+- The pages are fetched with basic auth; when that gives no page the script
+  says `NOTE basic auth refused (http=N), signing in with a session` and signs
+  in through `/index.php/login`. The saved pages (`play-*.html`) are the
+  evidence in the logs artifact; the look of the block is the screenshot of P4
+  in deploy-harp (owner 14.11.2026).
+- files_accesscontrol (`rede-sperre.wav`) does not fit P12: the rule takes the
+  read permission out of the cache entry, so the play page is not ready and
+  shows no block to compare.

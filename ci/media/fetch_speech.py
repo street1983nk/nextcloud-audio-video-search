@@ -1,0 +1,329 @@
+"""Gepinnte Sprachclips für CI, Modelltests und Abnahme laden (plan 03-02).
+
+python -I ci/media/fetch_speech.py OUTDIR [--ffmpeg PFAD]
+python -I ci/media/fetch_speech.py OUTDIR --s7-env   (lädt nichts, Zeilen für GITHUB_ENV, Plan 04-14)
+ffmpeg kommt aus --ffmpeg, sonst aus der Umgebungsvariable AVS_FFMPEG, sonst aus PATH.
+
+Quelle und Lizenz: FLEURS, Google, CC-BY-4.0 (Hugging Face google/fleurs, feste Revision unten).
+Je Clip wird das Test-Archiv der Sprache als Strom gelesen, nur das eine benannte Mitglied
+angenommen (nie extractall, kein Pfadteil des Archivs wird übernommen), sein sha256 gegen den
+festen Wert geprüft und erst dann per ffmpeg nach OUTDIR/<name> als 16 kHz mono s16 WAV gewandelt.
+Der sha256 des Archivmitglieds ist der verbindliche Pin. Weicht nur der sha256 der WAV-Ausgabe ab
+(andere ffmpeg-Version), gibt es eine Warnung mit beiden Werten und trotzdem Exit 0.
+Exit 2: Aufruf falsch oder ffmpeg fehlt. Exit 3: Mitglied fehlt oder sha256 weicht ab, keine Datei.
+Audiodaten gehören nie ins Repo; OUTDIR liegt außerhalb.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.parse
+import urllib.request
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import IO
+
+DATASET = "google/fleurs"
+REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+# Alle Mitglieder der FLEURS-Testarchive liegen unter diesem Ordner.
+TAR_MEMBER_DIR = "test/"
+ATTRIBUTION = "FLEURS, Google, CC-BY-4.0"
+FFMPEG_MISSING = "ffmpeg not found: pass --ffmpeg or set AVS_FFMPEG"
+# Hugging Face leitet LFS/Xet-Dateien auf CDN-Hosts unter hf.co weiter.
+ALLOWED_HOSTS = ("huggingface.co",)
+ALLOWED_HOST_SUFFIXES = (".hf.co", ".huggingface.co")
+EXIT_USAGE = 2
+EXIT_PIN = 3
+
+
+@dataclass(frozen=True)
+class S7Targets:
+    """Die vorab gemessenen Zielformen eines S7-Clips (Plan 04-14, Erfolgskriterium 1 der Phase 4).
+
+    number_word, plural und compound stehen so im gemessenen Parakeet-Transkript (gefaltet
+    verglichen); number_forms sind Ziffer, DE, EN und FR derselben Zahl, singular und head die
+    Suchbegriffe, die über Wortform beziehungsweise Präfix-Klausel auf die Datei führen. key
+    benennt den Clip in der Umgebung der E2E-Schritte (AVS_SPEECH_<key>, FILEID_<key>).
+    """
+
+    key: str
+    number_word: str
+    number_forms: tuple[str, str, str, str]
+    compound: str
+    head: str
+    plural: str | None = None
+    singular: str | None = None
+
+
+@dataclass(frozen=True)
+class Clip:
+    name: str
+    tar_path: str
+    member: str
+    member_sha256: str
+    wav_sha256: str
+    duration_s: float
+    expected_word: str | None = None
+    expected_text: str | None = None
+    s7: S7Targets | None = None
+
+
+SPEECH_DE = Clip(
+    name="speech_de.wav",
+    tar_path="data/de_de/audio/test.tar.gz",
+    member="10009182821551087671.wav",
+    member_sha256="90d0470adf728783e98cc8dddd51e2c2cbf0d6bf360da65f7d2ac5c3e65876aa",
+    wav_sha256="97d77a9d323b903dcc10c608521fa07fb78766d4b65d016ba620caae442dece9",
+    duration_s=11.16,
+    expected_word="dinosaurier",
+    expected_text=(
+        "Er griff auch alles an, was ins Wasser kam; selbst ein großer Dinosaurier wie der T. Rex war ihm nicht "
+        "gewachsen."
+    ),
+)
+# Türkisch: von Parakeet v3 nicht unterstützt, für den Grund "Sprache nicht unterstützt".
+SPEECH_TR = Clip(
+    name="speech_tr.wav",
+    tar_path="data/tr_tr/audio/test.tar.gz",
+    member="10000377651956138413.wav",
+    member_sha256="e2efd9f3ce2fcc9e191126dcded8e674233a9ce83a9c2132541700e8f1bd57c3",
+    wav_sha256="bee83b904f9c506159b0d026b66e7372839b63bc76591341c62ea73601d3dd31",
+    duration_s=14.16,
+)
+# Spanisch (D-03-22): Parakeet v3 transkribiert es sauber, die Abfangregel verwirft es über die
+# Text-Sprachkennung; Gegenstück zu TR, wo Parakeet fast nichts ausgibt.
+SPEECH_ES = Clip(
+    name="speech_es.wav",
+    tar_path="data/es_419/audio/test.tar.gz",
+    member="1001146817223348054.wav",
+    member_sha256="861ceedc4d50fbe52fc89b6d0c0fa740b9cd6fa668388e754064847386af0faf",
+    wav_sha256="95df54f13e862069293afca618669316d194c1b4c6601eb808b501c86292b527",
+    duration_s=12.84,
+    expected_text=(
+        "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima extremo en el "
+        "área que visitan, dado que ello puede afectar sus planes de viaje."
+    ),
+)
+# S7 (Plan 04-14): Sätze, deren Parakeet-Transkript vorab gemessen ist (zwei gleiche Läufe,
+# scripts/research/phase4/measure_s7_sentences.py, 16.11.2026). expected_text ist das gemessene
+# Transkript, nicht der FLEURS-Referenztext; expected_word ist die Zahlform, die Parakeet schreibt.
+# FLEURS kennt kein Kompositum mit Kopf "Haushalt"; den wörtlichen Fall beweist test_compounds.py.
+SPEECH_S7_DE = Clip(
+    name="speech_s7_de.wav",
+    tar_path="data/de_de/audio/test.tar.gz",
+    member="7739349083395946674.wav",
+    member_sha256="f451f0cb4df52872a837745ddeae9c640a2450483d4b1b9a5faf620735c5c3b2",
+    wav_sha256="bd7c8d0e869d9c0216823fb6803dcba6b5bf4434b6c73c57122df258c05087cb",
+    duration_s=22.8,
+    expected_word="zwanzig",
+    expected_text=(
+        "Eine Autobombe detonierte am Morgen des gestrigen Tages im Polizeipräsidium des türkischen Gazi Antep, "
+        "tötete zwei Polizisten und verwundete über zwanzig weitere Menschen."
+    ),
+    s7=S7Targets(
+        key="S7_DE",
+        number_word="zwanzig",
+        number_forms=("20", "zwanzig", "twenty", "vingt"),
+        compound="Polizeipräsidium",
+        head="Polizei",
+        plural="Polizisten",
+        singular="Polizist",
+    ),
+)
+# Gegenstück: hier schreibt Parakeet die Zahl als Ziffer ("12"), das Zahlwort zwölf muss sie finden.
+SPEECH_S7_DE_DIGIT = Clip(
+    name="speech_s7_de_digit.wav",
+    tar_path="data/de_de/audio/test.tar.gz",
+    member="11014175886747870273.wav",
+    member_sha256="f62551ec2ec42f69ae29b6147e6954b62a3a46fcaf520265af301e9fa9a46c61",
+    wav_sha256="3e2e231c7a25b5d4e266ba7d451cf34efd62faf0e0ebb585634480375492a6e9",
+    duration_s=7.98,
+    expected_word="12",
+    expected_text=(
+        "Das Seitenverhältnis dieses Formats geteilt durch 12 und das einfachste ganzzeilige Verhältnis zu "
+        "erhalten, wird daher als 3 zu 2 bezeichnet."
+    ),
+    s7=S7Targets(
+        key="S7_DE_DIGIT",
+        number_word="12",
+        number_forms=("12", "zwölf", "twelve", "douze"),
+        compound="Seitenverhältnis",
+        head="Seite",
+    ),
+)
+S7_CLIPS = (SPEECH_S7_DE, SPEECH_S7_DE_DIGIT)
+CLIPS = (SPEECH_DE, SPEECH_TR, SPEECH_ES, *S7_CLIPS)
+EXPECTED_WORD = SPEECH_DE.expected_word
+EXPECTED_TEXT = SPEECH_DE.expected_text
+
+
+class PinError(Exception):
+    """The archive does not hold the pinned member with the pinned sha256."""
+
+
+def ffmpeg_binary(argv_value: str | None) -> str:
+    """ffmpeg in der Reihenfolge --ffmpeg, AVS_FFMPEG, PATH; fehlt es, Abbruch mit Exit 2."""
+    chosen = argv_value or os.environ.get("AVS_FFMPEG") or "ffmpeg"
+    found = shutil.which(chosen)
+    if found is None:
+        print(f"{FFMPEG_MISSING} (tried {chosen!r})", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
+    return found
+
+
+def clip_url(clip: Clip) -> str:
+    return f"https://huggingface.co/datasets/{DATASET}/resolve/{REVISION}/{clip.tar_path}"
+
+
+def host_allowed(url: str) -> bool:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and (host in ALLOWED_HOSTS or host.endswith(ALLOWED_HOST_SUFFIXES))
+
+
+def read_member(tar_stream: IO[bytes], name: str) -> bytes:
+    """Bytes genau des Mitglieds TAR_MEMBER_DIR + name, ohne Pin; schreibt nichts auf die Platte.
+
+    Nur für die Vorabmessung neuer Clips (scripts/research/phase4/measure_s7_sentences.py), die
+    den sha256 erst ermittelt; jeder Abruf für CI und Tests geht über pick_member mit Pin.
+    """
+    if "/" in name or "\\" in name or ".." in name or not name:
+        raise ValueError(f"member name must be a plain file name: {name!r}")
+    wanted = TAR_MEMBER_DIR + name
+    with tarfile.open(fileobj=tar_stream, mode="r|gz") as archive:
+        for member in archive:
+            if member.name != wanted:
+                continue
+            if not member.isfile():
+                raise PinError(f"{wanted} is not a regular file")
+            handle = archive.extractfile(member)
+            if handle is None:
+                raise PinError(f"{wanted} has no data")
+            return handle.read()
+    raise PinError(f"{wanted} not in archive")
+
+
+def pick_member(tar_stream: IO[bytes], name: str, sha256: str) -> bytes:
+    """Bytes genau des Mitglieds TAR_MEMBER_DIR + name mit diesem sha256; schreibt nichts auf die Platte."""
+    data = read_member(tar_stream, name)
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != sha256:
+        raise PinError(f"{TAR_MEMBER_DIR + name}: sha256 {actual}, expected {sha256}")
+    return data
+
+
+def to_wav(ff: str, src: Path, dst: Path) -> None:
+    # Argumentliste ohne Shell; bitexact und ohne Metadaten, damit die Ausgabe nicht von der ffmpeg-Version abhängt.
+    subprocess.run(  # noqa: S603
+        [
+            ff,
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-fflags",
+            "+bitexact",
+            "-flags:a",
+            "+bitexact",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(dst),
+        ],
+        check=True,
+    )
+
+
+def fetch(clip: Clip, out_dir: Path, ff: str) -> bool:
+    """Clip laden und wandeln; True, wenn auch der WAV-sha256 stimmt."""
+    url = clip_url(clip)
+    if not host_allowed(url):
+        raise PinError(f"host outside the allowlist: {urllib.parse.urlsplit(url).hostname}")
+    # Schema und Host oben geprüft (nur https, Allowlist)
+    request = urllib.request.Request(url, headers={"User-Agent": "audio-video-search-ci/1.0"})  # noqa: S310
+    with urllib.request.urlopen(request, timeout=300) as response:  # noqa: S310
+        final_host = urllib.parse.urlsplit(response.geturl()).hostname
+        if not host_allowed(response.geturl()):
+            raise PinError(f"redirect to a host outside the allowlist: {final_host}")
+        data = pick_member(response, clip.member, clip.member_sha256)
+    dst = out_dir / clip.name
+    with tempfile.TemporaryDirectory(dir=out_dir) as scratch:
+        raw = Path(scratch) / "member.wav"
+        raw.write_bytes(data)
+        to_wav(ff, raw, dst)
+    wav_sha = hashlib.sha256(dst.read_bytes()).hexdigest()
+    print(f"{clip.name}: member {clip.member} sha256 {clip.member_sha256} ok, wav sha256 {wav_sha}", flush=True)
+    if wav_sha != clip.wav_sha256:
+        print(
+            f"warning: {clip.name} wav sha256 {wav_sha} differs from {clip.wav_sha256} (other ffmpeg version?)",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def s7_env_lines(clip_dir: Path) -> list[str]:
+    """Die Zeilen für GITHUB_ENV: Pfad je S7-Clip und die Zielformen als eine JSON-Zeile (Plan 04-14)."""
+    lines: list[str] = []
+    targets: list[dict[str, object]] = []
+    for clip in S7_CLIPS:
+        if clip.s7 is None:
+            raise PinError(f"{clip.name} has no S7 targets")
+        path = clip_dir / clip.name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise PinError(f"{clip.name} is missing in {clip_dir}; fetch the clips first")
+        lines.append(f"AVS_SPEECH_{clip.s7.key}={path}")
+        targets.append(asdict(clip.s7))
+    lines.append("AVS_S7_TARGETS=" + json.dumps(targets, ensure_ascii=False, separators=(",", ":")))
+    return lines
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Fetch the pinned FLEURS speech clips (" + ATTRIBUTION + ").")
+    parser.add_argument("outdir")
+    parser.add_argument("--ffmpeg")
+    parser.add_argument(
+        "--s7-env",
+        action="store_true",
+        help="fetch nothing; print the S7 clip paths under OUTDIR and their target forms for GITHUB_ENV",
+    )
+    args = parser.parse_args(argv)
+    if args.s7_env:
+        try:
+            lines = s7_env_lines(Path(args.outdir))
+        except PinError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_PIN
+        sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))
+        return 0
+    ff = ffmpeg_binary(args.ffmpeg)
+    out_dir = Path(args.outdir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for clip in CLIPS:
+        try:
+            fetch(clip, out_dir, ff)
+        except PinError as error:
+            (out_dir / clip.name).unlink(missing_ok=True)
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_PIN
+    print(f"source: {ATTRIBUTION}, {DATASET}@{REVISION}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

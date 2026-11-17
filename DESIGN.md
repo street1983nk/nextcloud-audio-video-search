@@ -1,6 +1,6 @@
 ---
 name: Audio & Video Search
-description: TODO(skeleton) ein Satz, was die Oberfläche zeigt. Gestaltet als Teil der Nextcloud-Oberfläche ohne eigene Marke.
+description: Treffer aus Audio und Video in der Nextcloud-Suche, eine Abspielansicht für genau einen Treffer und ein Admin-Statusbereich für beide Apps. Gestaltet als Teil der Nextcloud-Oberfläche ohne eigene Marke.
 colors:
   color-primary-element: "#00679e"
   color-primary-element-text: "#ffffff"
@@ -59,7 +59,7 @@ components:
 
 # Design System: Audio & Video Search
 
-Vorlage aus nextcloud-exapp-skeleton. Folgt der Skill nextcloud-ui; diese Datei hat bei UI-Arbeit Vorrang vor der Skill. Die mit TODO(skeleton) markierten Stellen füllt jede App selbst.
+Hervorgegangen aus der Vorlage von nextcloud-exapp-skeleton. Folgt der Skill nextcloud-ui; diese Datei hat bei UI-Arbeit Vorrang vor der Skill. Die Einzelheiten der Flächen in Phase 1 stehen in `.planning/phases/01-zwei-app-ger-st-und-integrationsbeweis/01-UI-SPEC.md`.
 
 ## Overview
 
@@ -67,18 +67,26 @@ Die App hat kein eigenes Erscheinungsbild und soll keins bekommen. Jede Oberflä
 
 Stufen der Oberfläche, in dieser Reihenfolge prüfen:
 
-1. **Deklarative Einstellungen** (Standard im Skelett, `src/audio_video_search/settings.py`): AppAPI rendert das Formular mit Nextcloud-Komponenten. Kein eigenes CSS, kein Build-Schritt.
+1. **Deklarative Einstellungen** (Standard im Skelett, `backend/src/audio_video_search_backend/settings.py`): AppAPI rendert das Formular mit Nextcloud-Komponenten. Kein eigenes CSS, kein Build-Schritt.
 2. **Eigene Seite mit Vue** nur wenn Stufe 1 nicht reicht: `@nextcloud/vue` 9 wie in Gameworld, Komponenten statt Eigenbau, ausgeliefert über `js/` im Container und `nc.ui.resources`.
 3. **PHP-Templates** nur in einer PHP-Begleit-App (siehe SKELETON.md, Abschnitt PHP-Begleit-App).
 
-TODO(skeleton): welche Stufe diese App nutzt und warum.
+**Gewählt: Stufe 3.** PHP-Templates in der Begleit-App `audio_video_search`, weil Unified Search und Abspielroute nur dort möglich sind; die ExApp `audio_video_search_backend` hat nur deklarative Einstellungen (Stufe 1).
+
+Flächen in Phase 1:
+
+- **Suchtreffer** in der Unified Search (Provider der PHP-App), Link auf die Abspielroute mit Zeitmarke.
+- **Abspielansicht** `/apps/audio_video_search/play/{fileId}?t=<Sekunden>`: serverseitig gerendert, natives `audio`- bzw. `video`-Element, Zustands-Banner für Fehlerfälle.
+- **Admin-Statusbereich** in der eigenen Sektion "Audio & Video Search": Zustand der Gegen-App, Versionen, "Erneut prüfen", Debug-Schalter für den Testtreffer nur bei `'debug' => true`.
+- Kein npm, kein Bundler, keine Vue-Komponenten; Icons als SVG, Banner nach dem Findling-Muster (`avs-banner`).
+- Keine zerstörende Aktion in der Oberfläche: Testtreffer entfernt nur `occ audio_video_search:sample <fileId> --remove`.
 
 **Key Characteristics:**
 - Nur Nextcloud-CSS-Variablen, kein Farbliteral im Code.
 - Abstände als Vielfache von `var(--default-grid-baseline)`.
 - Schrift des Servers, zwei Gewichte (400, 700), keine Webfonts.
 - Flach: keine Schatten, Zustände über Flächenwechsel.
-- Icons aus Material Design Icons (`vue-material-design-icons`), Größe 20, keine Emojis.
+- Icons aus Material Design Icons als SVG (in Vue `vue-material-design-icons`), Größe 20, keine Emojis.
 
 ## Colors
 

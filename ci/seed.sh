@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# The seed of the integration proof, on a throwaway Nextcloud in CI only.
+#
+# Users, a team folder, two shares and the test media, all over the real
+# paths (occ, WebDAV, the sharing API), and then one test result per media
+# file through occ audio_video_search:sample, which makes the container read
+# the file through the content gateway like a real job does.
+#
+#   alice    owns the media files
+#   bob      receives tone-90s.webm and locked.webm (download switched off)
+#   carol    member of the group "team", reads the team folder "Team"
+#   mallory  reads nothing of the above
+#   dora     admin and member of "team", receives locked.webm and broken.webm,
+#            high contrast theme, only for the screenshots of the high
+#            contrast project
+#   elke     like dora, language de_DE, for the German screenshots
+#   fleur    like dora, language fr_FR, for the French screenshots
+#
+# With AVS_PHASE3_MEDIA=1 (deploy-harp, plan 03-18) the media of phase 3 from
+# ci/make-testmedia.sh come in as well:
+#
+#   alice    owns stille-60s.ogg, kaputt.mp3, geschuetzt.m4a, lang-12h01.flac,
+#            tuerkisch.wav and ohne-ton.mp4 (one reason each) and shares them
+#            with the group "review" (dora, elke and fleur) for the review
+#            projects; lang-40min.ogg
+#            is not seeded, preview.spec.ts uploads it when it needs the
+#            partial state
+#   bob      owns viele-stellen.ogg (four places) and zwei-stellen.ogg (two):
+#            the only files with speech he reads, so the first page of his
+#            search is fixed (S1, S2); viele-stellen.ogg is shared with dora
+#            for the high contrast picture and the contrast measurement (P1)
+#   oskar    excluded from the app by occ, receives stille-60s.ogg: the leak
+#            probe P11 opens a file with a reason as an excluded user
+#
+# With AVS_PHASE4_MEDIA=1 as well (deploy-harp, plan 04-14) the S7 clips of
+# ci/media/fetch_speech.py (AVS_SPEECH_S7_DE, AVS_SPEECH_S7_DE_DIGIT, FLEURS,
+# CC-BY-4.0, transcripts measured beforehand) come in:
+#
+#   alice    owns s7-zahlwort.wav (S7_DE: a number word, a plural, a compound)
+#            and s7-ziffer.wav (S7_DE_DIGIT: Parakeet writes the number as a
+#            digit); s7-zahlwort.wav goes to the group "review" with the
+#            download switched off (SRCH-04 here, X3 in plan 04-17),
+#            s7-ziffer.wav to carol read only with download (the person of
+#            the person filter of S6)
+#   alice    owns S7-Übung.webm (the S7_DE speech as a video, plan 04-17),
+#            shared with the group "review" with download, and the folder
+#            Ablage with s7-ablage.wav, shared with carol with the right to
+#            create files (X5, E3 and E4 change that share for a moment)
+#
+# The passwords come out of the job variables of the throwaway instance, never
+# out of repository secrets. The file ids land in fileids.env for the later
+# steps; this file is the only place that pairs an id with a test file.
+#
+# usage: NC_URL=... OCC=./occ MEDIA_DIR=... ALICE_PASS=... BOB_PASS=...
+#        CAROL_PASS=... MALLORY_PASS=... DORA_PASS=... ELKE_PASS=...
+#        FLEUR_PASS=... [AVS_PHASE3_MEDIA=1 OSKAR_PASS=...
+#        [AVS_PHASE4_MEDIA=1 AVS_SPEECH_S7_DE=... AVS_SPEECH_S7_DE_DIGIT=...]] ci/seed.sh
+# (AVS_PHASE4_MEDIA=1 also needs s7-video.webm and lang-40min-x2.ogg in
+# MEDIA_DIR: ci/make-testmedia.sh makes them when AVS_SPEECH_S7_DE is set)
+set -euo pipefail
+
+: "${NC_URL:?NC_URL is required}"
+: "${OCC:?OCC is required}"
+: "${MEDIA_DIR:?MEDIA_DIR is required (output of ci/make-testmedia.sh)}"
+: "${ALICE_PASS:?}" "${BOB_PASS:?}" "${CAROL_PASS:?}" "${MALLORY_PASS:?}" "${DORA_PASS:?}"
+: "${ELKE_PASS:?}" "${FLEUR_PASS:?}"
+PHASE3="${AVS_PHASE3_MEDIA:-0}"
+if [ "${PHASE3}" = "1" ]; then
+	: "${OSKAR_PASS:?OSKAR_PASS is required with AVS_PHASE3_MEDIA=1}"
+fi
+PHASE4="${AVS_PHASE4_MEDIA:-0}"
+if [ "${PHASE4}" = "1" ]; then
+	# Phase 4 builds on the review group of phase 3; a clip that is missing is a
+	# broken job, never a smaller proof.
+	[ "${PHASE3}" = "1" ] || { echo "AVS_PHASE4_MEDIA=1 needs AVS_PHASE3_MEDIA=1"; exit 1; }
+	: "${AVS_SPEECH_S7_DE:?AVS_SPEECH_S7_DE is required with AVS_PHASE4_MEDIA=1}"
+	: "${AVS_SPEECH_S7_DE_DIGIT:?AVS_SPEECH_S7_DE_DIGIT is required with AVS_PHASE4_MEDIA=1}"
+	test -s "${AVS_SPEECH_S7_DE}" || { echo "AVS_SPEECH_S7_DE is empty or missing"; exit 1; }
+	test -s "${AVS_SPEECH_S7_DE_DIGIT}" || { echo "AVS_SPEECH_S7_DE_DIGIT is empty or missing"; exit 1; }
+fi
+FILEIDS_ENV="${FILEIDS_ENV:-$(dirname "$0")/fileids.env}"
+SERVER_VERSION="${SERVER_VERSION:-}"
+AT_SECONDS=42
+TEAM_FOLDER=Team
+TEAM_GROUP=team
+REVIEW_GROUP=review
+
+occ() {
+	# shellcheck disable=SC2086 # OCC may carry arguments, for example "php occ".
+	${OCC} "$@"
+}
+
+dav() {
+	printf '%s/remote.php/dav/files/%s/%s' "${NC_URL}" "$1" "$2"
+}
+
+# -- users and the group ------------------------------------------------------
+
+add_user() {
+	OC_PASS="$2" occ user:add --password-from-env "$1"
+}
+add_user alice "${ALICE_PASS}"
+add_user bob "${BOB_PASS}"
+add_user carol "${CAROL_PASS}"
+add_user mallory "${MALLORY_PASS}"
+add_user dora "${DORA_PASS}"
+add_user elke "${ELKE_PASS}"
+add_user fleur "${FLEUR_PASS}"
+
+occ group:add "${TEAM_GROUP}"
+occ group:adduser "${TEAM_GROUP}" alice
+occ group:adduser "${TEAM_GROUP}" carol
+for reviewer in dora elke fleur; do
+	occ group:adduser "${TEAM_GROUP}" "${reviewer}"
+	occ group:adduser admin "${reviewer}"
+done
+occ user:setting dora theming enabled-themes '["light-highcontrast"]'
+# Set before the first login: Nextcloud stores the browser language as the
+# user language on the first request of a user who has none.
+occ user:setting elke core lang de_DE
+occ user:setting elke core locale de_DE
+occ user:setting fleur core lang fr
+occ user:setting fleur core locale fr_FR
+
+# -- the team folder ------------------------------------------------------------
+
+# The app store first; the tarball of the matching major line if the store
+# does not deliver inside the job (the mapping as in Findling, read 2026-09-03).
+if occ app:install groupfolders --force; then
+	echo "groupfolders came from the app store"
+else
+	case "${SERVER_VERSION}" in
+		stable33) tag='v21.0.15' ;;
+		stable34) tag='v22.0.6' ;;
+		*) tag='' ;;
+	esac
+	if [ -n "${tag}" ]; then
+		curl -sfSL -o "${RUNNER_TEMP:-/tmp}/groupfolders.tar.gz" \
+			"https://github.com/nextcloud-releases/groupfolders/releases/download/${tag}/groupfolders-${tag}.tar.gz"
+		tar -xzf "${RUNNER_TEMP:-/tmp}/groupfolders.tar.gz" -C apps
+		echo "groupfolders came from the tarball ${tag}"
+	fi
+fi
+occ app:enable -f groupfolders
+
+# groupfolders:create writes the id of the new folder and nothing else.
+folder_id=$(occ groupfolders:create "${TEAM_FOLDER}")
+occ groupfolders:group "${folder_id}" "${TEAM_GROUP}" read write share delete
+
+# -- the media ------------------------------------------------------------------
+
+upload() {
+	local user="$1" pass="$2" source="$3" target="$4"
+	curl -sfS -u "${user}:${pass}" -T "${source}" "$(dav "${user}" "${target}")"
+}
+
+broken="$(mktemp)"
+head -c 512 /dev/urandom > "${broken}"
+
+upload alice "${ALICE_PASS}" "${MEDIA_DIR}/tone-90s.webm" tone-90s.webm
+upload alice "${ALICE_PASS}" "${MEDIA_DIR}/tone-90s.ogg" tone-90s.ogg
+upload alice "${ALICE_PASS}" "${MEDIA_DIR}/tone-90s.webm" "${TEAM_FOLDER}/tone-90s.webm"
+upload alice "${ALICE_PASS}" "${broken}" broken.webm
+upload alice "${ALICE_PASS}" "${MEDIA_DIR}/tone-90s.webm" locked.webm
+rm -f "${broken}"
+
+# -- the shares -----------------------------------------------------------------
+
+# Nextcloud limits the creation of shares to 20 per user in 600 s
+# (ShareAPIController::createShare, #[UserRateLimit(limit: 20, period: 600)],
+# stable33 to stable35); the 21st answers 429. The seed stays under it on the
+# default configuration of the instance instead of raising the limit, and
+# counts every share, so a later change fails here with a clear message.
+SHARE_LIMIT=20
+declare -A SHARES_MADE=()
+count_share() {
+	local user="$1"
+	SHARES_MADE[${user}]=$(( ${SHARES_MADE[${user}]:-0} + 1 ))
+	if [ "${SHARES_MADE[${user}]}" -gt "${SHARE_LIMIT}" ]; then
+		echo "the seed would create more than ${SHARE_LIMIT} shares as ${user} in 600 s; Nextcloud answers 429 from share $(( SHARE_LIMIT + 1 )) on"
+		exit 1
+	fi
+}
+
+share() {
+	count_share alice
+	curl -sfS -u "alice:${ALICE_PASS}" \
+		-H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+		-X POST "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares" \
+		"$@" > /dev/null
+}
+
+share --data-urlencode 'path=/tone-90s.webm' --data-urlencode 'shareWith=bob' \
+	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
+share --data-urlencode 'path=/locked.webm' --data-urlencode 'shareWith=bob' \
+	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' \
+	--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
+# The review users reach every banner of the playback page: the same two
+# shares as a recipient, next to the team folder.
+for reviewer in dora elke fleur; do
+	share --data-urlencode 'path=/locked.webm' --data-urlencode "shareWith=${reviewer}" 		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1' 		--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
+	share --data-urlencode 'path=/broken.webm' --data-urlencode "shareWith=${reviewer}" 		--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
+done
+# Without this a share without download may still be viewed; with it the
+# playback page shows the hint banner instead of the medium (01-RESEARCH.md,
+# Pitfall 2).
+occ config:app:set core shareapi_allow_view_without_download --value=no --type=boolean
+
+# The mount of a recipient lands in the mount cache with a scan.
+occ files:scan --all > /dev/null
+
+# -- the file ids ---------------------------------------------------------------
+
+file_id_of() {
+	local user="$1" pass="$2" path="$3"
+	curl -sfS -u "${user}:${pass}" -X PROPFIND -H 'Depth: 0' \
+		--data '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:fileid/></d:prop></d:propfind>' \
+		"$(dav "${user}" "${path}")" | sed -n 's|.*<oc:fileid>\([0-9]*\)</oc:fileid>.*|\1|p'
+}
+
+file_id() {
+	file_id_of alice "${ALICE_PASS}" "$1"
+}
+
+FILEID_WEBM=$(file_id tone-90s.webm)
+FILEID_OGG=$(file_id tone-90s.ogg)
+FILEID_TEAM=$(file_id "${TEAM_FOLDER}/tone-90s.webm")
+FILEID_BROKEN=$(file_id broken.webm)
+FILEID_LOCKED=$(file_id locked.webm)
+
+for id in "${FILEID_WEBM}" "${FILEID_OGG}" "${FILEID_TEAM}" "${FILEID_BROKEN}" "${FILEID_LOCKED}"; do
+	[[ "${id}" =~ ^[0-9]+$ ]] || { echo "a file id could not be read"; exit 1; }
+done
+
+{
+	echo "FILEID_WEBM=${FILEID_WEBM}"
+	echo "FILEID_OGG=${FILEID_OGG}"
+	echo "FILEID_TEAM=${FILEID_TEAM}"
+	echo "FILEID_BROKEN=${FILEID_BROKEN}"
+	echo "FILEID_LOCKED=${FILEID_LOCKED}"
+} > "${FILEIDS_ENV}"
+
+# -- the test results -----------------------------------------------------------
+
+# One test result per media file at 42 s, read by the container through the
+# content gateway as alice. Debug mode must be on, the command refuses otherwise.
+for id in "${FILEID_WEBM}" "${FILEID_OGG}" "${FILEID_TEAM}" "${FILEID_BROKEN}" "${FILEID_LOCKED}"; do
+	occ audio_video_search:sample "${id}" --at="${AT_SECONDS}" --user=alice
+done
+# The search shows a test result only while the admin switch is on as well.
+occ config:app:set audio_video_search sample_visible --value=true --type=boolean
+
+# -- phase 3 (plan 03-18) -------------------------------------------------------
+
+if [ "${PHASE3}" != "1" ]; then
+	exit 0
+fi
+
+PHASE3_ALICE=(stille-60s.ogg kaputt.mp3 geschuetzt.m4a lang-12h01.flac tuerkisch.wav ohne-ton.mp4)
+PHASE3_BOB=(viele-stellen.ogg zwei-stellen.ogg)
+# Every file has to be there: a missing one would turn its state into a silent gap.
+for name in "${PHASE3_ALICE[@]}" "${PHASE3_BOB[@]}" lang-40min.ogg; do
+	test -s "${MEDIA_DIR}/${name}" || { echo "${name} is missing in MEDIA_DIR (ci/make-testmedia.sh with the clips)"; exit 1; }
+done
+
+add_user oskar "${OSKAR_PASS}"
+
+for name in "${PHASE3_ALICE[@]}"; do
+	upload alice "${ALICE_PASS}" "${MEDIA_DIR}/${name}" "${name}"
+done
+for name in "${PHASE3_BOB[@]}"; do
+	upload bob "${BOB_PASS}" "${MEDIA_DIR}/${name}" "${name}"
+done
+
+# share_as USER PASS PATH WITH [TYPE]: TYPE 0 is a user share, 1 a group share.
+share_as() {
+	local user="$1" pass="$2" path="$3" with="$4" type="${5:-0}"
+	count_share "${user}"
+	curl -sfS -u "${user}:${pass}" \
+		-H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+		-X POST "${NC_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares" \
+		--data-urlencode "path=/${path}" --data-urlencode "shareWith=${with}" \
+		--data-urlencode "shareType=${type}" --data-urlencode 'permissions=1' > /dev/null
+}
+
+# One share per file to a group of the three review users instead of one per
+# user: 6 shares instead of 18 keeps alice at 15 of the 20 shares Nextcloud
+# allows a user in 600 s. Only dora, elke and fleur are in it; carol, mallory
+# and oskar stay outside, so what each of them reads does not change.
+occ group:add "${REVIEW_GROUP}"
+for reviewer in dora elke fleur; do
+	occ group:adduser "${REVIEW_GROUP}" "${reviewer}"
+done
+for name in "${PHASE3_ALICE[@]}"; do
+	share_as alice "${ALICE_PASS}" "${name}" "${REVIEW_GROUP}" 1
+done
+share_as bob "${BOB_PASS}" viele-stellen.ogg dora
+share_as alice "${ALICE_PASS}" stille-60s.ogg oskar
+
+# The excluded user of the leak probe: a user rule, read by the playback page
+# before it asks the container anything (D-02-16, D-03-13).
+occ audio_video_search:exclude --user=oskar
+
+occ files:scan --all > /dev/null
+
+declare -A PHASE3_IDS=(
+	[FILEID_STILLE]="$(file_id stille-60s.ogg)"
+	[FILEID_KAPUTT]="$(file_id kaputt.mp3)"
+	[FILEID_GESCHUETZT]="$(file_id geschuetzt.m4a)"
+	[FILEID_LANG]="$(file_id lang-12h01.flac)"
+	[FILEID_TUERKISCH]="$(file_id tuerkisch.wav)"
+	[FILEID_OHNE_TON]="$(file_id ohne-ton.mp4)"
+	[FILEID_VIELE]="$(file_id_of bob "${BOB_PASS}" viele-stellen.ogg)"
+	[FILEID_ZWEI]="$(file_id_of bob "${BOB_PASS}" zwei-stellen.ogg)"
+)
+for key in "${!PHASE3_IDS[@]}"; do
+	[[ "${PHASE3_IDS[${key}]}" =~ ^[0-9]+$ ]] || { echo "the file id ${key} could not be read"; exit 1; }
+	echo "${key}=${PHASE3_IDS[${key}]}" >> "${FILEIDS_ENV}"
+done
+
+# -- phase 4 (plan 04-14) -------------------------------------------------------
+
+if [ "${PHASE4}" != "1" ]; then
+	exit 0
+fi
+
+# The WAV clips as they are: the container transcribes them like any upload,
+# and search-quality.spec.ts waits for the transcript before it searches.
+upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE}" s7-zahlwort.wav
+upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE_DIGIT}" s7-ziffer.wav
+
+# Two more shares of alice: 15 of phase 1 and 3 plus these 2 stay under the 20
+# of SHARE_LIMIT; count_share inside share() checks it.
+share --data-urlencode 'path=/s7-zahlwort.wav' --data-urlencode "shareWith=${REVIEW_GROUP}" 	--data-urlencode 'shareType=1' --data-urlencode 'permissions=1' 	--data-urlencode 'attributes=[{"scope":"permissions","key":"download","value":false}]'
+share --data-urlencode 'path=/s7-ziffer.wav' --data-urlencode 'shareWith=carol' 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=1'
+
+# Plan 04-17: the video with speech under a name with an umlaut (D1), shared
+# with the group "review" with download (X1, track, sidecar of the review
+# users), and the folder Ablage with a copy of the digit clip, shared with
+# carol with the right to create files: her sidecar lands in a folder whose
+# rights the specs can take away for a moment (X5, E3, E4). A file share would
+# not do for that: the parent of a shared file is the home of the recipient,
+# where the recipient may always create files. 17 + 2 = 19 of the 20 shares.
+for name in s7-video.webm lang-40min-x2.ogg; do
+	test -s "${MEDIA_DIR}/${name}" || { echo "${name} is missing in MEDIA_DIR (ci/make-testmedia.sh with AVS_SPEECH_S7_DE)"; exit 1; }
+done
+# "S7-Übung.webm", percent encoded for the WebDAV address.
+S7_VIDEO_DAV='S7-%C3%9Cbung.webm'
+upload alice "${ALICE_PASS}" "${MEDIA_DIR}/s7-video.webm" "${S7_VIDEO_DAV}"
+curl -sfS -u "alice:${ALICE_PASS}" -X MKCOL "$(dav alice Ablage)" > /dev/null
+upload alice "${ALICE_PASS}" "${AVS_SPEECH_S7_DE_DIGIT}" Ablage/s7-ablage.wav
+share --data-urlencode 'path=/S7-Übung.webm' --data-urlencode "shareWith=${REVIEW_GROUP}" 	--data-urlencode 'shareType=1' --data-urlencode 'permissions=1'
+share --data-urlencode 'path=/Ablage' --data-urlencode 'shareWith=carol' 	--data-urlencode 'shareType=0' --data-urlencode 'permissions=15'
+
+occ files:scan --all > /dev/null
+
+declare -A PHASE4_IDS=(
+	[FILEID_S7_DE]="$(file_id s7-zahlwort.wav)"
+	[FILEID_S7_DE_DIGIT]="$(file_id s7-ziffer.wav)"
+	[FILEID_S7_VIDEO]="$(file_id "${S7_VIDEO_DAV}")"
+	[FILEID_ABLAGE]="$(file_id Ablage/s7-ablage.wav)"
+)
+for key in "${!PHASE4_IDS[@]}"; do
+	[[ "${PHASE4_IDS[${key}]}" =~ ^[0-9]+$ ]] || { echo "the file id ${key} could not be read"; exit 1; }
+	echo "${key}=${PHASE4_IDS[${key}]}" >> "${FILEIDS_ENV}"
+done

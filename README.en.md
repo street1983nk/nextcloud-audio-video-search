@@ -9,37 +9,80 @@
 
 Audio & Video Search makes audio and video files in Nextcloud searchable. It transcribes the spoken words locally on your own server, so meetings, interviews and recordings can be found by what was said.
 
-**Status:** in development, not yet in the App Store.
+**Status:** in development, not in the App Store yet. As of 0.3.0 the app transcribes every audio and video file of the instance locally, external storages included, first as a preview; its hits carry "Preliminary" in the search. A more accurate transcript is planned for later versions. The extended search and the subtitle draft (below) are built in the repository but not part of any released version yet.
 
 ## What Audio & Video Search does
 
-- Transcription on your own server with open speech models, for German, English and French
-- Search in the spoken text, hits with a timestamp
-- Runs entirely inside your own instance, no telemetry
-- Never modifies your files
+- Results from audio and video in the normal Nextcloud search, with a timestamp
+- Playback view that opens the recording at the point in time of the result
+- Status area for admins with the state of both apps
+- Never modifies your files; a new file is only created when you save a subtitle draft next to the recording
+- Transcription on your own server for German, English and French, first as a preview
+
+Mobile apps (Android, iOS) open a result as a file from 0:00, without the jump to the point in time.
+
+### Search
+
+- Word forms: "Häuser" finds "Haus"
+- Start of German compound words: a search word of 5 letters or more also finds words that begin with it ("Haushalt" finds "Haushaltsplanberatung")
+- Numbers as digits and as words in German, English and French: 0 to 100 including ordinals ("zwölf" finds "12", "twelfth" and "12e"), round hundreds and thousands, thousands with separators (30.000, 30,000, 30 000) and years from 1100 to 2099 ("1940" finds "neunzehnhundertvierzig")
+- Date and person filters of the Nextcloud search: the date is the modification date of the file, the person counts as in the Nextcloud file search
+
+### Subtitle draft
+
+- Download on the playback page as SRT, VTT and TXT, file name `<name>.<de|en|fr>.<srt|vtt|txt>`, umlauts and ß in the name spelled out (Übung becomes Uebung)
+- VTT and TXT carry the note "Subtitle draft, created automatically and not reviewed."
+- While the file is still being processed, the draft holds the state up to the stated point in time and says so
+- Save next to the file: `<name>.<de|en|fr>.vtt`, umlauts and ß in the name spelled out (Übung becomes Uebung), in the folder of the recording, only with the permission to create files there; an existing file is never overwritten
+- Subtitle track on videos on the playback page, switched off until you switch it on
+- Shares that do not allow downloads: results in the search yes, download and saving of the subtitle draft no; if the setting cannot be determined, the download counts as blocked
+
+### Limits
+
+- The Nextcloud viewer recognises subtitle sidecar files only from Nextcloud 36; Nextcloud 33 to 35 have no code for it. There, only the playback page of this app shows the track.
+- Compound words only by their start: "Plan" does not find "Bebauungsplan"
+- Extra hits: "Haushalt" also finds "Haushälterin"
+- SRT carries no draft note in its content, because the format has no comments
+- A saved sidecar file is never updated automatically; for a newer state, delete the old file and save again
+- Like the file search, the person filter only counts files with a share; a file that was never shared drops out
+- Subtitles that no person has reviewed are called "subtitle draft" everywhere
+
+## Two apps, both needed
+
+| App | ID | Task |
+|---|---|---|
+| Audio & Video Search | `audio_video_search` | PHP app: search, permissions, playback view, subtitle draft, status area |
+| Audio & Video Search Backend | `audio_video_search_backend` | External App (Python container): decoding, recognition, index |
+
+Both apps must be installed and run the same version. If the versions differ only in the last part, search keeps working; otherwise it returns no results from audio and video until both apps match again.
 
 ## Requirements
 
 - Nextcloud 33 to 35 with AppAPI and a configured deploy daemon (HaRP recommended)
 - CPU: amd64 or arm64
+- Memory: about 2.2 GB free (1.7 GB plus a 0.5 GB reserve); disk space: about 0.67 GB for the speech models
 
 ## Installation
 
-Install Audio & Video Search from the External Apps section of the App Store. Its
-settings are under Administration settings, Additional settings.
+In short: AppAPI with a deploy daemon, then the ExApp `audio_video_search_backend`, then the PHP app `audio_video_search`. The state of both apps is then shown under Administration settings, Audio & Video Search. All steps, the states of the status area and the test result: [docs/install.en.md](docs/install.en.md).
 
 ## Architecture
 
-Audio & Video Search is an External App: a Python container (FastAPI) that AppAPI
-starts through the deploy daemon and reaches only through AppAPI/HaRP. Every
-request to the container carries the AppAPI signature; without it the answer
-is 401.
+The PHP app hooks into the Nextcloud search, checks permissions and hands files to the backend by file id. The backend is an External App: a Python container (FastAPI) that AppAPI starts through the deploy daemon and reaches only through AppAPI/HaRP. Every request to the container carries the AppAPI signature; without it the answer is 401.
 
 ## Privacy
 
-Everything runs locally in the container, nothing leaves your server.
-The app keeps the transcripts in the data volume of its container; no recording leaves the server.
+Everything runs locally on your own server: no audio, no text and no telemetry leaves the server. The only outbound connection is the one-time download of the speech models when the app is enabled.
+The app keeps transcripts and index in the data volume of its container.
 
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+Third-party components of the backend:
+
+- German word list `wngerman` (Debian), GPL-2.0-or-later, for splitting compound words; licence text in the image at `/usr/local/share/audio_video_search_backend/COPYING.wngerman`
+- For transcription, the ExApp downloads Parakeet TDT 0.6B v3 by NVIDIA (CC-BY-4.0) and Silero VAD (MIT) from this project's own GitHub release `models-2026-11` when it is enabled and checks every file against a fixed sha256; without internet access, admins can place the same files themselves; Whisper (MIT) is planned for later versions.
+- FFmpeg (static LGPL build by BtbN, version 8.1) for decoding the recordings
+
+Icons of the PHP app: Material Design Icons by Pictogrammers, Apache-2.0, licence text in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
