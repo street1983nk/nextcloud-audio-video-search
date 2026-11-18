@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Welle 1: 05-03/04/05/06 fertig; 05-01 Push c796f4f nicht ausgeführt (ruff check an c796f4f rot, Korrektur 3f6144a, neue Owner-Freigabe für den neuen SHA nötig); 05-02 wartet am Legitimitäts-Checkpoint (Task 1, Audit neu erzeugt)"
-last_updated: "2026-11-18T11:43:18.117Z"
+stopped_at: "Welle 1: 05-02/03/04/05/06 fertig (05-02: d200a5d, a7508a8, d5720c0, nur lokal); 05-01 Task 3 wartet auf die CI-Messung, dafür ist eine Owner-Freigabe für den Push nötig"
+last_updated: "2026-11-18T12:25:00.000Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 87
+  completed_plans: 88
   percent: 36
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-03, 05-04, 05-05, 05-06 fertig (Welle 1)
+Plan: 05-02, 05-03, 05-04, 05-05, 05-06 fertig (Welle 1); 05-01 Task 3 offen (CI-Messung)
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [████████░░] 82%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -89,6 +89,7 @@ Progress: [████████░░] 82%
 | Phase 05 P06 | 30 min | 2 tasks | 9 files |
 | Phase 05 P01 | 30 min | 1 tasks | 3 files |
 | Phase 05 P03 | 60 min | 2 tasks | 3 files |
+| Phase 05 P02 | 150 min | 2 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -170,6 +171,10 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-18 (Owner 17.11.): Untertitel-Dateinamen schreiben nur Umlaute und ß aus (auch NFD), andere Nicht-ASCII-Zeichen bleiben; Owner-Rückfrage am 17.11. entschieden (04-19-SUMMARY)
 - [Phase 4, 17.11.]: Phase 4 abgeschlossen: 19/19 Pläne, UAT 14/14 (Gap Test 5 nach 04-18/04-19 geschlossen), 04-SECURITY.md verified mit threats_open 0, CI-Beleg Push 6 auf phase-04 ee6bd68 in allen vier Workflows grün
 - [Phase 05]: 05-03: Whisper-Teile gemessen (turbo 2, large-v3 3 Teile zu 1 GiB), Identität in scripts/models/whisper-parts-2026-11.json; das Skript lädt nur über https von huggingface.co und Hosts unter .hf.co, die App-Allowlist bleibt ohne Hugging Face
+- [Phase 05]: 05-02 (Owner 18.11.): faster-whisper 1.2.1, ctranslate2 4.8.5, onnxruntime 1.31.1 freigegeben und exakt gepinnt; Lock 53 auf 69 Pakete, alle bestehenden unverändert; Altersgrenze [tool.uv] exclude-newer 2026-11-05T00:00:00Z, einzige Ausnahme webvtt-py
+- [Phase 05]: 05-02 (Owner 18.11.): httpx2-jsfetch 1.0 nur als Lock-Eintrag mit Marker emscripten, tzdata 2026.6 nur Dev unter Windows; test_lock_platforms.py hält beides
+- [Phase 05]: 05-02: Netzverbot per Test: kein Import von huggingface_hub, hf_xet, httpx2, httpcore2 unter backend/src (auch nicht in engine/), WhisperModel nur mit Verzeichnis und local_files_only=True, download_model nirgends; Gegenprobe über frischen Interpreter (tests/hub_import_probe.py)
+- [Phase 05]: 05-02: der TestClient von starlette läuft auf httpx2, sobald es installiert ist; Antworttyp in Tests über conftest.ClientResponse, Produktcode bleibt bei httpx in nc.py
 
 ### Pending Todos
 
@@ -183,7 +188,9 @@ Recent decisions affecting current work:
 - [Phase 4] Backlog (Owner 16.11.): Trefferzeilen-Ausschnitt S6/S7 um den ersten Treffer zentrieren, Phase offen
 - [Phase 4] phase-04 noch nicht nach main gemergt; Merge und Dependabot-PRs #3/#4 danach nur mit Owner-Freigabe
 - [Phase 5] Push für Wave 0 offen: c796f4f hatte ein rotes lokales Gate (ruff I001, test_schedule.py); Owner entscheidet über den neuen SHA
-- [Phase 5] 05-02: zusätzliche transitive Pakete über die im Plan genannten hinaus (tqdm, flatbuffers, protobuf, fsspec, hf-xet, httpx2, httpcore2, truststore), Owner-Freigabe muss sie einschließen
+- [Phase 5] 05-02: drei Commits nur lokal (d200a5d, a7508a8, d5720c0); der erste Linux-Bau mit der Whisper-Laufzeit und pip-audit laufen erst nach einem vom Owner freigegebenen Push
+- [Phase 5] 05-02: exclude-newer 2026-11-05 bleibt im Projekt und bremst spätere Updates (auch Dependabot), bis der Owner die Grenze verschiebt
+- [Phase 5] RES-06 und RES-07 stehen im Kopf von 05-02, sind aber erst mit 05-08/05-10 und 05-17 erfüllt; nicht abgehakt
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -198,6 +205,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-18T11:43:18.101Z
-Stopped at: Welle 1: 05-03/04/05/06 fertig; 05-01 Push c796f4f nicht ausgeführt (ruff check an c796f4f rot, Korrektur 3f6144a, neue Owner-Freigabe für den neuen SHA nötig); 05-02 wartet am Legitimitäts-Checkpoint (Task 1, Audit neu erzeugt)
+Last session: 2026-11-18T12:25:00.000Z
+Stopped at: Welle 1: 05-02/03/04/05/06 fertig (05-02: d200a5d, a7508a8, d5720c0, nur lokal); 05-01 Task 3 wartet auf die CI-Messung, dafür ist eine Owner-Freigabe für den Push nötig
 Resume file: None
