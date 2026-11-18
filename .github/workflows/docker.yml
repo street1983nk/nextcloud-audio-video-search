@@ -13,6 +13,9 @@ on:
   push:
     branches:
       - main
+      # Phase branches build and measure (plan 05-01, job peak-measure); the
+      # merge job below tags :dev only from main, schedule and dispatch.
+      - 'phase-*'
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   # Monthly rebuild picks up base image security fixes for the dev tag.
@@ -139,9 +142,82 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Wave 0 of phase 5 (D-05-09): the Linux memory peak of the Parakeet child on
+  # one 10 min chunk, on both architectures, out of the image this run pushed.
+  # The probe lives under ci/ and is mounted read only; it never enters the
+  # build context backend/. No memory limit here: the peak is measured, not
+  # provoked. The artifact carries numbers only, never a word of the transcript.
+  peak-measure:
+    name: Measure the Parakeet peak ${{ matrix.platform }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect the digest of this architecture
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digest
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Inside the image: the pinned speech clips (fetch_speech.py checks the
+      # member sha256 of each before it writes a WAV), the models through the
+      # downloader of the app (sha256 against the catalogue), then the probe.
+      - name: Run the probe in the pushed image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          digest="sha256:$(ls "${RUNNER_TEMP}/digest")"
+          docker pull "${IMAGE}@${digest}"
+          mkdir -p "${RUNNER_TEMP}/peak"
+          chmod 0777 "${RUNNER_TEMP}/peak"
+          docker run --rm --entrypoint /bin/sh \
+            -v "${PWD}/ci/measure:/probe:ro" \
+            -v "${PWD}/ci/media:/media:ro" \
+            -v "${RUNNER_TEMP}/peak:/out" \
+            "${IMAGE}@${digest}" -c '
+              set -e
+              /app/.venv/bin/python -I /media/fetch_speech.py /tmp/speech --ffmpeg /usr/local/bin/ffmpeg
+              /app/.venv/bin/python -I -m audio_video_search_backend.models.procure --root /tmp/models
+              /app/.venv/bin/python -I /probe/peak_probe.py --models /tmp/models --wav /tmp/speech/speech_de.wav --out "/out/peak-'"${ARCH}"'.json"
+            '
+          cat "${RUNNER_TEMP}/peak/peak-${ARCH}.json"
+
+      - name: Keep the measurement
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: peak-${{ matrix.arch }}
+          path: ${{ runner.temp }}/peak/peak-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 30
+
   merge:
     name: Merge both digests into one manifest
     needs: build
+    # A phase branch builds and measures, it never moves :dev.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
