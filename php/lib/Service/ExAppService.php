@@ -9,6 +9,7 @@ use OCP\App\IAppManager;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Http\Client\IResponse;
 use OCP\IAppConfig;
+use OCP\IConfig;
 use OCP\IGroupManager;
 use OCP\IUserManager;
 use Psr\Container\ContainerExceptionInterface;
@@ -1049,6 +1050,32 @@ class ExAppService {
 	/** True for an IANA zone PHP knows (the same list the admin page offers). */
 	public static function isZone(string $zone): bool {
 		return in_array($zone, \DateTimeZone::listIdentifiers(), true);
+	}
+
+	/**
+	 * A resources answer plus the zones of PHP and the zone the window field
+	 * starts with. The one place of this rule: the routes of the admin page
+	 * and the page itself both come here, so the form and its answers agree.
+	 *
+	 * @param array<string, mixed> $resources
+	 * @return array<string, mixed>
+	 */
+	public static function withZones(array $resources, IConfig $config, string $uid): array {
+		return $resources + [
+			'zones' => \DateTimeZone::listIdentifiers(),
+			'defaultZone' => self::defaultZone($config, $uid),
+		];
+	}
+
+	/** The zone of the admin account, else default_timezone of config.php, else UTC (research pattern 4). */
+	public static function defaultZone(IConfig $config, string $uid): string {
+		$own = $config->getUserValue($uid, 'core', 'timezone', '');
+		if (is_string($own) && self::isZone($own)) {
+			return $own;
+		}
+		$system = $config->getSystemValueString('default_timezone', 'UTC');
+
+		return self::isZone($system) ? $system : 'UTC';
 	}
 
 	// -- lockstep ---------------------------------------------------------------

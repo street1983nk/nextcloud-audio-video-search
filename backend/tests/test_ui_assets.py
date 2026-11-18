@@ -29,7 +29,7 @@ SCRIPTS = PHP_ROOT / "js"
 STYLES = PHP_ROOT / "css"
 
 ALLOWED_SERVER_CLASSES = frozenset(
-    {"section", "settings-hint", "checkbox", "primary", "icon-loading-small", "hidden-visually", "button"}
+    {"section", "settings-hint", "checkbox", "radio", "primary", "icon-loading-small", "hidden-visually", "button"}
 )
 CLASS_PREFIX = "avs-"
 
@@ -476,6 +476,10 @@ def test_self_foreign_classes_fire_and_php_values_pass() -> None:
     assert foreign_classes('<div class="avs-banner avs-banner--<?php p($kind); ?>">') == []
     assert foreign_classes('<input class="checkbox"><p class="settings-hint">') == []
     assert foreign_classes('<div class="card avs-x">') == ["card"]
+    # 05-UI-SPEC.md names the server radio (input.radio); a name that only
+    # starts like it, or another server class, stays a finding.
+    assert foreign_classes('<input type="radio" class="radio">') == []
+    assert foreign_classes('<input class="radio-big switch">') == ["radio-big", "switch"]
 
 
 def test_self_script_rules_fire() -> None:

@@ -245,27 +245,14 @@ final class SettingsController extends Controller {
 
 	/**
 	 * The answer of the container plus the zones of PHP and the zone the
-	 * window field starts with.
+	 * window field starts with; the rule itself lives in ExAppService, the
+	 * admin page uses the same one.
 	 *
 	 * @param array<string, mixed> $resources
 	 * @return array<string, mixed>
 	 */
 	private function withZones(array $resources): array {
-		return $resources + [
-			'zones' => \DateTimeZone::listIdentifiers(),
-			'defaultZone' => $this->defaultZone(),
-		];
-	}
-
-	/** The zone of the admin account, else default_timezone of config.php, else UTC (research pattern 4). */
-	private function defaultZone(): string {
-		$own = $this->config->getUserValue($this->userId(), 'core', 'timezone', '');
-		if (is_string($own) && ExAppService::isZone($own)) {
-			return $own;
-		}
-		$system = $this->config->getSystemValueString('default_timezone', 'UTC');
-
-		return ExAppService::isZone($system) ? $system : 'UTC';
+		return ExAppService::withZones($resources, $this->config, $this->userId());
 	}
 
 	/** The signed in admin, or an empty string that ends in no_app_api. */

@@ -110,6 +110,251 @@
 	overflow-wrap: anywhere;
 }
 
+/* -- profile, computing time, models (05-UI-SPEC, table "CSS") ---------------------- */
+
+/* A banner of the new sections keeps md to what follows it; hidden it takes
+   no room (rule at the end of the file). */
+.avs-res__banner {
+	margin-block: calc(var(--default-grid-baseline) * 4);
+}
+
+.avs-res__options,
+.avs-res__window {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 2);
+	min-width: 0;
+	margin: calc(var(--default-grid-baseline) * 4) 0 0;
+	padding: 0;
+	border: 0;
+}
+
+.avs-res__option {
+	display: flex;
+	flex-direction: column;
+	gap: var(--default-grid-baseline);
+}
+
+/* Radio and label on one line, as high as a click target. */
+.avs-res__choice {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	min-height: var(--default-clickable-area);
+}
+
+/* Body role. Two classes against ".section p". */
+.avs-admin .avs-res__intro {
+	max-width: none;
+	margin: 0;
+	color: var(--color-main-text);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+/* Label role: 13 px, muted. */
+.avs-admin .avs-res__hint,
+#avs-profile .avs-res__hint,
+#avs-compute .avs-res__hint,
+#avs-models .avs-res__hint {
+	max-width: none;
+	margin: 0;
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+/* 28 px and not a step of the 24 px scale: hint and lock reason stand flush
+   under the text of the label, not under the circle of the server radio
+   (05-UI-SPEC "Spacing Scale"). Check point of the acceptance: the position
+   of the circle in Nextcloud 33 to 35; if it differs, the next multiple of 4
+   that is flush. */
+.avs-res__option .avs-res__hint,
+.avs-res__option .avs-res__lock {
+	padding-inline-start: calc(var(--default-grid-baseline) * 7);
+}
+
+/* The lock reason and a field error read in the body colour: the one piece
+   of information that explains a locked option must not be muted. */
+.avs-admin .avs-res__lock,
+.avs-admin .avs-res__error {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--default-grid-baseline);
+	max-width: none;
+	margin: 0;
+	color: var(--color-main-text);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+/* The icon sits on the first text line, like .avs-banner__icon. */
+.avs-res__icon {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	height: var(--default-line-height);
+}
+
+.avs-res__lock svg {
+	color: var(--color-text-maxcontrast);
+}
+
+.avs-res__error svg {
+	color: var(--color-element-error);
+}
+
+.avs-res__badge {
+	margin-inline-start: calc(var(--default-grid-baseline) * 2);
+	padding: 0 var(--default-grid-baseline);
+	border-radius: var(--border-radius-small);
+	background-color: var(--color-background-hover);
+	font-size: var(--font-size-small);
+}
+
+.avs-res__number {
+	font-variant-numeric: tabular-nums;
+}
+
+.avs-res__form {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 4);
+}
+
+.avs-res__field {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--default-grid-baseline);
+}
+
+#avs-threads {
+	width: calc(var(--default-grid-baseline) * 20);
+	font-variant-numeric: tabular-nums;
+}
+
+.avs-res__times {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 4);
+}
+
+#avs-window-start,
+#avs-window-end {
+	font-variant-numeric: tabular-nums;
+}
+
+#avs-window-zone {
+	max-width: 100%;
+}
+
+@media (min-width: 768px) {
+	#avs-window-zone {
+		max-width: calc(var(--default-grid-baseline) * 80);
+	}
+}
+
+#avs-window-fields {
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--default-grid-baseline) * 4);
+	padding-inline-start: calc(var(--default-grid-baseline) * 7);
+}
+
+.avs-models {
+	margin: calc(var(--default-grid-baseline) * 4) 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* Flat: a line between two models, no surface of their own. */
+.avs-models__item {
+	display: flex;
+	flex-direction: column;
+	gap: var(--default-grid-baseline);
+	padding-block: calc(var(--default-grid-baseline) * 4);
+}
+
+.avs-models__item + .avs-models__item {
+	border-top: 1px solid var(--color-border);
+}
+
+.avs-models__item .avs-admin__subheading {
+	margin: 0;
+}
+
+.avs-models__state {
+	display: flex;
+	flex-direction: column;
+	gap: var(--default-grid-baseline);
+}
+
+/* A state line: icon and sentence like the lock reason, but in the body size. */
+.avs-admin .avs-models__line {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--default-grid-baseline);
+	max-width: none;
+	margin: 0;
+	color: var(--color-main-text);
+	line-height: var(--default-line-height);
+	overflow-wrap: anywhere;
+}
+
+/* "Not needed" is no finding: label role. */
+.avs-admin .avs-models__line--muted {
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+}
+
+.avs-models__icon--success {
+	color: var(--color-element-success);
+}
+
+.avs-models__icon--warning {
+	color: var(--color-element-warning);
+}
+
+.avs-models__icon--error {
+	color: var(--color-element-error);
+}
+
+/* No colour of its own: the filled part takes the accent of the theme. */
+.avs-models__progress {
+	width: 100%;
+	max-width: calc(var(--default-grid-baseline) * 80);
+	accent-color: var(--color-primary-element);
+}
+
+.avs-models__offline {
+	margin-block-start: calc(var(--default-grid-baseline) * 6);
+}
+
+#avs-models .avs-models__more {
+	margin-block-start: calc(var(--default-grid-baseline) * 6);
+}
+
+/* 24 px (step lg of the scale) instead of the 20 px of the first draft
+   (checker flag of the 05-UI-SPEC). Label role. */
+.avs-admin .avs-models__others {
+	padding-inline-start: calc(var(--default-grid-baseline) * 6);
+	color: var(--color-text-maxcontrast);
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+	list-style: disc;
+	overflow-wrap: anywhere;
+}
+
+.avs-admin .avs-models__all {
+	max-width: none;
+	margin: calc(var(--default-grid-baseline) * 2) 0 0;
+	font-size: var(--font-size-small);
+	line-height: var(--default-line-height);
+}
+
 /* -- touch ------------------------------------------------------------------------ */
 
 /* Behind the id: the server rule "button:not(.button-vue, [class^=vs__])"
@@ -120,6 +365,16 @@
 	#avs-admin .avs-admin__switch {
 		min-height: calc(var(--default-grid-baseline) * 11);
 	}
+
+	/* The new sections, each behind its own id for the same reason. */
+	#avs-profile .avs-res__choice,
+	#avs-compute .avs-res__choice,
+	#avs-compute input,
+	#avs-compute select,
+	#avs-compute-save,
+	#avs-models .avs-admin__switch {
+		min-height: calc(var(--default-grid-baseline) * 11);
+	}
 }
 
 /* The display values above and in play.css must not reveal what the template
@@ -127,5 +382,11 @@
    "button:not(...) > span[class^=icon-] { display: block }", which outranks
    two classes; hence the id. */
 #avs-admin [hidden] {
+	display: none;
+}
+
+#avs-profile [hidden],
+#avs-compute [hidden],
+#avs-models [hidden] {
 	display: none;
 }
