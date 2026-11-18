@@ -16,7 +16,6 @@ excerpt with the answer for a file id nobody has ever seen.
 
 from collections.abc import Iterator
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -26,7 +25,7 @@ from audio_video_search_backend.index.publish import SearchIndex, segments_from_
 from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import Level, Provenance
 from audio_video_search_backend.store.repo import IntakeItem, Store
-from tests.conftest import signed_headers
+from tests.conftest import ClientResponse, signed_headers
 from tests.test_api_routes import AT_MS, CONTENT, SHA, _seed, _services
 
 MODEL = "c" * 64
@@ -103,15 +102,15 @@ def _pending(file_id: int) -> IntakeItem:
     )
 
 
-def _search(client: TestClient, term: str = SPOKEN) -> httpx.Response:
+def _search(client: TestClient, term: str = SPOKEN) -> ClientResponse:
     return client.post("/search", headers=signed_headers(), json={"term": term, "limit": 10})
 
 
-def _excerpt(client: TestClient, file_id: int = FILE, at_ms: int = 0) -> httpx.Response:
+def _excerpt(client: TestClient, file_id: int = FILE, at_ms: int = 0) -> ClientResponse:
     return client.post("/excerpt", headers=signed_headers(), json={"fileId": file_id, "atMs": at_ms})
 
 
-def _same_answer(one: httpx.Response, other: httpx.Response) -> bool:
+def _same_answer(one: ClientResponse, other: ClientResponse) -> bool:
     """Status, body and the headers that describe the body; nothing tells the two apart."""
     return (one.status_code, one.content, one.headers.get("content-type"), one.headers.get("content-length")) == (
         other.status_code,
@@ -127,7 +126,7 @@ def _hits(client: TestClient, term: str = SPOKEN) -> list[tuple[int, bool]]:
     return [(int(hit["fileId"]), bool(hit["sample"])) for hit in answer.json()["hits"]]
 
 
-def _no_text_for_the_sample(client: TestClient, before: httpx.Response) -> None:
+def _no_text_for_the_sample(client: TestClient, before: ClientResponse) -> None:
     """The search as before the sample existed, the excerpt as for a file never seen, and no real word in either."""
     assert before.status_code == 200
     assert before.json()["hits"] == []

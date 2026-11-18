@@ -14,13 +14,12 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from audio_video_search_backend import companion, main, nc, settings
 from audio_video_search_backend.store.repo import SCHEMA_VERSION
-from tests.conftest import signed_headers
+from tests.conftest import ClientResponse, signed_headers
 
 CONTENT = b"RIFF fake media bytes " * 100
 SHA = hashlib.sha256(CONTENT).hexdigest()
@@ -83,7 +82,7 @@ def api(gateway: list[int], monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCli
         yield test_client
 
 
-def _sample(client: TestClient, file_id: int = 42) -> httpx.Response:
+def _sample(client: TestClient, file_id: int = 42) -> ClientResponse:
     return client.post("/sample", headers=signed_headers(), json={"fileId": file_id, "userId": "admin", "atMs": 0})
 
 

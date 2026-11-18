@@ -19,7 +19,6 @@ import random
 from collections import Counter
 from collections.abc import Iterator
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -31,7 +30,7 @@ from audio_video_search_backend.index.publish import IndexHit, SearchIndex, segm
 from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import SAMPLE_MODEL_SHA256, Level, Provenance
 from audio_video_search_backend.store.repo import Store
-from tests.conftest import signed_headers
+from tests.conftest import ClientResponse, signed_headers
 
 SPOKEN = "Haushaltsgeheimnis"
 MODEL = "c" * 64
@@ -292,7 +291,7 @@ def _one_strong_place() -> list[Word]:
     ]
 
 
-def _post(client: TestClient, body: dict[str, object]) -> httpx.Response:
+def _post(client: TestClient, body: dict[str, object]) -> ClientResponse:
     return client.post("/search", headers=signed_headers(), json=body)
 
 

@@ -11,7 +11,15 @@ from fastapi.testclient import TestClient
 from audio_video_search_backend import APP_ID
 
 if TYPE_CHECKING:
+    import httpx2
+
     from audio_video_search_backend.store.repo import Store
+
+# What a TestClient call answers with. starlette builds its test client on httpx2
+# as soon as that package is installed, and faster-whisper brought it (plan 05-02).
+# A type alias is only evaluated when somebody asks for its value, so no test
+# imports httpx2 by this line; httpx stays the client of nc.py and of its tests.
+type ClientResponse = httpx2.Response
 
 # backend/ holds the ExApp (package, Dockerfile, appinfo, l10n, pyproject);
 # the repository root holds what both halves share (workflows, docs, READMEs).

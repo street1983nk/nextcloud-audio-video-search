@@ -20,7 +20,7 @@ from audio_video_search_backend.api import sample as sample_api
 from audio_video_search_backend.index.publish import IndexHit, SearchIndex, Segment
 from audio_video_search_backend.model.provenance import Level, Provenance
 from audio_video_search_backend.store.repo import Store
-from tests.conftest import signed_headers
+from tests.conftest import ClientResponse, signed_headers
 
 CONTENT = b"RIFF fake media bytes " * 100
 SHA = hashlib.sha256(CONTENT).hexdigest()
@@ -49,7 +49,7 @@ def api(fetched: list[tuple[int, str]]) -> Iterator[TestClient]:
         yield test_client
 
 
-def _post(client: TestClient, path: str, body: dict[str, object]) -> httpx.Response:
+def _post(client: TestClient, path: str, body: dict[str, object]) -> ClientResponse:
     return client.post(path, headers=signed_headers(), json=body)
 
 
@@ -577,7 +577,7 @@ def test_workstock_answers_pages_with_the_fixed_fields(client: TestClient) -> No
     "params",
     [{"limit": 1001}, {"limit": 0}, {"state": "deleted"}, {"state": "ACTIVE"}, {"after": -1}, {"limit": "x"}],
 )
-def test_workstock_refuses_values_outside_the_contract(client: TestClient, params: dict[str, object]) -> None:
+def test_workstock_refuses_values_outside_the_contract(client: TestClient, params: dict[str, int | str]) -> None:
     answer = client.get("/workstock", params=params, headers=signed_headers())
 
     assert answer.status_code == 422

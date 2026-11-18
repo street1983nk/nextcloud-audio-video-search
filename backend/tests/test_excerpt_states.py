@@ -21,7 +21,6 @@ worker makes them; every expected answer is written out by hand.
 import hashlib
 from collections.abc import Iterator
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -31,7 +30,7 @@ from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import SAMPLE_MODEL_SHA256, Level, Provenance
 from audio_video_search_backend.store import repo
 from audio_video_search_backend.store.repo import ChunkCounters, IntakeItem, PreviewJob, Store
-from tests.conftest import signed_headers
+from tests.conftest import ClientResponse, signed_headers
 
 SHA = hashlib.sha256(b"the bytes of the recording").hexdigest()
 HEAD = hashlib.sha256(b"the head of the recording").hexdigest()
@@ -100,11 +99,11 @@ def _reference(store: Store, media_id: int, state: str, stage: str, file_id: int
     )
 
 
-def _excerpt(client: TestClient, file_id: int = FILE, at_ms: int = 0) -> httpx.Response:
+def _excerpt(client: TestClient, file_id: int = FILE, at_ms: int = 0) -> ClientResponse:
     return client.post("/excerpt", headers=signed_headers(), json={"fileId": file_id, "atMs": at_ms})
 
 
-def _same_answer(one: httpx.Response, other: httpx.Response) -> bool:
+def _same_answer(one: ClientResponse, other: ClientResponse) -> bool:
     """Status, body and the headers that describe the body; nothing tells the two apart."""
     return (one.status_code, one.content, one.headers.get("content-type"), one.headers.get("content-length")) == (
         other.status_code,

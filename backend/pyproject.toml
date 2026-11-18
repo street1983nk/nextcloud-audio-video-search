@@ -33,6 +33,20 @@ dependencies = [
     # Text language of a window for the catch rule (BSD-3-Clause, owner approved in
     # plan 03-01); only py3langid.langid is used, never py3langid.server.
     "py3langid==0.4.0",
+    # Whisper large-v3-turbo and large-v3 for the RAM and thread measurements of
+    # phase 5 (MIT, owner approved in plan 05-02; wheel sha256 are held in uv.lock
+    # and tests/test_lock_wheels.py). Always given a local model directory, never a
+    # repository name: its huggingface-hub is import only (tests/test_no_hub_network.py).
+    "faster-whisper==1.2.1",
+    # The inference engine under faster-whisper (MIT, owner approved in plan 05-02;
+    # wheel sha256 for amd64 and arm64 are held in uv.lock and tests/test_lock_wheels.py).
+    # Never 4.9.0 without a measurement: 4.8.5 is the release spike 3 measured.
+    "ctranslate2==4.8.5",
+    # Required by faster-whisper for its own Silero VAD (MIT, owner approved in plan
+    # 05-02; wheel sha256 for amd64 and arm64 are held in uv.lock and
+    # tests/test_lock_wheels.py). Never 1.32.0 without a measurement, and never in
+    # the same process as sherpa-onnx, which brings its own libonnxruntime.
+    "onnxruntime==1.31.1",
 ]
 
 [dependency-groups]
@@ -45,6 +59,10 @@ dev = [
     "pytest-cov==7.1.0",
     "webvtt-py==0.8.0",
     "srt==3.5.3",
+    # The IANA zone database for zoneinfo on Windows, where Python has none (owner
+    # approved in plan 05-02). The image and the CI runners read /usr/share/zoneinfo;
+    # the marker and the dev group keep it out of both.
+    "tzdata==2026.6; sys_platform == 'win32'",
 ]
 
 [build-system]
@@ -62,6 +80,13 @@ constraint-dependencies = ["starlette>=1.0.1"]
 # nc-py-api 0.30.3 caps filelock at <4 while the ReadWriteLock advisories are
 # fixed only in 4.2.1; the classic FileLock API it uses is unchanged in 4.x.
 override-dependencies = ["filelock>=4.2.1"]
+# Nothing uploaded after 4 November 2026 enters the lock (owner, 18 November 2026):
+# the resolution of plan 05-02 is the one the owner approved package by package,
+# and a later upload of a transitive package needs a new approval.
+exclude-newer = "2026-11-05T00:00:00Z"
+# The one exception is the dev pin webvtt-py 0.8.0, which was already locked and
+# was uploaded after that day (owner, 18 November 2026). No further exception.
+exclude-newer-package = { webvtt-py = "2026-11-09T00:00:00Z" }
 
 [tool.coverage.report]
 fail_under = 90

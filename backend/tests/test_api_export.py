@@ -16,7 +16,6 @@ the job states are made with the public methods of the store, like the worker.
 import threading
 from collections.abc import Iterator, Sequence
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -27,7 +26,7 @@ from audio_video_search_backend.model.overlay import Word
 from audio_video_search_backend.model.provenance import Level, Provenance
 from audio_video_search_backend.store.repo import ChunkCounters, Store
 from audio_video_search_backend.subtitles.cues import Cue
-from tests.conftest import signed_headers
+from tests.conftest import ClientResponse, signed_headers
 from tests.test_excerpt_states import (
     CHUNK_END,
     FILE,
@@ -74,11 +73,11 @@ def _store(client: TestClient) -> Store:
     return _services(client).store
 
 
-def _export(client: TestClient, file_id: int = FILE, fmt: str = "vtt") -> httpx.Response:
+def _export(client: TestClient, file_id: int = FILE, fmt: str = "vtt") -> ClientResponse:
     return client.post("/export", headers=signed_headers(), json={"fileId": file_id, "format": fmt})
 
 
-def _meta(client: TestClient, file_id: int = FILE) -> httpx.Response:
+def _meta(client: TestClient, file_id: int = FILE) -> ClientResponse:
     return client.post("/export/meta", headers=signed_headers(), json={"fileId": file_id})
 
 
@@ -96,7 +95,7 @@ def _publish(store: Store, media_id: int, words: list[Word]) -> None:
     assert store.publish_version(media_id, prov, words).published
 
 
-def _same(one: httpx.Response, other: httpx.Response) -> bool:
+def _same(one: ClientResponse, other: ClientResponse) -> bool:
     """Status, body and the headers that describe the body; nothing tells the two apart."""
     return (one.status_code, one.content, one.headers.get("content-type"), one.headers.get("content-length")) == (
         other.status_code,
