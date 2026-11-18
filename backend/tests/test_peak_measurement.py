@@ -107,15 +107,16 @@ def test_the_record_carries_both_architectures_of_one_run() -> None:
         assert "OMP_THREAD_LIMIT" not in entry["threads_env"]
 
 
-def test_the_constants_are_the_record() -> None:
+def test_the_constants_are_the_highest_value_on_record() -> None:
     record = _record()
+    runs = (record, record["earlier_run"])
 
     assert set(measured.PARAKEET_PEAK_BYTES) == set(MACHINES)
     for arch in MACHINES:
-        kib = max(record[arch]["ru_maxrss_kib"], record[arch]["vmhwm_kib"])
+        kib = max(max(run[arch]["ru_maxrss_kib"], run[arch]["vmhwm_kib"]) for run in runs)
         assert measured.PARAKEET_PEAK_BYTES[arch] == kib * 1024
         assert measured.PARAKEET_PEAK_BYTES[arch] > 0
-    assert record["run_url"] == measured.MEASURED_RUN
+    assert tuple(run["run_url"] for run in runs) == measured.MEASURED_RUNS
 
 
 def test_the_record_holds_no_word_of_the_transcript() -> None:
@@ -129,7 +130,7 @@ def test_the_record_holds_no_word_of_the_transcript() -> None:
         assert isinstance(entry["words"], int)
 
 
-def test_the_earlier_run_is_a_second_measurement_and_not_the_source() -> None:
+def test_the_earlier_run_is_a_second_measurement_of_another_commit() -> None:
     record = _record()
     earlier = record["earlier_run"]
 

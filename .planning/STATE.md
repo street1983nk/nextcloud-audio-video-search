@@ -218,3 +218,4 @@ Resume file: None
 | ID | Date | Task | Status |
 |----|------|------|--------|
 | 261118-lkb | 2026-11-18 | Security scans (CodeQL, REUSE, pip-audit) also on phase branches | done, CI proof pending |
+| 261118-ngr | 2026-11-18 | Parakeet peak = highest measured value of both runs (owner decision, arm64 1175 MiB) | done |
