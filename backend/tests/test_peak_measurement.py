@@ -7,12 +7,18 @@ a thread limit below what the library plans hung arm64). A phase branch builds
 and measures but never moves the :dev tag.
 """
 
+import json
 import re
 
+from audio_video_search_backend import measured
 from tests.conftest import BACKEND_ROOT, REPO_ROOT
 
 DOCKER_YML = REPO_ROOT / ".github" / "workflows" / "docker.yml"
 PROBE = REPO_ROOT / "ci" / "measure" / "peak_probe.py"
+RECORD = REPO_ROOT / "docs" / "measurements" / "parakeet-peak-2026-11.json"
+MACHINES = {"amd64": "x86_64", "arm64": "aarch64"}
+RUN_URL = re.compile(r"https://github\.com/street1983nk/nextcloud-audio-video-search/actions/runs/\d+")
+COMMIT = re.compile(r"[0-9a-f]{40}")
 JOB_HEADER = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.MULTILINE)
 
 
@@ -80,3 +86,57 @@ def test_a_phase_branch_never_moves_the_dev_tag() -> None:
 
     assert "- 'phase-*'" in source
     assert "if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')" in merge
+
+
+def _record() -> dict:
+    return json.loads(RECORD.read_text(encoding="utf-8"))
+
+
+def test_the_record_carries_both_architectures_of_one_run() -> None:
+    record = _record()
+
+    assert RUN_URL.fullmatch(record["run_url"])
+    assert COMMIT.fullmatch(record["sha"])
+    for arch, machine in MACHINES.items():
+        entry = record[arch]
+        assert entry["arch"] == machine
+        assert entry["code"] == "ok"  # the positive control of the probe: real speech was recognised
+        assert entry["words"] > 0
+        assert entry["ru_maxrss_kib"] > 0
+        assert entry["vmhwm_kib"] > 0
+        assert "OMP_THREAD_LIMIT" not in entry["threads_env"]
+
+
+def test_the_constants_are_the_record() -> None:
+    record = _record()
+
+    assert set(measured.PARAKEET_PEAK_BYTES) == set(MACHINES)
+    for arch in MACHINES:
+        kib = max(record[arch]["ru_maxrss_kib"], record[arch]["vmhwm_kib"])
+        assert measured.PARAKEET_PEAK_BYTES[arch] == kib * 1024
+        assert measured.PARAKEET_PEAK_BYTES[arch] > 0
+    assert record["run_url"] == measured.MEASURED_RUN
+
+
+def test_the_record_holds_no_word_of_the_transcript() -> None:
+    fields = {"arch", "ru_maxrss_kib", "vmhwm_kib", "code", "words", "seconds", "threads_env"}
+    record = _record()
+
+    assert set(record) == {*MACHINES, "run_url", "sha", "earlier_run"}
+    assert set(record["earlier_run"]) == {*MACHINES, "run_url", "sha"}
+    for entry in (*(record[arch] for arch in MACHINES), *(record["earlier_run"][arch] for arch in MACHINES)):
+        assert set(entry) == fields
+        assert isinstance(entry["words"], int)
+
+
+def test_the_earlier_run_is_a_second_measurement_and_not_the_source() -> None:
+    record = _record()
+    earlier = record["earlier_run"]
+
+    assert RUN_URL.fullmatch(earlier["run_url"])
+    assert earlier["run_url"] != record["run_url"]
+    assert earlier["sha"] != record["sha"]
+    for arch, machine in MACHINES.items():
+        assert earlier[arch]["arch"] == machine
+        assert earlier[arch]["code"] == "ok"
+        assert earlier[arch]["words"] == record[arch]["words"]

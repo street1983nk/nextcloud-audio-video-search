@@ -1,0 +1,60 @@
+{
+  "amd64": {
+    "arch": "x86_64",
+    "ru_maxrss_kib": 1115276,
+    "vmhwm_kib": 1115608,
+    "code": "ok",
+    "words": 1180,
+    "seconds": 40.5,
+    "threads_env": {
+      "OMP_NUM_THREADS": "2",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1"
+    }
+  },
+  "arm64": {
+    "arch": "aarch64",
+    "ru_maxrss_kib": 1151040,
+    "vmhwm_kib": 1151296,
+    "code": "ok",
+    "words": 1180,
+    "seconds": 35.8,
+    "threads_env": {
+      "OMP_NUM_THREADS": "2",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1"
+    }
+  },
+  "run_url": "https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/44304526791",
+  "sha": "106cc6781d4a2a25a993d482ec5c2e050b2b6550",
+  "earlier_run": {
+    "amd64": {
+      "arch": "x86_64",
+      "ru_maxrss_kib": 1119792,
+      "vmhwm_kib": 1120192,
+      "code": "ok",
+      "words": 1180,
+      "seconds": 41.3,
+      "threads_env": {
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1"
+      }
+    },
+    "arm64": {
+      "arch": "aarch64",
+      "ru_maxrss_kib": 1202960,
+      "vmhwm_kib": 1203264,
+      "code": "ok",
+      "words": 1180,
+      "seconds": 35.3,
+      "threads_env": {
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1"
+      }
+    },
+    "run_url": "https://github.com/street1983nk/nextcloud-audio-video-search/actions/runs/44297803266",
+    "sha": "53221a5db3d5ec134a18cc8854f0d1e328c879cd"
+  }
+}
