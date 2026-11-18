@@ -243,7 +243,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 05-01-PLAN.md: Wave 0: Linux-Spitze von Parakeet in der CI messen (amd64, arm64), Owner-Push, measured.py
+- [x] 05-01-PLAN.md: Wave 0: Linux-Spitze von Parakeet in der CI messen (amd64, arm64), Owner-Push, measured.py
 - [x] 05-02-PLAN.md: Owner-Legitimitätsprüfung und Pins faster-whisper 1.2.1, ctranslate2 4.8.5, onnxruntime 1.31.1
 - [x] 05-03-PLAN.md: Whisper model.bin in 1-GiB-Teile mit sha256 je Teil und Ganzes
 - [x] 05-04-PLAN.md: hardware.py (cpu.max, Threads nur senken) und schedule.py (Fenster, Zone) TDD
@@ -407,7 +407,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 25/25 | Complete    | 2026-11-15 |
 | 4. Suchqualität und Export | 19/19 | Complete    | 2026-11-17 |
-| 5. Ressourcen, Profile und Modellbezug | 5/23 | In Progress|  |
+| 5. Ressourcen, Profile und Modellbezug | 6/23 | In Progress|  |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |
 | 8. Lebenszyklus und DSGVO | 0/TBD | Not started | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Welle 1: 05-02/03/04/05/06 fertig (05-02: d200a5d, a7508a8, d5720c0, nur lokal); 05-01 Task 3 wartet auf die CI-Messung, dafür ist eine Owner-Freigabe für den Push nötig"
-last_updated: "2026-11-18T12:25:00.000Z"
+stopped_at: "Welle 1 abgeschlossen (05-01 bis 05-06); 05-01: Linux-Spitze Parakeet amd64 1089 MiB, arm64 1124 MiB (Lauf 44304526791), Commit 9d0068b nur lokal; nächster Schritt Welle 2 nach Owner-Freigabe"
+last_updated: "2026-11-18T15:00:00.000Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 88
+  completed_plans: 89
   percent: 36
 ---
 
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-17)
 
 **Core value:** Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lokal transkribiert und sind in der Nextcloud-Suche mit Zeitmarke findbar, mit der bestmöglichen Transkriptqualität, die auf der vorhandenen Hardware sicher läuft. Kein Inhalt verlässt den Server.
-**Current focus:** Phase 5, Ressourcen, Profile und Modellbezug (Welle 1 in Ausführung)
+**Current focus:** Phase 5, Ressourcen, Profile und Modellbezug (Welle 1 abgeschlossen)
 
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-02, 05-03, 05-04, 05-05, 05-06 fertig (Welle 1); 05-01 Task 3 offen (CI-Messung)
+Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2 noch nicht begonnen
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [████████░░] 83%
+Progress: [████████░░] 84%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 83
+- Total plans completed: 84
 - Average duration: -
 - Total execution time: 0.0 hours
 
@@ -90,6 +90,7 @@ Progress: [████████░░] 83%
 | Phase 05 P01 | 30 min | 1 tasks | 3 files |
 | Phase 05 P03 | 60 min | 2 tasks | 3 files |
 | Phase 05 P02 | 150 min | 2 tasks | 14 files |
+| Phase 05 P01 | 45 min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -175,6 +176,8 @@ Recent decisions affecting current work:
 - [Phase 05]: 05-02 (Owner 18.11.): httpx2-jsfetch 1.0 nur als Lock-Eintrag mit Marker emscripten, tzdata 2026.6 nur Dev unter Windows; test_lock_platforms.py hält beides
 - [Phase 05]: 05-02: Netzverbot per Test: kein Import von huggingface_hub, hf_xet, httpx2, httpcore2 unter backend/src (auch nicht in engine/), WhisperModel nur mit Verzeichnis und local_files_only=True, download_model nirgends; Gegenprobe über frischen Interpreter (tests/hub_import_probe.py)
 - [Phase 05]: 05-02: der TestClient von starlette läuft auf httpx2, sobald es installiert ist; Antworttyp in Tests über conftest.ClientResponse, Produktcode bleibt bei httpx in nc.py
+- [Phase 05]: 05-01: Linux-Spitze des Parakeet-Kindes aus der CI (Lauf 44304526791, 106cc67): amd64 1089,46 MiB, arm64 1124,31 MiB; measured.PARAKEET_PEAK_BYTES je Architektur = max(ru_maxrss, VmHWM) x 1024 dieses Laufs; der frühere Lauf 44297803266 (53221a5) steht als zweite Messung im Datensatz (arm64 dort 1175,06 MiB, +4,5 %)
+- [Phase 05]: 05-01: Befund für 05-12: Bedarf 1293 MiB (Maximum x 1,15) plus 512 MiB Reserve = 1805 MiB, bei 2 GiB bleiben 243 MiB für anon des Hauptprozesses (ungemessen)
 
 ### Pending Todos
 
@@ -187,8 +190,9 @@ Recent decisions affecting current work:
 - [Phase 4] Wortform-Lücke "Fischart" findet "Fischarten" nicht (deferred-items 04-14): noch nicht bewertet, bekannte Grenze benennen oder Analyzer mit Messung nachziehen
 - [Phase 4] Backlog (Owner 16.11.): Trefferzeilen-Ausschnitt S6/S7 um den ersten Treffer zentrieren, Phase offen
 - [Phase 4] phase-04 noch nicht nach main gemergt; Merge und Dependabot-PRs #3/#4 danach nur mit Owner-Freigabe
-- [Phase 5] Push für Wave 0 offen: c796f4f hatte ein rotes lokales Gate (ruff I001, test_schedule.py); Owner entscheidet über den neuen SHA
-- [Phase 5] 05-02: drei Commits nur lokal (d200a5d, a7508a8, d5720c0); der erste Linux-Bau mit der Whisper-Laufzeit und pip-audit laufen erst nach einem vom Owner freigegebenen Push
+- [Phase 5] 05-01: Commit 9d0068b (Messsatz, measured.py) und der Planabschluss liegen nur lokal; Push auf phase-05 nur mit neuer Owner-Freigabe
+- [Phase 5] 05-01: arm64 streut zwischen zwei Läufen um 4,5 % (1124 gegen 1175 MiB); der Zuschlag von 15 % in 05-12 deckt das, Owner kann vor 05-12 das Maximum über alle Läufe verlangen
+- [Phase 5] security.yml (CodeQL, REUSE, pip-audit) läuft nicht auf phase-05; pip-audit lokal über den Laufzeit-Export ohne Befund (52 von 54, ohne uvloop und httpx2-jsfetch), der CI-Lauf kommt erst mit Pull Request oder Merge
 - [Phase 5] 05-02: exclude-newer 2026-11-05 bleibt im Projekt und bremst spätere Updates (auch Dependabot), bis der Owner die Grenze verschiebt
 - [Phase 5] RES-06 und RES-07 stehen im Kopf von 05-02, sind aber erst mit 05-08/05-10 und 05-17 erfüllt; nicht abgehakt
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
@@ -205,6 +209,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-18T12:25:00.000Z
-Stopped at: Welle 1: 05-02/03/04/05/06 fertig (05-02: d200a5d, a7508a8, d5720c0, nur lokal); 05-01 Task 3 wartet auf die CI-Messung, dafür ist eine Owner-Freigabe für den Push nötig
+Last session: 2026-11-18T15:00:00.000Z
+Stopped at: Welle 1 abgeschlossen (05-01 bis 05-06); 05-01: Linux-Spitze Parakeet amd64 1089 MiB, arm64 1124 MiB (Lauf 44304526791), Commit 9d0068b nur lokal; nächster Schritt Welle 2 nach Owner-Freigabe
 Resume file: None
