@@ -26,8 +26,13 @@ Every rule is a function over the text with a staged violation that has to
 make it fire.
 """
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from tests.conftest import REPO_ROOT
 from tests.test_l10n_phase5 import ROWS
@@ -440,6 +445,7 @@ def keyed(text: str, opening: str) -> list[str]:
 def test_profiles_models_and_states_are_one_list_in_php_template_and_script() -> None:
     service = read(SERVICE)
     template = read(TEMPLATE)
+    script = read(SCRIPT)
 
     profiles = listed(service, "public const RESOURCE_PROFILES = [")
     models = listed(service, "public const RESOURCE_MODELS = [")
@@ -455,11 +461,85 @@ def test_profiles_models_and_states_are_one_list_in_php_template_and_script() ->
     assert keyed(template, "$modelOrigins = [") == models
     assert keyed(template, "$modelStates = [") == states
 
+    assert listed(script, "const PROFILES = [") == profiles
+    assert listed(script, "const MODELS = [") == models
+    assert listed(script, "const MODEL_STATES = [") == states
+    # Polling only while a model is in M4, M5 or M6.
+    assert listed(script, "const POLLED_STATES = [") == ["waiting", "downloading", "verifying"]
+
 
 def test_self_list_readers_read_a_list_and_its_keys() -> None:
     assert listed("const A = ['x', 'y-1']\nconst B = ['z']", "const A = [") == ["x", "y-1"]
     assert listed("const A = ['x']", "const C = [") == []
     assert keyed("$a = [\n\t'x' => 1,\n\t'y' => ['z' => 2],\n];\n$b = [\n\t'q' => 1,\n];", "$a = [") == ["x", "y"]
+
+
+# -- admin.js ----------------------------------------------------------------------------
+
+MARKUP_FROM_STRING = re.compile(r"innerHTML|insertAdjacentHTML|outerHTML\s*=")
+SCRIPT_NEEDLES = (
+    "const POLL_EVERY_MS = 5000\n",
+    "const POLL_FAILURES = 3\n",
+    "pollTimer = window.setTimeout(poll, POLL_EVERY_MS)",
+    "if (pollFailures >= POLL_FAILURES) {",
+    "if (pollStopped || pollBusy || !downloadPending() || document.visibilityState !== 'visible') {",
+    "if (pollStopped || pollBusy || document.visibilityState !== 'visible') {",
+    "document.addEventListener('visibilitychange', schedule)",
+    "post('admin/resources', { profile: id })",
+    "post('admin/resources', { offline: wanted })",
+    "post('admin/resources', payload)",
+    "field.setAttribute('aria-invalid', 'true')",
+    "options.setAttribute('aria-busy', 'true')",
+    "fields[0].focus()",
+    "const field = document.getElementById('initial-state-audio_video_search-resources')",
+)
+
+
+def script_findings(script: str) -> list[str]:
+    found = [f"markup from a string: {hit}" for hit in findings(MARKUP_FROM_STRING, script)]
+    if "setInterval" in script:
+        found.append("setInterval")
+    if script.count("ask('admin/resources')") != 1:
+        found.append("the polling does not ask the route in exactly one place")
+    if "t('audio_video_search'" in script:
+        found.append("a text translated in the script")
+    if script.count("requesttoken: document.head.dataset.requesttoken") != 2:
+        found.append("the token is not read in exactly two places")
+    found += [f"missing: {needle.strip()}" for needle in SCRIPT_NEEDLES if needle not in script]
+    # The focus moves only where the admin asked for it: after "Check again"
+    # and to a field that is wrong, never in the function the polling calls.
+    render = script[script.find("    function render (answer) {") : script.find("    function take (answer) {")]
+    if not render or ".focus()" in render:
+        found.append("the render function is missing or moves the focus")
+    return found
+
+
+def test_the_script_saves_checks_and_polls_by_the_rules() -> None:
+    script = read(SCRIPT)
+    assert "admin/resources" in script
+    assert script_findings(script) == []
+
+
+def test_self_script_rules_fire() -> None:
+    script = read(SCRIPT)
+    assert script_findings(script + "\nnode.innerHTML = text\n") == ["markup from a string: innerHTML"]
+    assert script_findings(script + "\nnode.outerHTML = text\n") == ["markup from a string: outerHTML ="]
+    assert script_findings(script + "\nwindow.setInterval(poll, 5000)\n") == ["setInterval"]
+    assert script_findings(script.replace("const POLL_EVERY_MS = 5000\n", "const POLL_EVERY_MS = 500\n")) == [
+        "missing: const POLL_EVERY_MS = 5000"
+    ]
+    assert script_findings(script.replace("const POLL_FAILURES = 3\n", "const POLL_FAILURES = 30\n")) == [
+        "missing: const POLL_FAILURES = 3"
+    ]
+    hidden_page = script.replace(
+        " || !downloadPending() || document.visibilityState !== 'visible') {", " || !downloadPending()) {"
+    )
+    assert len(script_findings(hidden_page)) == 1
+    translated = script + "\nt('audio_video_search', 'Saved')\n"
+    assert script_findings(translated) == ["a text translated in the script"]
+    jumping = script.replace("      announce(changes)\n", "      announce(changes)\n      live.focus()\n")
+    assert jumping != script
+    assert script_findings(jumping) == ["the render function is missing or moves the focus"]
 
 
 # -- the rounding rule: PHP and script on the same rows ------------------------------------
@@ -495,6 +575,17 @@ PHP_RULE = (
     "\t\t$number = intdiv($tenths, 10) . self::separator($l) . ($tenths % 10);\n",
 )
 _PHPUNIT_ROW = re.compile(r"^\t\t\t\[(\d+), '(need|available|size)', '([0-9.]+ GB)'\],$", re.MULTILINE)
+_JS_RULE = re.compile(r"  function gigabytes \(bytes, mode, unit, decimal\) \{\n.*?\n  \}\n", re.DOTALL)
+_HARNESS = """'use strict'
+const gigabytes = (function () {
+%s
+  return gigabytes
+})()
+const rows = JSON.parse(process.argv[2])
+process.stdout.write(JSON.stringify(rows.map(function (row) {
+  return gigabytes(row[0], row[1], row[2], row[3])
+})))
+"""
 
 
 def php_reference(amount: int, mode: str, decimal: str = ".", unit: str = "%s GB") -> str:
@@ -508,6 +599,26 @@ def php_reference(amount: int, mode: str, decimal: str = ".", unit: str = "%s GB
     else:
         tenths = (amount + tenth // 2) // tenth
     return unit.replace("%s", f"{tenths // 10}{decimal}{tenths % 10}")
+
+
+def js_rule(script: str) -> str:
+    """The source of the function gigabytes of admin.js."""
+    found = _JS_RULE.findall(script)
+    assert len(found) == 1, "admin.js carries no single function gigabytes"
+    return found[0]
+
+
+def run_js_rule(rule: str, rows: list[tuple[int, str, str, str]], folder: Path) -> list[str]:
+    """What the function answers for (bytes, meaning, unit, decimal sign), run under node."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the rule of admin.js cannot be run")
+    harness = folder / "gigabytes.js"
+    harness.write_text(_HARNESS % rule, encoding="utf-8")
+    done = subprocess.run(  # noqa: S603 - an argument list, never a shell
+        [node, str(harness), json.dumps(rows)], capture_output=True, text=True, check=True, timeout=60
+    )
+    return json.loads(done.stdout)
 
 
 def test_the_php_rule_stands_word_for_word_and_gives_the_rows() -> None:
@@ -525,6 +636,43 @@ def test_phpunit_runs_resource_format_on_the_same_rows() -> None:
     rows = [(int(amount), mode, text) for amount, mode, text in _PHPUNIT_ROW.findall(read(PHPUNIT))]
     assert rows == list(GIGABYTE_ROWS)
     assert "self::assertSame($expected, ResourceFormat::gigabytes($bytes, $mode, $this->l10n()));" in read(PHPUNIT)
+
+
+def test_the_script_rule_gives_the_same_rows(tmp_path: Path) -> None:
+    rule = js_rule(read(SCRIPT))
+    rows = [(amount, mode, "%s GB", ".") for amount, mode, _ in GIGABYTE_ROWS]
+    assert run_js_rule(rule, rows, tmp_path) == [expected for _, _, expected in GIGABYTE_ROWS]
+    # Unit and decimal sign come from the template: French reads "3,1 Go".
+    french = [(amount, mode, "%s Go", ",") for amount, mode, _ in GIGABYTE_ROWS]
+    assert run_js_rule(rule, french, tmp_path) == [
+        php_reference(amount, mode, ",", "%s Go") for amount, mode, _ in GIGABYTE_ROWS
+    ]
+    # Beyond the rows: both rules agree on every step around a boundary.
+    sweep = [
+        (base + step, mode)
+        for base in (0, 1600000000, 4950000000)
+        for step in range(-2, 3)
+        for mode in ("need", "available", "size")
+    ]
+    assert run_js_rule(rule, [(amount, mode, "%s GB", ".") for amount, mode in sweep], tmp_path) == [
+        php_reference(amount, mode) for amount, mode in sweep
+    ]
+
+
+def test_self_the_rows_catch_a_changed_script_rule(tmp_path: Path) -> None:
+    rule = js_rule(read(SCRIPT))
+    rows = [(amount, mode, "%s GB", ".") for amount, mode, _ in GIGABYTE_ROWS]
+    expected = [text for _, _, text in GIGABYTE_ROWS]
+    staged = {
+        "need rounded down": ("Math.floor((amount + TENTH - 1) / TENTH)", "Math.floor(amount / TENTH)"),
+        "available rounded up": ("tenths = Math.floor(amount / TENTH)", "tenths = Math.ceil(amount / TENTH)"),
+        "size cut off": ("Math.floor((amount + TENTH / 2) / TENTH)", "Math.floor(amount / TENTH)"),
+        "size rounded half down": ("(amount + TENTH / 2) / TENTH", "(amount + TENTH / 2 - 1) / TENTH"),
+        "a negative amount": ("Math.max(0, bytes)", "bytes - 1"),
+    }
+    for name, (old, new) in staged.items():
+        assert rule.count(old) == 1, name
+        assert run_js_rule(rule.replace(old, new), rows, tmp_path) != expected, name
 
 
 # -- the texts ---------------------------------------------------------------------------------
