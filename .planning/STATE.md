@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: 05-04 complete (hardware.py, schedule.py)
-last_updated: "2026-11-18T10:28:40.924Z"
+stopped_at: 05-05 complete (PHP resources routes, ResourceFormat, occ models)
+last_updated: "2026-11-18T10:31:49.367Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 84
+  completed_plans: 85
   percent: 36
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-04 fertig (Welle 1)
+Plan: 05-05 fertig (Welle 1)
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [████████░░] 79%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -85,6 +85,7 @@ Progress: [████████░░] 79%
 | Phase 04 P16 | 45 min | 2 tasks | 9 files |
 | Phase 04 P18 | 45min | 2 tasks | 12 files |
 | Phase 05 P04 | 35 min | 2 tasks | 4 files |
+| Phase 05 P05 | 60 min | 2 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -192,5 +193,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-11-18T10:28:40.906Z
-Stopped at: 05-04 complete (hardware.py, schedule.py)
+Stopped at: 05-05 complete (PHP resources routes, ResourceFormat, occ models)
 Resume file: None
