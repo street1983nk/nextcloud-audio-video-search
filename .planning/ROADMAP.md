@@ -238,7 +238,61 @@ Plans:
   4. Parakeet und Silero VAD sind im Image; Whisper-Modelle werden mit festem Commit und sha256 nur von der Host-Allowlist geladen oder offline abgelegt; im Offline-Modus gibt es keinerlei ausgehende Verbindung (Netzwerkmitschnitt).
   5. Namensnennung NVIDIA Parakeet (CC-BY-4.0) und alle Drittlizenzen stehen in App, README und THIRD-PARTY.md.
 
-**Plans**: TBD
+**Plans:** 23 plans (10 Wellen)
+
+Plans:
+**Wave 1**
+
+- [ ] 05-01-PLAN.md: Wave 0: Linux-Spitze von Parakeet in der CI messen (amd64, arm64), Owner-Push, measured.py
+- [ ] 05-02-PLAN.md: Owner-Legitimitätsprüfung und Pins faster-whisper 1.2.1, ctranslate2 4.8.5, onnxruntime 1.31.1
+- [ ] 05-03-PLAN.md: Whisper model.bin in 1-GiB-Teile mit sha256 je Teil und Ganzes
+- [ ] 05-04-PLAN.md: hardware.py (cpu.max, Threads nur senken) und schedule.py (Fenster, Zone) TDD
+- [ ] 05-05-PLAN.md: PHP-Routen /admin/resources, strenge Prüfung, ResourceFormat, occ audio_video_search:models
+- [ ] 05-06-PLAN.md: Kataloge T36 bis T96 in DE/de_DE/EN/FR
+
+**Wave 2**
+
+- [ ] 05-07-PLAN.md: Kind mit oom_score_adj 1000, Wächter je Modell, OOM-Erkennung, eine Thread-Zahl
+- [ ] 05-08-PLAN.md: Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre
+- [ ] 05-09-PLAN.md: Admin-Seite: Profil, Rechenzeit, Modelle und Lizenzen
+- [ ] 05-10-PLAN.md: Owner: Upload der Whisper-Teile, Digest-Gegenprobe
+
+**Wave 3**
+
+- [ ] 05-11-PLAN.md: Thread-Zahl in der Herkunft, Store v5
+- [ ] 05-12-PLAN.md: Profilrechner, Mindest-RAM, Einstellungen, AVS_OFFLINE
+- [ ] 05-14-PLAN.md: Parakeet und Silero im Image, /init ohne Download, CI-Marker
+
+**Wave 4**
+
+- [ ] 05-13-PLAN.md: Modell-Worker mit Zuständen, Backoff, Offline
+- [ ] 05-15-PLAN.md: Rechenfenster, Pause an der Stückgrenze, Reihenfolge
+- [ ] 05-17-PLAN.md: THIRD-PARTY.md und README DE/EN/FR
+
+**Wave 5**
+
+- [ ] 05-16-PLAN.md: ExApp-Routen /resources, Eigentest, Lebenszyklus
+
+**Wave 6**
+
+- [ ] 05-18-PLAN.md: CI-Nachweis OOM und Wächter (--memory=2g)
+- [ ] 05-19-PLAN.md: Playwright @phase5 nach Prüfvertrag
+
+**Wave 7**
+
+- [ ] 05-20-PLAN.md: CI-Nachweis Threads (amd64, arm64) und Whisper-Spitzen
+
+**Wave 8**
+
+- [ ] 05-21-PLAN.md: CI-Netzwerkmitschnitt Offline mit Positivkontrolle
+
+**Wave 9**
+
+- [ ] 05-22-PLAN.md: Owner: Push auf phase-05, CI-Beweis
+
+**Wave 10**
+
+- [ ] 05-23-PLAN.md: Owner: gemeinsame UI-Abnahme per Playwright
 **UI hint**: yes
 **Research flag**: HF-CDN-Hosts für die Allowlist, Profilschwellen, optional int8-Vorkonvertierung von turbo, huggingface-hub 2.x im ersten Container-Build. Profilvorwahl bis Phase 11 nur RAM-basiert.
 
