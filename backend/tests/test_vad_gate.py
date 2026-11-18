@@ -15,6 +15,13 @@ copy and prove that each rule can fail.
    later ``engine/child.py``: it sets the thread variables of the engine only by
    writing, with ``os.environ.update(<CONSTANT>)``. Every other use of
    ``environ`` in ``engine/`` is a finding, so every read is one.
+   Plan 05-07 (owner, 18 November 2026) adds exactly two literal lines, not
+   patterns, each a whole line with nothing but indentation before it:
+   ``os.environ.pop("OMP_THREAD_LIMIT", None)`` as a statement of its own, so
+   that its value cannot be used, and ``os.environ.update(thread_env(threads))``
+   with this function name and this argument name. A file that carries the
+   second line has to define ``thread_env`` itself, at its top level: the
+   function then lies in ``engine/`` and may not read either.
 2  In the whole package, the words ``vad``, ``catch``, ``threshold``, ``conf`` and
    ``confidence`` never stand in a line with ``SettingsField``, ``@router.``,
    ``environ`` or ``getenv``; no ``SettingsField`` call and no route (decorator
@@ -47,6 +54,11 @@ ENGINE_FORBIDDEN_MODULES = re.compile(
 )
 ENVIRON = re.compile(r"\benviron\b")
 ENVIRON_WRITE = re.compile(r"\bos\.environ\.update\(\s*[A-Z][A-Z0-9_]*\s*\)")
+# Plan 05-07 (owner, 18 November 2026): two literal lines, compared as whole lines, never as patterns.
+THREAD_LIMIT_REMOVAL = 'os.environ.pop("OMP_THREAD_LIMIT", None)'
+THREAD_ENV_WRITE = "os.environ.update(thread_env(threads))"
+ENVIRON_LINES = frozenset({THREAD_LIMIT_REMOVAL, THREAD_ENV_WRITE})
+THREAD_ENV_DEFINITION = re.compile(r"^def thread_env\(", re.MULTILINE)
 
 # Rule 2. Letters only bound a word, so ``vad_threshold`` and ``AVS_VAD`` match, ``configured`` does not.
 SUBJECT = re.compile(r"(?i)(?<![a-z])(?:vad|catch|threshold|conf|confidence)(?![a-z])")
@@ -84,6 +96,10 @@ def rule_1(source: str) -> list[tuple[int, str]]:
         findings += [(number, f"engine reads {pattern!r}") for pattern in ENGINE_FORBIDDEN if pattern in line]
         if ENGINE_FORBIDDEN_MODULES.search(line):
             findings.append((number, "engine imports settings, config or nc"))
+        if line.lstrip(" ") in ENVIRON_LINES:
+            if line.lstrip(" ") == THREAD_ENV_WRITE and not THREAD_ENV_DEFINITION.search(source):
+                findings.append((number, "thread_env is not defined in this file of the engine"))
+            continue
         allowed = {match.start() + len("os.") for match in ENVIRON_WRITE.finditer(line)}
         findings += [
             (number, "engine uses the environment other than os.environ.update(<CONSTANT>)")
@@ -262,6 +278,103 @@ def test_reading_the_environment_in_the_child_is_one_finding(tree: Path) -> None
     ],
 )
 def test_every_other_read_in_the_engine_is_a_finding(tree: Path, line: str) -> None:
+    number = _next_line(tree, ENGINE / "child.py")
+    _append(tree, ENGINE / "child.py", "import os\n" + line)
+    findings = scan(tree)
+    assert len(findings) == 1, findings
+    assert findings[0].startswith(f"{ENGINE.as_posix()}/child.py:{number}:")
+
+
+# Plan 05-07: the two literal lines of the child, and every variation of them.
+
+LITERAL_LINES = (
+    "import os\n\n\n"
+    "def thread_env(threads):\n"
+    '    return {"OMP_NUM_THREADS": str(threads)}\n\n\n'
+    "def main(threads):\n"
+    '    os.environ.pop("OMP_THREAD_LIMIT", None)\n'
+    "    os.environ.update(thread_env(threads))\n"
+)
+
+
+def test_the_two_literal_lines_of_the_child_are_no_finding(tree: Path) -> None:
+    _append(tree, ENGINE / "threads_probe.py", LITERAL_LINES)
+    assert scan(tree) == []
+
+
+def test_the_real_child_carries_both_lines_and_defines_thread_env_in_the_engine() -> None:
+    path = REPO_ROOT / ENGINE / "child.py"
+    source = path.read_text(encoding="utf-8")
+    lines = [line.lstrip(" ") for line in source.splitlines()]
+
+    assert lines.count(THREAD_LIMIT_REMOVAL) == 1
+    assert lines.count(THREAD_ENV_WRITE) == 1
+    defined = [node.name for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)]
+    assert defined.count("thread_env") == 1
+    # Nowhere else in the package: the function under the read ban is the only one of its name.
+    for other in _walk(REPO_ROOT / PACKAGE, ".py"):
+        if other != path:
+            assert "def thread_env" not in other.read_text(encoding="utf-8"), other
+
+
+def test_the_thread_environment_from_outside_the_engine_is_a_finding(tree: Path) -> None:
+    _append(tree, PACKAGE / "threads_outside.py", "def thread_env(threads):\n    return {}\n")
+    _append(
+        tree,
+        ENGINE / "threads_probe.py",
+        "import os\n"
+        "from audio_video_search_backend.threads_outside import thread_env\n"
+        "os.environ.update(thread_env(threads))\n",
+    )
+    findings = scan(tree)
+    assert len(findings) == 1, findings
+    assert findings[0].startswith(f"{ENGINE.as_posix()}/threads_probe.py:3:")
+
+
+def test_a_nested_definition_of_thread_env_does_not_count(tree: Path) -> None:
+    _append(
+        tree,
+        ENGINE / "threads_probe.py",
+        "import os\n\n\n"
+        "def main(threads):\n"
+        "    def thread_env(threads):\n"
+        "        return {}\n\n"
+        "    os.environ.update(thread_env(threads))\n",
+    )
+    findings = scan(tree)
+    assert len(findings) == 1, findings
+    assert findings[0].startswith(f"{ENGINE.as_posix()}/threads_probe.py:8:")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Another key, with and without the default.
+        'os.environ.pop("OMP_NUM_THREADS", None)\n',
+        'os.environ.pop("AVS_VAD", None)\n',
+        'os.environ.pop("OMP_THREAD_LIMIT")\n',
+        'os.environ.pop("OMP_THREAD_LIMIT", "1")\n',
+        "os.environ.pop(NAME, None)\n",
+        # The value of the pop is used.
+        'LIMIT = os.environ.pop("OMP_THREAD_LIMIT", None)\n',
+        'if os.environ.pop("OMP_THREAD_LIMIT", None):\n    pass\n',
+        'print(os.environ.pop("OMP_THREAD_LIMIT", None))\n',
+        'os.environ.pop("OMP_THREAD_LIMIT", None) or other()\n',
+        'os.environ.pop("OMP_THREAD_LIMIT", None); LIMIT = os.environ\n',
+        'return os.environ.pop("OMP_THREAD_LIMIT", None)\n',
+        # Another function, another argument, more than the one call.
+        "os.environ.update(other_env(threads))\n",
+        "os.environ.update(thread_env(count))\n",
+        "os.environ.update(thread_env(threads, extra))\n",
+        "os.environ.update(thread_env(threads) | read_variables())\n",
+        "os.environ.update(thread_env(threads), **read_variables())\n",
+        "os.environ.update(module.thread_env(threads))\n",
+        "RESULT = os.environ.update(thread_env(threads))\n",
+        "os.environ.update(thread_env(threads)) or dict(os.environ)\n",
+        'os.environ.setdefault("OMP_THREAD_LIMIT", "1")\n',
+    ],
+)
+def test_every_variation_of_the_two_lines_is_a_finding(tree: Path, line: str) -> None:
     number = _next_line(tree, ENGINE / "child.py")
     _append(tree, ENGINE / "child.py", "import os\n" + line)
     findings = scan(tree)

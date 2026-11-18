@@ -22,6 +22,7 @@ import wave
 import numpy as np
 
 from audio_video_search_backend.engine.catch import file_verdict, needs_second_pass
+from audio_video_search_backend.engine.constants import RECOGNIZER_THREADS
 from audio_video_search_backend.engine.parakeet import Engine, Window
 from audio_video_search_backend.worker.preview import take
 
@@ -83,7 +84,7 @@ def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print("usage: python -I verdict22.py <models_root> <out_dir> <wav> [<wav> ...]", file=sys.stderr)
         return 2
-    engine = Engine(pathlib.Path(argv[0]))
+    engine = Engine(pathlib.Path(argv[0]), RECOGNIZER_THREADS)
     out = pathlib.Path(argv[1])
     out.mkdir(parents=True, exist_ok=True)
     for arg in argv[2:]:

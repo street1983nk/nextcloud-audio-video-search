@@ -8,6 +8,8 @@ D-03-22: the file verdict, counted the way the preview worker counts (worker/pre
 the second pass for files up to 60 s), is "transcript" for the German clip and
 "unsupported_language" for the Spanish clip (Parakeet transcribes it, the text
 language drops it) and for the Turkish clip (Parakeet gives almost no word).
+Plan 05-07: the real child runs with the standard thread count and reports a
+memory peak of the size the measurement of plan 05-01 found (Linux).
 
 Needs the pinned models (AVS_TEST_MODELS, the root ``procure --root`` filled)
 and the clips of ci/media/fetch_speech.py (AVS_TEST_SPEECH, AVS_TEST_SPEECH_TR,
@@ -31,7 +33,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from audio_video_search_backend import memory_guard
+from audio_video_search_backend import hardware, measured, memory_guard
 from audio_video_search_backend.engine.catch import (
     DROP_LANGUAGE,
     KEEP,
@@ -188,6 +190,24 @@ def test_the_turkish_clip_keeps_no_window(worker: EngineWorker) -> None:
     assert sum(window.speech_ms for window in windows) > 0
     assert all(window.verdict != KEEP for window in windows)
     assert all(window.words == () for window in windows)
+
+
+def test_the_real_child_runs_with_the_standard_threads_and_reports_its_peak(worker: EngineWorker) -> None:
+    pcm, _ = _pcm(_path("AVS_TEST_SPEECH"))
+
+    assert worker.start() == OK
+    assert worker.threads == hardware.default_threads(hardware.usable_cpus())
+    code, _ = worker.ask(pcm, 0, False)
+
+    assert code == OK
+    peak = worker.last_peak_bytes
+    if sys.platform.startswith("linux"):
+        # The model alone is 0.67 GB; a short clip stays below the peak of a 10 min chunk
+        # with room to spare. A wrong unit of ru_maxrss is off by a factor of 1024.
+        assert peak is not None
+        assert 300 * 1024**2 < peak < 2 * max(measured.PARAKEET_PEAK_BYTES.values())
+    else:
+        assert peak is None
 
 
 def _file_verdict(worker: EngineWorker, pcm: bytes, clip_ms: int) -> str:

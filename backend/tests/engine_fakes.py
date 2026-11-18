@@ -25,7 +25,14 @@ REPORT = 4.0
 RAISE = 5.0
 KILLED = 6.0
 HANG_SECONDS = 60.0
-REPORTED_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "APP_SECRET", "HP_SHARED_KEY")
+REPORTED_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OMP_THREAD_LIMIT",
+    "APP_SECRET",
+    "HP_SHARED_KEY",
+)
 
 
 def _oom_score() -> str:
@@ -49,8 +56,9 @@ def _word(text: str, start_ms: int) -> EngineWord:
 class FakeEngine:
     """Answers like the engine, from the first sample of the PCM."""
 
-    def __init__(self, models_root: Path) -> None:
+    def __init__(self, models_root: Path, threads: int) -> None:
         self.models_root = models_root
+        self.threads = threads
 
     def transcribe(self, pcm: np.ndarray, offset_ms: int, *, second_pass: bool) -> list[Window]:
         command = float(pcm[0]) if len(pcm) else NORMAL
@@ -70,6 +78,7 @@ class FakeEngine:
             texts.append(f"sherpa={'sherpa_onnx' in sys.modules}")
             texts.append(f"nice={os.nice(0) if sys.platform != 'win32' else 'none'}")
             texts.append(f"oom={_oom_score()}")
+            texts.append(f"threads={self.threads}")
         words = tuple(_word(text, offset_ms + 100 * index) for index, text in enumerate(texts))
         return [
             Window(
@@ -83,17 +92,17 @@ class FakeEngine:
         ]
 
 
-def fake_engine(models_root: Path) -> FakeEngine:
-    return FakeEngine(models_root)
+def fake_engine(models_root: Path, threads: int) -> FakeEngine:
+    return FakeEngine(models_root, threads)
 
 
-def exhausted_engine(models_root: Path) -> FakeEngine:
+def exhausted_engine(models_root: Path, threads: int) -> FakeEngine:
     raise MemoryError(str(models_root))
 
 
-def broken_engine(models_root: Path) -> FakeEngine:
+def broken_engine(models_root: Path, threads: int) -> FakeEngine:
     raise FileNotFoundError(str(models_root))
 
 
-def dying_engine(models_root: Path) -> FakeEngine:
+def dying_engine(models_root: Path, threads: int) -> FakeEngine:
     os._exit(3)

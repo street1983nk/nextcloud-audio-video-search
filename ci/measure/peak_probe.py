@@ -28,7 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
-from audio_video_search_backend.engine.child import OK, THREAD_ENV, EngineWorker
+from audio_video_search_backend import hardware
+from audio_video_search_backend.engine.child import OK, EngineWorker, thread_env
 from audio_video_search_backend.engine.constants import CHUNK_LOOKAHEAD_MS, CHUNK_MS, SAMPLE_RATE
 
 SAMPLE_SECONDS = 0.5
@@ -91,7 +92,9 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     pcm = one_chunk(read_pcm(args.wav))
-    worker = EngineWorker(args.models)
+    # The count the product takes by default, read once here so the record names it.
+    threads = hardware.default_threads(hardware.usable_cpus())
+    worker = EngineWorker(args.models, threads=lambda: threads)
     sampler = PeakSampler(worker)
     sampler.start()
     started = time.monotonic()
@@ -109,7 +112,7 @@ def main(argv: list[str]) -> int:
         "code": code,
         "words": sum(window.n_words for window in windows),
         "seconds": seconds,
-        "threads_env": dict(THREAD_ENV),
+        "threads_env": thread_env(threads),
     }
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))

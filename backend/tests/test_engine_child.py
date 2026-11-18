@@ -9,7 +9,9 @@ holds no app secret. After every test no child is left alive.
 Plan 05-07 (RES-02, RES-03): the child makes itself the first OOM victim before
 anything else (T-05-14), the guard asks for the need of the model that is to
 run, a child the kernel killed for memory is OUT_OF_MEMORY and not CRASHED
-(T-05-15), and every answer carries the memory peak of the child.
+(T-05-15), and every answer carries the memory peak of the child. RES-05: one
+thread count for the child, its environment and the library; OMP_THREAD_LIMIT
+is never set and is taken out of an inherited environment (T-05-16).
 
 The window logic of the engine (merging the VAD segments, word times from the
 tokens, the swallow guard, the catch rule per window) is tested on an Engine
@@ -24,12 +26,15 @@ import pickle
 import subprocess
 import sys
 import time
+import types
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 
+from audio_video_search_backend import hardware
 from audio_video_search_backend.engine import child, parakeet
 from audio_video_search_backend.engine.catch import DROP_CONFIDENCE, DROP_LANGUAGE, DROP_SCRIPT, KEEP
 from audio_video_search_backend.engine.child import (
@@ -43,11 +48,11 @@ from audio_video_search_backend.engine.child import (
     OK,
     OOM_SCORE_ADJ,
     OUT_OF_MEMORY,
-    THREAD_ENV,
     TIMEOUT,
     EngineWorker,
+    thread_env,
 )
-from audio_video_search_backend.engine.constants import SAMPLE_RATE
+from audio_video_search_backend.engine.constants import SAMPLE_RATE, VAD_THREADS
 from audio_video_search_backend.engine.parakeet import Engine, EngineWord, Window, merge_segments, words_from_tokens
 from tests import engine_fakes
 from tests.conftest import BACKEND_ROOT
@@ -78,8 +83,9 @@ def _worker(
     factory: str = FAKE,
     room: int | None = ROOM,
     events: Callable[[], dict[str, int] | None] = lambda: None,
+    threads: Callable[[], int] = lambda: 2,
 ) -> EngineWorker:
-    return EngineWorker(tmp_path / "models", factory=factory, headroom=lambda: room, events=events)
+    return EngineWorker(tmp_path / "models", factory=factory, headroom=lambda: room, events=events, threads=threads)
 
 
 def _alive(pid: int) -> bool:
@@ -261,7 +267,7 @@ def test_the_child_pins_its_threads_and_holds_no_secret(tmp_path: Path, monkeypa
 
     assert code == OK
     seen = dict(word.text.split("=", 1) for word in windows[0].words[1:])
-    for name, value in THREAD_ENV.items():
+    for name, value in thread_env(2).items():
         assert seen[name] == value
     assert seen["APP_SECRET"] == ""
     assert seen["HP_SHARED_KEY"] == ""
@@ -291,7 +297,7 @@ def test_the_constants_are_the_planned_ones() -> None:
     assert MAX_CHUNKS_PER_CHILD == 12
     assert ENGINE_NICE == 10
     assert OOM_SCORE_ADJ == 1000
-    assert THREAD_ENV == {"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    assert not hasattr(child, "THREAD_ENV")  # the count is an argument since plan 05-07
     assert child.SPAWN_CONTEXT.get_start_method() == "spawn"
 
 
@@ -340,12 +346,14 @@ class _ScriptedPipe:
 
 def _in_process_child(monkeypatch: pytest.MonkeyPatch, order: list[str], peak: int | None) -> None:
     """Let _child_main run in this process: nothing lowers the test run, the environment comes back."""
-    for name in (*child.SECRET_ENV, *child.THREAD_ENV):
+    for name in (*child.SECRET_ENV, *thread_env(1), "OMP_THREAD_LIMIT"):
         monkeypatch.setenv(name, "before")
     real_factory = child._factory
 
     def factory(path: str) -> object:
         order.append("factory")
+        order.append(f"limit={os.environ.get('OMP_THREAD_LIMIT', '<absent>')}")
+        order.append(f"omp={os.environ['OMP_NUM_THREADS']}")
         return real_factory(path)
 
     monkeypatch.setattr(child, "_lower_self", lambda: order.append("lower"))
@@ -357,9 +365,10 @@ def test_the_child_lowers_itself_before_it_loads_the_engine(tmp_path: Path, monk
     order: list[str] = []
     _in_process_child(monkeypatch, order, None)
 
-    child._child_main(_ScriptedPipe([]), str(tmp_path), FAKE)  # type: ignore[arg-type]
+    child._child_main(_ScriptedPipe([]), str(tmp_path), FAKE, 3)  # type: ignore[arg-type]
 
-    assert order == ["lower", "factory"]
+    # The limit is gone and the count is set before the factory, and with it the library, is loaded.
+    assert order == ["lower", "factory", "limit=<absent>", "omp=3"]
 
 
 def test_every_answer_of_the_child_carries_its_peak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -368,7 +377,7 @@ def test_every_answer_of_the_child_carries_its_peak(tmp_path: Path, monkeypatch:
     failing = ("transcribe", _pcm(engine_fakes.RAISE), 0, False)
     pipe = _ScriptedPipe([job, failing, job])
 
-    child._child_main(pipe, str(tmp_path), FAKE)  # type: ignore[arg-type]
+    child._child_main(pipe, str(tmp_path), FAKE, 1)  # type: ignore[arg-type]
 
     assert [(answer[0], answer[2]) for answer in pipe.sent] == [
         (OK, 123_456_789),
@@ -385,7 +394,7 @@ def test_a_child_that_could_not_build_its_engine_reports_its_peak_too(
     _in_process_child(monkeypatch, [], 42)
     pipe = _ScriptedPipe([("transcribe", _pcm(), 0, False)])
 
-    child._child_main(pipe, str(tmp_path), "tests.engine_fakes:exhausted_engine")  # type: ignore[arg-type]
+    child._child_main(pipe, str(tmp_path), "tests.engine_fakes:exhausted_engine", 1)  # type: ignore[arg-type]
 
     assert pipe.sent == [(OUT_OF_MEMORY, [], 42)]
 
@@ -584,6 +593,173 @@ def test_a_child_killed_from_outside_is_out_of_memory(tmp_path: Path) -> None:
 def test_the_default_events_reader_is_the_memory_guard(tmp_path: Path) -> None:
     worker = EngineWorker(tmp_path / "models", factory=FAKE, headroom=lambda: ROOM)
     assert worker._events is child.memory_guard.memory_events
+
+
+# Plan 05-07, task 2: one thread count for the child, its environment and the library.
+
+
+@pytest.mark.parametrize("threads", [1, 3])
+def test_the_thread_environment_carries_one_count_and_never_a_limit(threads: int) -> None:
+    assert thread_env(threads) == {
+        "OMP_NUM_THREADS": str(threads),
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+    }
+    assert "OMP_THREAD_LIMIT" not in thread_env(threads)
+
+
+@pytest.mark.parametrize("threads", [0, -1])
+def test_a_thread_count_below_one_is_refused(threads: int) -> None:
+    with pytest.raises(ValueError, match="threads"):
+        thread_env(threads)
+
+
+@pytest.mark.parametrize("threads", [1, 3])
+def test_the_child_its_environment_and_the_factory_get_the_same_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threads: int
+) -> None:
+    # PII 02-16: a limit below what the library plans hung arm64; an inherited one must not reach the child.
+    monkeypatch.setenv("OMP_THREAD_LIMIT", "1")
+    monkeypatch.setenv("OMP_NUM_THREADS", "7")
+    worker = _worker(tmp_path, threads=lambda: threads)
+    try:
+        code, windows = worker.ask(_pcm(engine_fakes.REPORT), 0, False)
+        running = worker.threads
+    finally:
+        worker.stop()
+
+    assert code == OK
+    seen = dict(word.text.split("=", 1) for word in windows[0].words[1:])
+    assert seen["OMP_NUM_THREADS"] == str(threads)
+    assert seen["threads"] == str(threads)
+    assert running == threads
+    assert seen["OPENBLAS_NUM_THREADS"] == "1"
+    assert seen["MKL_NUM_THREADS"] == "1"
+    assert seen["OMP_THREAD_LIMIT"] == "<absent>"
+    # The parent keeps its own environment.
+    assert os.environ["OMP_THREAD_LIMIT"] == "1"
+    assert os.environ["OMP_NUM_THREADS"] == "7"
+
+
+def test_a_changed_count_reaches_the_next_child_only(tmp_path: Path) -> None:
+    counts = [1, 3]
+    reads: list[int] = []
+
+    def threads() -> int:
+        reads.append(counts[min(len(reads), len(counts) - 1)])
+        return reads[-1]
+
+    worker = _worker(tmp_path, threads=threads)
+    try:
+        assert worker.threads is None
+        assert worker.start() == OK
+        assert worker.threads == 1
+        assert worker.start() == OK  # a running child is not asked again
+        _, first = worker.ask(_pcm(engine_fakes.REPORT), 0, False)
+        _, again = worker.ask(_pcm(engine_fakes.REPORT), 0, False)
+        assert worker.threads == 1
+        assert reads == [1]
+
+        worker.stop()
+        assert worker.threads is None
+
+        _, fresh = worker.ask(_pcm(engine_fakes.REPORT), 0, False)
+        assert worker.threads == 3
+        assert reads == [1, 3]
+    finally:
+        worker.stop()
+
+    def count(windows: list[Window]) -> str:
+        return dict(word.text.split("=", 1) for word in windows[0].words[1:])["threads"]
+
+    assert [count(first), count(again), count(fresh)] == ["1", "1", "3"]
+
+
+def test_a_count_below_one_starts_no_child(tmp_path: Path) -> None:
+    worker = _worker(tmp_path, threads=lambda: 0)
+    with pytest.raises(ValueError, match="threads"):
+        worker.start()
+    assert worker.pid is None
+    assert worker.threads is None
+    assert multiprocessing.active_children() == []
+
+
+def test_without_room_the_thread_count_is_not_even_read(tmp_path: Path) -> None:
+    reads: list[int] = []
+    worker = _worker(tmp_path, room=ROOM - 1, threads=lambda: reads.append(1) or 1)
+    assert worker.start() == NO_ROOM
+    assert reads == []
+    assert worker.threads is None
+
+
+def test_the_standard_count_is_half_of_the_usable_cpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = EngineWorker(tmp_path / "models", factory=FAKE, headroom=lambda: ROOM)
+    assert worker._threads is child._standard_threads
+    assert child._standard_threads() == hardware.default_threads(hardware.usable_cpus())
+
+    monkeypatch.setattr(hardware, "usable_cpus", lambda: 6)
+    assert child._standard_threads() == 3
+    monkeypatch.setattr(hardware, "usable_cpus", lambda: 2)
+    assert child._standard_threads() == 1
+
+
+def test_the_child_source_never_sets_a_thread_limit() -> None:
+    source = (BACKEND_ROOT / "src/audio_video_search_backend/engine/child.py").read_text(encoding="utf-8")
+    code = [line.strip() for line in source.splitlines() if not line.lstrip().startswith("#")]
+    naming = [line for line in code if "OMP_THREAD_LIMIT" in line and "os." in line]
+    # The one line of code that names the variable takes it away.
+    assert naming == ['os.environ.pop("OMP_THREAD_LIMIT", None)']
+    assert not any('"OMP_THREAD_LIMIT":' in line or '"OMP_THREAD_LIMIT" :' in line for line in code)
+
+
+class _FakeVad:
+    def __init__(self, config: Any, **options: float) -> None:
+        self.config = config
+        self.options = options
+
+    def accept_waveform(self, samples: np.ndarray) -> None:
+        pass
+
+    def empty(self) -> bool:
+        return True
+
+    def flush(self) -> None:
+        pass
+
+
+def _fake_sherpa(calls: list[dict[str, Any]], configs: list[Any]) -> types.SimpleNamespace:
+    def from_transducer(**arguments: Any) -> object:
+        calls.append(arguments)
+        return object()
+
+    def vad_config() -> types.SimpleNamespace:
+        config = types.SimpleNamespace(silero_vad=types.SimpleNamespace(window_size=512), num_threads=0)
+        configs.append(config)
+        return config
+
+    return types.SimpleNamespace(
+        OfflineRecognizer=types.SimpleNamespace(from_transducer=from_transducer),
+        VadModelConfig=vad_config,
+        VoiceActivityDetector=_FakeVad,
+    )
+
+
+@pytest.mark.parametrize("threads", [1, 3])
+def test_the_engine_hands_its_count_to_the_recognizer_and_one_thread_to_the_vad(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threads: int
+) -> None:
+    calls: list[dict[str, Any]] = []
+    configs: list[Any] = []
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa(calls, configs))  # type: ignore[arg-type]
+    monkeypatch.setattr(parakeet, "model_dir", lambda root, name: root / name)
+    monkeypatch.setattr(parakeet, "language_identifier", lambda: None)
+
+    engine = Engine(tmp_path, threads)
+    assert engine._segments(np.zeros(1024, dtype=np.float32), second_pass=False) == []
+
+    assert [call["num_threads"] for call in calls] == [threads]
+    assert [config.num_threads for config in configs] == [VAD_THREADS]
+    assert VAD_THREADS == 1
 
 
 def _fresh_python(code: str) -> str:

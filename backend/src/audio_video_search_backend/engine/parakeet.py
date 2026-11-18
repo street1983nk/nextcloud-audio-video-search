@@ -13,6 +13,11 @@ A window of the second VAD pass needs the higher confidence of D-03-23.
 sherpa_onnx and py3langid are imported when an Engine is built, never at module
 level: the main process imports this module for Window and EngineWord, and the
 native runtime belongs to the child only (engine/child.py).
+
+Plan 05-07 (RES-05): the thread count of the recognizer is an argument of the
+Engine, the same number the child wrote into OMP_NUM_THREADS; the VAD stays at
+VAD_THREADS. RECOGNIZER_THREADS stays in engine/constants.py as the value Spike 3
+measured with and as part of the fingerprint.
 """
 
 import math
@@ -33,7 +38,6 @@ from audio_video_search_backend.engine.constants import (
     MIN_DECODE_S,
     MODEL_TYPE,
     PAD_S,
-    RECOGNIZER_THREADS,
     SAMPLE_RATE,
     SECOND_PASS_MIN_SPEECH_S,
     SECOND_PASS_THRESHOLD,
@@ -153,7 +157,7 @@ def language_identifier() -> Any:
 class Engine:
     """Parakeet-TDT-0.6B-v3 int8 with Silero VAD, built once per child."""
 
-    def __init__(self, models_root: Path) -> None:
+    def __init__(self, models_root: Path, threads: int) -> None:
         import sherpa_onnx  # the native runtime is loaded in the child only
 
         self._sherpa = sherpa_onnx
@@ -164,7 +168,7 @@ class Engine:
             decoder=str(parakeet / "decoder.int8.onnx"),
             joiner=str(parakeet / "joiner.int8.onnx"),
             tokens=str(parakeet / "tokens.txt"),
-            num_threads=RECOGNIZER_THREADS,
+            num_threads=threads,
             model_type=MODEL_TYPE,
             decoding_method=DECODING_METHOD,
         )

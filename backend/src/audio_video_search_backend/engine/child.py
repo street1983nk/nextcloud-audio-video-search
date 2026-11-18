@@ -17,6 +17,12 @@ never take the main process along (T-03-33).
   privilege. Then it takes the app secrets out of its environment (Findling
   ``_shed_secrets``, T-03-34) and pins the thread pools before sherpa_onnx is
   imported; it builds the engine once.
+- One thread count N for the child, its environment and the library (phase 5,
+  RES-05, T-05-16): the worker reads N once per child, the child sets
+  OMP_NUM_THREADS=N and hands N to the factory, which gives it to the
+  recognizer. OMP_THREAD_LIMIT is never set and is taken out of an inherited
+  environment: a limit below what the library plans hung arm64 (PII 02-16,
+  18 November 2026). A changed N reaches the next child, never a running one.
 - A job is (pcm, offset_ms, second_pass) over the pipe; the answer is a code,
   the windows and the memory peak of the child in bytes (ru_maxrss, Linux
   only). Over the wall time the whole child is killed (TIMEOUT); a
@@ -44,7 +50,7 @@ from typing import Any, Final
 
 import numpy as np
 
-from audio_video_search_backend import memory_guard
+from audio_video_search_backend import hardware, memory_guard
 from audio_video_search_backend.engine.parakeet import Window
 
 if sys.platform == "win32":  # the two platforms name the same thing differently
@@ -72,8 +78,6 @@ ENGINE_RESERVE_BYTES: Final = 512 * 1024**2
 CHUNK_WALL_SECONDS: Final = 900
 # A child serves this many chunks, then a fresh one takes over (leaks stay bounded).
 MAX_CHUNKS_PER_CHILD: Final = 12
-# Read by the native thread pools while they load, so set before sherpa_onnx is imported.
-THREAD_ENV: Final = {"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 # The child never talks to Nextcloud: the AppAPI credentials are blanked in it (T-03-34).
 SECRET_ENV: Final = {"APP_SECRET": "", "HP_SHARED_KEY": "", "NEXTCLOUD_URL": "", "AA_VERSION": ""}
 
@@ -132,7 +136,23 @@ def _answered(process: SpawnProcess, pipe: PipeEnd, deadline: float) -> bool:
             return pipe.poll(0)
 
 
-def _factory(path: str) -> Callable[[Path], Any]:
+def thread_env(threads: int) -> dict[str, str]:
+    """The thread variables of a child that runs with ``threads`` threads.
+
+    Read by the native thread pools while they load, so set before the
+    library is imported. Never OMP_THREAD_LIMIT (PII 02-16: arm64 hung).
+    """
+    if threads < 1:
+        raise ValueError("threads must be at least 1")
+    return {"OMP_NUM_THREADS": str(threads), "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+
+
+def _standard_threads() -> int:
+    """Half of the usable CPUs, capped (hardware.default_threads); the other half stays with Nextcloud."""
+    return hardware.default_threads(hardware.usable_cpus())
+
+
+def _factory(path: str) -> Callable[[Path, int], Any]:
     module, _, name = path.partition(":")
     return getattr(importlib.import_module(module), name)
 
@@ -188,15 +208,16 @@ def _death_code(exitcode: int | None, kills_before: int | None, kills_after: int
     return CRASHED
 
 
-def _child_main(pipe: PipeEnd, models_root: str, factory: str) -> None:
+def _child_main(pipe: PipeEnd, models_root: str, factory: str, threads: int) -> None:
     """The child: lower itself, blank the secrets, pin the pools, build the engine, answer jobs."""
     _lower_self()
+    os.environ.pop("OMP_THREAD_LIMIT", None)
     os.environ.update(SECRET_ENV)
-    os.environ.update(THREAD_ENV)
+    os.environ.update(thread_env(threads))
     engine: Any = None
     failure: str | None = None
     try:
-        engine = _factory(factory)(Path(models_root))
+        engine = _factory(factory)(Path(models_root), threads)
     except MemoryError:
         failure = OUT_OF_MEMORY
     except Exception:
@@ -235,6 +256,7 @@ class EngineWorker:
         model: str = DEFAULT_MODEL,
         factory: str = DEFAULT_FACTORY,
         headroom: Callable[[], int | None] = memory_guard.headroom_bytes,
+        threads: Callable[[], int] = _standard_threads,
         need: Callable[[str], int] = _catalog_need,
         events: Callable[[], dict[str, int] | None] = memory_guard.memory_events,
     ) -> None:
@@ -245,17 +267,24 @@ class EngineWorker:
         self._model = model
         self._factory = factory
         self._headroom = headroom
+        self._threads = threads
         self._need = need
         self._events = events
         self._process: SpawnProcess | None = None
         self._pipe: PipeEnd | None = None
         self._chunks = 0
+        self._child_threads: int | None = None
         self._last_peak_bytes: int | None = None
 
     @property
     def pid(self) -> int | None:
         """The process id of the current child, or None while there is none."""
         return None if self._process is None else self._process.pid
+
+    @property
+    def threads(self) -> int | None:
+        """The thread count the current child was started with, or None while there is none."""
+        return self._child_threads
 
     @property
     def last_peak_bytes(self) -> int | None:
@@ -270,13 +299,16 @@ class EngineWorker:
         if not memory_guard.admits(self._headroom(), need=self._need(self._model) + ENGINE_RESERVE_BYTES):
             LOGGER.info("engine start refused", extra={"code": NO_ROOM})
             return NO_ROOM
+        # Read once per child: a changed count reaches the next child, never this one.
+        threads = self._threads()
+        thread_env(threads)  # refuses a count below 1 here, not inside the child
         parent_end, child_end = SPAWN_CONTEXT.Pipe(duplex=True)
         process = SPAWN_CONTEXT.Process(
-            target=_child_main, args=(child_end, str(self._models_root), self._factory), daemon=True
+            target=_child_main, args=(child_end, str(self._models_root), self._factory, threads), daemon=True
         )
         process.start()
         child_end.close()
-        self._process, self._pipe, self._chunks = process, parent_end, 0
+        self._process, self._pipe, self._chunks, self._child_threads = process, parent_end, 0, threads
         return OK
 
     def ask(
@@ -343,7 +375,7 @@ class EngineWorker:
 
     def _recycle(self) -> None:
         process, pipe = self._process, self._pipe
-        self._process, self._pipe, self._chunks = None, None, 0
+        self._process, self._pipe, self._chunks, self._child_threads = None, None, 0, None
         if pipe is not None:
             pipe.close()
         if process is None:
