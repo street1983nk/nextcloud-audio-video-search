@@ -31,7 +31,7 @@ metrics:
 
 # Phase 5 Plan 03: Whisper-Teile mit sha256 Summary
 
-Beide Whisper-model.bin (turbo, large-v3) sind am festen Hugging-Face-Commit geladen, gegen den Gesamt-sha256 geprüft und in Teile zu genau 1 GiB zerlegt; die Identität aller 13 Assets steht als gemessenes JSON im Repo, die Dateien selbst liegen nur im Scratch-Ordner.
+Beide Whisper-model.bin (turbo, large-v3) sind am festen Hugging-Face-Commit geladen, gegen den Gesamt-sha256 geprüft und in Teile zu genau 1 GiB zerlegt; die Identität aller 13 Assets steht als gemessenes JSON im Repo, die Dateien selbst liegen außerhalb des Repos unter `C:\Users\Student\av-whisper-assets`.
 
 ## Tasks
 
@@ -60,10 +60,10 @@ Gegenprobe mit einem anderen Werkzeug (`sha256sum`, nicht das Skript): die verke
 
 Ablage für Plan 05-10 (außerhalb des Repos, 8,8 GB):
 
-- Assets: `C:\Users\Student\AppData\Local\Temp\claude\f797e4cbc4775e2e\6769e2aa-e4cc-4b35-ad34-6d7f7e863216\scratchpad\whisper\assets`
-- Originale: `C:\Users\Student\AppData\Local\Temp\claude\f797e4cbc4775e2e\6769e2aa-e4cc-4b35-ad34-6d7f7e863216\scratchpad\whisper\originals`
+- Assets: `C:\Users\Student\av-whisper-assets\assets`
+- Originale: `C:\Users\Student\av-whisper-assets\originals`
 
-Hinweis: Der Ordner ist ein Sitzungs-Scratchpad unter Temp. Wird er vor Plan 05-10 gelöscht, erzeugt derselbe Befehl die Assets neu; die Werte im JSON sind dann die Prüfung.
+Hinweis (Korrektur 18.11.2026): Die Dateien lagen zuerst im Sitzungs-Scratchpad unter Temp und liegen jetzt dauerhaft unter `C:\Users\Student\av-whisper-assets`. Geht der Ordner vor Plan 05-10 verloren, erzeugt derselbe Befehl die Assets neu; die Werte im JSON sind dann die Prüfung.
 
 ## Verification
 
