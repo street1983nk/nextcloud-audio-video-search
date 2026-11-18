@@ -53,6 +53,18 @@ Phase 5 liefert die Ressourcen-Grundlage und den Modellbezug, auf denen Phase 6 
 
   Dazu kommen README (DE/EN/FR) und eine neue THIRD-PARTY.md. In der Abspielansicht gibt es keine Lizenzzeile.
 
+### Nachentscheide nach der Recherche (Owner 18.11.2026)
+- **D-05-09:** 2 GB RAM ist kein Pflichtziel.
+  - Zuerst die Linux-Spitze von Parakeet in der CI messen, auf amd64 und arm64 (ru_maxrss, Wave 0).
+  - Danach ein Mindest-RAM festlegen und in README und im Admin-Hinweis nennen.
+  - Darunter bleibt die App sicher, rechnet nicht und sagt das klar.
+- **D-05-10:** faster-whisper 1.2.1 mit CTranslate2 4.8.5 und onnxruntime 1.31.1 kommt schon in Phase 5 ins Image, damit RAM-Schwellen und Thread-Nachweis unter Linux gemessen werden. Bei den gemessenen Pins bleiben, keine 4.9.0 oder 1.32.0.
+- **D-05-11:** Die Thread-Zahl kommt in die Herkunft der Transkripte. Der Admin darf Threads senken. Ein CI-Test misst, ob 1 und 2 Threads unterschiedliche Wörter liefern.
+- **D-05-12:** Das Rechenfenster pausiert nur das Rechnen. Das Erfassen neuer Dateien (capture) läuft immer.
+- **D-05-13:** Die Whisper-Assets kommen unter ein NEUES Release-Tag (z. B. whisper-2026-11); models-2026-11 bleibt unverändert. Beide Modelle werden in 1-GiB-Teilen abgelegt, mit sha256 je Teil und für die ganze Datei (Gesamtwert gleich HF-LFS). Den Upload macht nur der Owner bzw. er erfolgt erst nach dessen Ok.
+- **D-05-14:** Parakeet und Silero kommen ins Image (RES-06). Die alten Kopien auf dem Volume löscht die App nur, wenn die Image-Datei mit gleichem sha256 vorhanden ist. MODEL_SHA256 bleibt unverändert.
+- **D-05-15:** THIRD-PARTY.md nennt für large-v3 beide Lizenzangaben mit Quelle: Gewichte von OpenAI, laut Modellkarte Apache-2.0; CTranslate2-Konvertierung von Systran, MIT. PyAV 19.0.2 bündelt libx264/libx265, deshalb gehört ein GPL-Hinweis dazu. Fremde Lizenztexte kommen nicht nach LICENSES/ (wegen reuse lint).
+
 ### Claude's Discretion
 - Profilschwellen (RAM je Profil) aus den Spike-3-Kennzahlen plus Reserve ableiten:
   - Parakeet 1,2 GB
