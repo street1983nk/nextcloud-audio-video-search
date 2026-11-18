@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 4 complete (19 plans, UAT 14/14, Security verified, CI green on phase-04 ee6bd68), next Phase 5
-last_updated: "2026-11-17T05:51:02.000Z"
-last_activity: 2026-11-17
+status: executing
+stopped_at: 05-04 complete (hardware.py, schedule.py)
+last_updated: "2026-11-18T10:28:40.924Z"
+last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
-  total_plans: 83
-  completed_plans: 83
+  total_plans: 106
+  completed_plans: 84
   percent: 36
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-17)
 
 **Core value:** Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lokal transkribiert und sind in der Nextcloud-Suche mit Zeitmarke findbar, mit der bestmöglichen Transkriptqualität, die auf der vorhandenen Hardware sicher läuft. Kein Inhalt verlässt den Server.
-**Current focus:** Phase 4 abgeschlossen; als Nächstes Phase 5, Ressourcen, Profile und Modellbezug
+**Current focus:** Phase 5, Ressourcen, Profile und Modellbezug (Welle 1 in Ausführung)
 
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-11-17
+Plan: 05-04 fertig (Welle 1)
+Status: Executing Phase 5
+Last activity: 2026-11-18
 
-Progress: [████░░░░░░] 36% (4 von 11 Phasen; alle 83 bisher geplanten Pläne fertig)
+Progress: [████████░░] 79%
 
 ## Performance Metrics
 
@@ -84,6 +84,7 @@ Progress: [████░░░░░░] 36% (4 von 11 Phasen; alle 83 bisher 
 | Phase 04 P15 | 60 min | 2 tasks | 1 files |
 | Phase 04 P16 | 45 min | 2 tasks | 9 files |
 | Phase 04 P18 | 45min | 2 tasks | 12 files |
+| Phase 05 P04 | 35 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -190,6 +191,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-17T05:51:02.000Z
-Stopped at: Phase 4 complete, ready to plan Phase 5
+Last session: 2026-11-18T10:28:40.906Z
+Stopped at: 05-04 complete (hardware.py, schedule.py)
 Resume file: None
