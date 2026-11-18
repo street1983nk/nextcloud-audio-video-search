@@ -238,7 +238,7 @@ Plans:
   4. Parakeet und Silero VAD sind im Image; Whisper-Modelle werden mit festem Commit und sha256 nur von der Host-Allowlist geladen oder offline abgelegt; im Offline-Modus gibt es keinerlei ausgehende Verbindung (Netzwerkmitschnitt).
   5. Namensnennung NVIDIA Parakeet (CC-BY-4.0) und alle Drittlizenzen stehen in App, README und THIRD-PARTY.md.
 
-**Plans:** 4/23 plans executed
+**Plans:** 7/23 plans executed
 
 Plans:
 **Wave 1**
@@ -253,7 +253,7 @@ Plans:
 **Wave 2**
 
 - [ ] 05-07-PLAN.md: Kind mit oom_score_adj 1000, Wächter je Modell, OOM-Erkennung, eine Thread-Zahl
-- [ ] 05-08-PLAN.md: Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre
+- [x] 05-08-PLAN.md: Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre
 - [ ] 05-09-PLAN.md: Admin-Seite: Profil, Rechenzeit, Modelle und Lizenzen
 - [ ] 05-10-PLAN.md: Owner: Upload der Whisper-Teile, Digest-Gegenprobe
 
@@ -407,7 +407,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Erfassung aller Dateien | 26/26 | Complete    | 2026-11-14 |
 | 3. Vorschau-Transkripte in der Suche | 25/25 | Complete    | 2026-11-15 |
 | 4. Suchqualität und Export | 19/19 | Complete    | 2026-11-17 |
-| 5. Ressourcen, Profile und Modellbezug | 6/23 | In Progress|  |
+| 5. Ressourcen, Profile und Modellbezug | 7/23 | In Progress|  |
 | 6. Veredelung | 0/TBD | Not started | - |
 | 7. Sprachen und Sprachwechsel | 0/TBD | Not started | - |
 | 8. Lebenszyklus und DSGVO | 0/TBD | Not started | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Welle 1 abgeschlossen (05-01 bis 05-06); 05-01: Linux-Spitze Parakeet amd64 1089 MiB, arm64 1124 MiB (Lauf 44304526791), Commit 9d0068b nur lokal; nächster Schritt Welle 2 nach Owner-Freigabe"
-last_updated: "2026-11-18T15:00:00.000Z"
+stopped_at: "05-08 abgeschlossen (Whisper-Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre; Commits 456f3af und d27e1bb nur lokal); 05-07 hält an Task 2 und wartet auf den Owner"
+last_updated: "2026-11-18T17:06:46.448Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 89
+  completed_plans: 90
   percent: 36
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-17)
 
 **Core value:** Nach der Installation werden alle Audio- und Videodateien ohne Konfiguration lokal transkribiert und sind in der Nextcloud-Suche mit Zeitmarke findbar, mit der bestmöglichen Transkriptqualität, die auf der vorhandenen Hardware sicher läuft. Kein Inhalt verlässt den Server.
-**Current focus:** Phase 5, Ressourcen, Profile und Modellbezug (Welle 1 abgeschlossen)
+**Current focus:** Phase 5, Ressourcen, Profile und Modellbezug (Welle 2 läuft)
 
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2 noch nicht begonnen
+Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2: 05-08 fertig, 05-07 an Task 2 angehalten (wartet auf den Owner)
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [████████░░] 84%
+Progress: [█████████░] 85%
 
 ## Performance Metrics
 
@@ -91,6 +91,7 @@ Progress: [████████░░] 84%
 | Phase 05 P03 | 60 min | 2 tasks | 3 files |
 | Phase 05 P02 | 150 min | 2 tasks | 14 files |
 | Phase 05 P01 | 45 min | 1 tasks | 3 files |
+| Phase 05 P08 | 25 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -178,6 +179,9 @@ Recent decisions affecting current work:
 - [Phase 05]: 05-02: der TestClient von starlette läuft auf httpx2, sobald es installiert ist; Antworttyp in Tests über conftest.ClientResponse, Produktcode bleibt bei httpx in nc.py
 - [Phase 05]: 05-01: Linux-Spitze des Parakeet-Kindes aus der CI (Lauf 44304526791, 106cc67): amd64 1089,46 MiB, arm64 1124,31 MiB; measured.PARAKEET_PEAK_BYTES je Architektur = max(ru_maxrss, VmHWM) x 1024 dieses Laufs; der frühere Lauf 44297803266 (53221a5) steht als zweite Messung im Datensatz (arm64 dort 1175,06 MiB, +4,5 %)
 - [Phase 05]: 05-01: Befund für 05-12: Bedarf 1293 MiB (Maximum x 1,15) plus 512 MiB Reserve = 1805 MiB, bei 2 GiB bleiben 243 MiB für anon des Hauptprozesses (ungemessen)
+- [Phase 05]: 05-08: Whisper im Katalog unter Release-Tag whisper-2026-11 (Part, PartedFile), Werte gleich scripts/models/whisper-parts-2026-11.json per Test; Teile gehen an EINE .part, sha256 je Teil und für das Ganze, Fortsetzen nur an Teilgrenzen nach erneutem Hashen, Plattenbedarf einmal die Datei (beim Fortsetzen nur der Rest)
+- [Phase 05]: 05-08: procure hat das Schlüsselwort fetch_part (Standard nc.fetch_model_part); fetch=None schaltet weiter jeden Abruf ab; neues Ergebnis procure.OFFLINE, nie in READY_OUTCOMES
+- [Phase 05]: 05-08: Offline-Sperre nc.set_models_offline als erste Anweisung in fetch_model_asset und fetch_model_part, bei jedem Aufruf neu gelesen; eine Prüfung, die scheitert, gilt als offline (fail closed)
 
 ### Pending Todos
 
@@ -195,6 +199,9 @@ Recent decisions affecting current work:
 - [Phase 5] security.yml (CodeQL, REUSE, pip-audit) läuft nicht auf phase-05; pip-audit lokal über den Laufzeit-Export ohne Befund (52 von 54, ohne uvloop und httpx2-jsfetch), der CI-Lauf kommt erst mit Pull Request oder Merge
 - [Phase 5] 05-02: exclude-newer 2026-11-05 bleibt im Projekt und bremst spätere Updates (auch Dependabot), bis der Owner die Grenze verschiebt
 - [Phase 5] RES-06 und RES-07 stehen im Kopf von 05-02, sind aber erst mit 05-08/05-10 und 05-17 erfüllt; nicht abgehakt
+- [Phase 5] 05-08: Commits 456f3af und d27e1bb nur lokal; Linux amd64/arm64 erst im CI-Lauf nach einem Push belegt; das Release whisper-2026-11 existiert noch nicht (Upload 05-10), echte Weiterleitungskette der 13 Assets ungeprüft
+- [Phase 5] 05-08 Owner-Frage: procure.model_dir legt auch Whisper unter models/<name>/<MODEL_SHA256 des Vorschau-Satzes>/ ab; eigener Satz-Hash je Whisper-Modell vor 05-10 und der Offline-Doku entscheiden
+- [Phase 5] RES-06 und PLAT-04 stehen im Kopf von 05-08, sind aber erst mit 05-10, 05-14, 05-13/05-16 und 05-21 erfüllt; nicht abgehakt
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -210,7 +217,7 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-11-18T15:00:00.000Z
-Stopped at: Welle 1 abgeschlossen (05-01 bis 05-06); 05-01: Linux-Spitze Parakeet amd64 1089 MiB, arm64 1124 MiB (Lauf 44304526791), Commit 9d0068b nur lokal; nächster Schritt Welle 2 nach Owner-Freigabe
+Stopped at: 05-08 abgeschlossen (Whisper-Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre; Commits 456f3af und d27e1bb nur lokal); 05-07 hält an Task 2 und wartet auf den Owner
 Resume file: None
 
 ## Quick Tasks Completed
