@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05-08 abgeschlossen (Whisper-Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre; Commits 456f3af und d27e1bb nur lokal); 05-07 hält an Task 2 und wartet auf den Owner"
-last_updated: "2026-11-18T17:06:46.448Z"
+stopped_at: "05-07 abgeschlossen (Kind als erstes OOM-Opfer, Wächter je Modell, OOM-Erkennung, eine Thread-Zahl; VAD-Gate um zwei wörtliche Zeilen erweitert, Owner 18.11.; Commits 5711ac5 und 81500ac nur lokal); 05-08 abgeschlossen (Commits 456f3af und d27e1bb nur lokal); nächster Plan der Welle 2 ist 05-09"
+last_updated: "2026-11-18T18:10:00.000Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 90
+  completed_plans: 91
   percent: 36
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2: 05-08 fertig, 05-07 an Task 2 angehalten (wartet auf den Owner)
+Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2: 05-07 und 05-08 fertig
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -92,6 +92,7 @@ Progress: [█████████░] 85%
 | Phase 05 P02 | 150 min | 2 tasks | 14 files |
 | Phase 05 P01 | 45 min | 1 tasks | 3 files |
 | Phase 05 P08 | 25 min | 2 tasks | 6 files |
+| Phase 05 P07 | 75 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -182,6 +183,9 @@ Recent decisions affecting current work:
 - [Phase 05]: 05-08: Whisper im Katalog unter Release-Tag whisper-2026-11 (Part, PartedFile), Werte gleich scripts/models/whisper-parts-2026-11.json per Test; Teile gehen an EINE .part, sha256 je Teil und für das Ganze, Fortsetzen nur an Teilgrenzen nach erneutem Hashen, Plattenbedarf einmal die Datei (beim Fortsetzen nur der Rest)
 - [Phase 05]: 05-08: procure hat das Schlüsselwort fetch_part (Standard nc.fetch_model_part); fetch=None schaltet weiter jeden Abruf ab; neues Ergebnis procure.OFFLINE, nie in READY_OUTCOMES
 - [Phase 05]: 05-08: Offline-Sperre nc.set_models_offline als erste Anweisung in fetch_model_asset und fetch_model_part, bei jedem Aufruf neu gelesen; eine Prüfung, die scheitert, gilt als offline (fail closed)
+- [Phase 05]: 05-07: das Erkennungs-Kind schreibt als erste Anweisung oom_score_adj 1000 (dann nice 10, eigene Sitzung); der Wächter prüft need(model) plus 512 MiB Reserve, bis 05-12 kennt der Katalog nur parakeet; ein Kind, das bei gestiegenem oom_kill oder mit Exit -9 ohne eigenen Kill stirbt, ist OUT_OF_MEMORY; jede Antwort trägt ru_maxrss in Bytes (EngineWorker.last_peak_bytes)
+- [Phase 05]: 05-07: eine Thread-Zahl N je Kind (thread_env(N), Factory (root, threads), Engine(models_root, threads)); Standard hardware.default_threads(usable_cpus()) statt fest 2; OMP_THREAD_LIMIT wird nie gesetzt und im Kind aus der geerbten Umgebung entfernt; RECOGNIZER_THREADS und CONFIG_VERSION unverändert
+- [Phase 05]: 05-07 (Owner 18.11.): VAD-Gate Regel 1 erlaubt in engine/ zusätzlich genau zwei wörtliche ganze Zeilen, os.environ.pop("OMP_THREAD_LIMIT", None) und os.environ.update(thread_env(threads)); thread_env muss in derselben Datei auf oberster Ebene definiert sein; jede Abwandlung und jedes Lesen bleibt Befund
 
 ### Pending Todos
 
@@ -202,6 +206,10 @@ Recent decisions affecting current work:
 - [Phase 5] 05-08: Commits 456f3af und d27e1bb nur lokal; Linux amd64/arm64 erst im CI-Lauf nach einem Push belegt; das Release whisper-2026-11 existiert noch nicht (Upload 05-10), echte Weiterleitungskette der 13 Assets ungeprüft
 - [Phase 5] 05-08 Owner-Frage: procure.model_dir legt auch Whisper unter models/<name>/<MODEL_SHA256 des Vorschau-Satzes>/ ab; eigener Satz-Hash je Whisper-Modell vor 05-10 und der Offline-Doku entscheiden
 - [Phase 5] RES-06 und PLAT-04 stehen im Kopf von 05-08, sind aber erst mit 05-10, 05-14, 05-13/05-16 und 05-21 erfüllt; nicht abgehakt
+- [Phase 5] 05-07: Commits 5711ac5 und 81500ac nur lokal; unter Linux erst im CI-Lauf belegt: oom_score_adj 1000 aus dem Kernel zurückgelesen, Exit -9 als OUT_OF_MEMORY, ru_maxrss in KiB, Echtmodell-Test, Messjob mit der geänderten Probe
+- [Phase 5] 05-07: bei 2 nutzbaren CPUs läuft künftig 1 Thread, die Speichermessung (measured.PARAKEET_PEAK_BYTES) lief mit 2; der Fingerabdruck nennt weiter RECOGNIZER_THREADS 2, Wortgleichheit der Transkripte bei 1 Thread ist nicht gemessen (05-20), die Zahl kommt mit 05-11 in die Herkunft
+- [Phase 5] 05-07: T-05-14 und T-05-16 (high) im Code umgesetzt, Container-Nachweis erst mit 05-18 und 05-20; RES-02, RES-03 und RES-05 stehen im Kopf von 05-07, sind aber erst mit 05-11, 05-12, 05-15, 05-18 und 05-20 erfüllt; nicht abgehakt
+- [Phase 5] 05-07 Owner-Frage: das Kind meldet nicht, ob das Schreiben von oom_score_adj gelang
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -216,8 +224,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-18T15:00:00.000Z
-Stopped at: 05-08 abgeschlossen (Whisper-Katalog whisper-2026-11, Teil-Download mit sha256-Kette, Offline-Sperre; Commits 456f3af und d27e1bb nur lokal); 05-07 hält an Task 2 und wartet auf den Owner
+Last session: 2026-11-18T18:10:00.000Z
+Stopped at: 05-07 abgeschlossen (Kind als erstes OOM-Opfer, Wächter je Modell, OOM-Erkennung, eine Thread-Zahl; VAD-Gate um zwei wörtliche Zeilen erweitert, Owner 18.11.; Commits 5711ac5 und 81500ac nur lokal); 05-08 abgeschlossen (Commits 456f3af und d27e1bb nur lokal); nächster Plan der Welle 2 ist 05-09
 Resume file: None
 
 ## Quick Tasks Completed
