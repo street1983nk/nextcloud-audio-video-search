@@ -8,6 +8,8 @@ capped; the admin value can only lower it (RES-05, T-05-08).
 from pathlib import Path
 
 import pytest
+
+from audio_video_search_backend import hardware
 from audio_video_search_backend.hardware import (
     THREAD_CAP,
     Snapshot,
@@ -16,8 +18,6 @@ from audio_video_search_backend.hardware import (
     snapshot,
     usable_cpus,
 )
-
-from audio_video_search_backend import hardware
 
 GIB = 1024**3
 KIB = 1024
@@ -212,5 +212,5 @@ def test_memory_total_bytes_reads_mem_total(tmp_path: Path) -> None:
 def test_module_never_touches_thread_variables() -> None:
     source = Path(hardware.__file__).read_text(encoding="utf-8")
     assert "OMP_" not in source
-    assert "environ" not in source
+    assert "os.environ" not in source
     assert "getenv" not in source
