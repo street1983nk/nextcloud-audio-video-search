@@ -15,7 +15,7 @@ import pytest
 
 from audio_video_search_backend import nc
 from audio_video_search_backend.models import catalog, procure
-from tests.conftest import BACKEND_ROOT
+from tests.conftest import BACKEND_ROOT, REPO_ROOT
 
 # The values of 03-RESEARCH.md, written out here once more on purpose: the test
 # compares the catalog against them instead of against itself.
@@ -30,8 +30,20 @@ COMMIT = "2bda32ec70b097a55adaa07d9a7173915b43cc78"
 HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
+# The models of the preview (plans 03-07, 03-07b). The Whisper models of plan
+# 05-08 live under their own release tag and have their own tests further down.
+PREVIEW_MODELS = ("silero", "parakeet")
+
+
 def _all_files() -> list[catalog.ModelFile]:
-    return [entry for files in catalog.MODELS.values() for entry in files]
+    """Every file of the preview models; each one is a whole file."""
+    files = [entry for name in PREVIEW_MODELS for entry in catalog.MODELS[name]]
+    assert all(isinstance(entry, catalog.ModelFile) for entry in files)
+    return [entry for entry in files if isinstance(entry, catalog.ModelFile)]
+
+
+def test_the_catalog_names_the_preview_and_the_whisper_models_and_nothing_else() -> None:
+    assert set(catalog.MODELS) == {*PREVIEW_MODELS, "whisper-turbo", "whisper-large-v3"}
 
 
 def test_the_catalog_holds_the_research_digests_and_nothing_else() -> None:
@@ -121,6 +133,181 @@ def test_model_sha256_is_the_sha256_of_the_sorted_digests() -> None:
 
 def test_model_dir_is_under_models_name_and_the_set_digest(tmp_path: Path) -> None:
     assert procure.model_dir(tmp_path, "parakeet") == tmp_path / "models" / "parakeet" / catalog.MODEL_SHA256
+
+
+# ---------------------------------------------------------------------------
+# The Whisper models (plan 05-08): own release tag, model.bin in parts
+# ---------------------------------------------------------------------------
+
+# The measured identity of every Whisper asset (plan 05-03), written by
+# scripts/models/split_whisper.py from the real files; the catalog holds the
+# same values as literals and this is the comparison.
+PARTS_JSON = REPO_ROOT / "scripts" / "models" / "whisper-parts-2026-11.json"
+WHISPER_TAG = "whisper-2026-11"
+WHISPER_BASE = f"https://github.com/{RELEASE_REPOSITORY}/releases/download/{WHISPER_TAG}"
+# Written out here once more, from 05-RESEARCH.md (Pattern 5): the commits the
+# files were taken from and the sha256 of both model.bin, equal to the LFS value.
+WHISPER_COMMITS = {
+    "whisper-turbo": ("deepdml/faster-whisper-large-v3-turbo-ct2", "4df90f75321148c3a29a9e2351b7ddf8f5b115a8"),
+    "whisper-large-v3": ("Systran/faster-whisper-large-v3", "edaa852ec7e145841d8ffdb056a99866b5f0a478"),
+}
+WHISPER_WHOLE = {
+    "whisper-turbo": ("e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da", 1_617_884_929),
+    "whisper-large-v3": ("69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1", 3_087_284_237),
+}
+WHISPER_PART_COUNT = {"whisper-turbo": 2, "whisper-large-v3": 3}
+# "Each file included in a release must be under 2 GiB" (GitHub).
+RELEASE_ASSET_LIMIT = 2 * 1024**3
+
+
+def _asset(url: str) -> str:
+    base, _, asset = url.rpartition("/")
+    assert base == WHISPER_BASE, url
+    return asset
+
+
+def _parted(name: str) -> catalog.PartedFile:
+    (parted,) = [entry for entry in catalog.MODELS[name] if isinstance(entry, catalog.PartedFile)]
+    return parted
+
+
+def _as_document(name: str) -> list[dict[str, object]]:
+    """One Whisper model of the catalog in the shape of the JSON of plan 05-03, sorted by file name."""
+    files: list[dict[str, object]] = []
+    for entry in catalog.MODELS[name]:
+        if isinstance(entry, catalog.PartedFile):
+            parts = [{"asset": _asset(part.url), "sha256": part.sha256, "size": part.size} for part in entry.parts]
+            files.append(
+                {"asset": None, "name": entry.name, "parts": parts, "sha256": entry.sha256, "size": entry.size}
+            )
+        else:
+            files.append(
+                {
+                    "asset": _asset(entry.url),
+                    "name": entry.name,
+                    "parts": None,
+                    "sha256": entry.sha256,
+                    "size": entry.size,
+                }
+            )
+    return sorted(files, key=lambda item: str(item["name"]))
+
+
+def _whisper_urls() -> list[str]:
+    urls: list[str] = []
+    for name in catalog.WHISPER_MODELS:
+        for entry in catalog.MODELS[name]:
+            urls += [part.url for part in entry.parts] if isinstance(entry, catalog.PartedFile) else [entry.url]
+    return urls
+
+
+def _measured() -> dict:
+    return json.loads(PARTS_JSON.read_text(encoding="utf-8"))
+
+
+def test_the_whisper_catalog_equals_the_measured_json() -> None:
+    document = _measured()
+
+    assert document["tag"] == WHISPER_TAG == catalog.WHISPER_RELEASE_TAG
+    assert set(document["models"]) == set(catalog.WHISPER_MODELS) == set(WHISPER_COMMITS)
+    for name in catalog.WHISPER_MODELS:
+        measured = document["models"][name]
+        assert _as_document(name) == measured["files"], name
+        assert catalog.WHISPER_SOURCES[name] == (measured["source"]["repo"], measured["source"]["commit"])
+        assert catalog.WHISPER_SOURCES[name] == WHISPER_COMMITS[name]
+
+
+def test_the_whisper_comparison_sees_a_single_changed_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Positive control of the test above: one digit of one part, and one byte of
+    # one length, each make the catalog differ from the JSON.
+    measured = _measured()["models"]["whisper-turbo"]["files"]
+    files = catalog.MODELS["whisper-turbo"]
+    parted = _parted("whisper-turbo")
+    last = parted.parts[-1]
+    assert _as_document("whisper-turbo") == measured
+
+    flipped = dataclasses.replace(last, sha256=("0" if last.sha256[0] != "0" else "1") + last.sha256[1:])
+    changed = dataclasses.replace(parted, parts=(*parted.parts[:-1], flipped))
+    monkeypatch.setitem(
+        catalog.MODELS, "whisper-turbo", tuple(changed if entry is parted else entry for entry in files)
+    )
+    assert _as_document("whisper-turbo") != measured
+
+    longer = dataclasses.replace(parted, size=parted.size + 1)
+    monkeypatch.setitem(catalog.MODELS, "whisper-turbo", tuple(longer if entry is parted else entry for entry in files))
+    assert _as_document("whisper-turbo") != measured
+
+
+def test_every_whisper_model_has_the_five_files_and_one_parted_model_bin() -> None:
+    assert catalog.WHISPER_MODELS == ("whisper-turbo", "whisper-large-v3")
+    for name in catalog.WHISPER_MODELS:
+        assert sorted(entry.name for entry in catalog.MODELS[name]) == [
+            "config.json",
+            "model.bin",
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "vocabulary.json",
+        ]
+        parted = _parted(name)
+        assert parted.name == "model.bin"
+        # The whole is the value of the origin (LFS), so a file fetched there by hand matches too.
+        assert (parted.sha256, parted.size) == WHISPER_WHOLE[name]
+        assert len(parted.parts) == WHISPER_PART_COUNT[name]
+        assert sum(part.size for part in parted.parts) == parted.size
+        assert all(0 < part.size < RELEASE_ASSET_LIMIT for part in parted.parts)
+        # In order: the assets are numbered from 001 without a gap.
+        assert [_asset(part.url).rsplit(".", 1)[-1] for part in parted.parts] == [
+            f"{index:03d}" for index in range(1, len(parted.parts) + 1)
+        ]
+        assert len({part.sha256 for part in parted.parts}) == len(parted.parts)
+
+
+def test_every_whisper_url_points_at_the_whisper_release_over_https_on_an_allowed_host() -> None:
+    urls = _whisper_urls()
+
+    assert len(urls) == 13  # 4 whole files and 2 parts, 4 whole files and 3 parts
+    assert len(set(urls)) == len(urls)
+    for url in urls:
+        assert url.startswith(f"{WHISPER_BASE}/whisper-large-v3"), url
+        scheme, _, rest = url.partition("://")
+        assert scheme == "https"
+        assert rest.split("/", 1)[0] in catalog.ASSET_HOSTS
+        assert "huggingface" not in url
+        assert "hf.co" not in url
+    # The preview release stays what it was: no Whisper asset is under its tag.
+    assert not any(f"/{RELEASE_TAG}/" in url for url in urls)
+    assert not re.fullmatch(r"v\d.*", catalog.WHISPER_RELEASE_TAG)
+
+
+def test_the_origin_of_whisper_is_named_but_never_a_url() -> None:
+    source = (BACKEND_ROOT / "src" / "audio_video_search_backend" / "models" / "catalog.py").read_text(encoding="utf-8")
+
+    for repository, commit in WHISPER_COMMITS.values():
+        assert repository in source
+        assert commit in source
+    assert "https://huggingface" not in source
+    assert "huggingface.co" not in source
+    # The licence of both models is named where the files are named (D-05-15).
+    assert "MIT" in source
+    assert "Apache-2.0" in source
+
+
+def test_model_bytes_counts_whole_files_and_parted_files() -> None:
+    document = _measured()
+
+    for name in catalog.WHISPER_MODELS:
+        assert catalog.model_bytes(name) == sum(item["size"] for item in document["models"][name]["files"])
+    assert catalog.model_bytes("whisper-turbo") == 1_617_884_929 + 2_263 + 340 + 2_710_337 + 1_068_114
+    assert catalog.model_bytes("parakeet") == sum(FIXED_SIZES.values()) - FIXED_SIZES["silero_vad.onnx"]
+    assert catalog.model_bytes("silero") == FIXED_SIZES["silero_vad.onnx"]
+
+
+def test_the_preview_set_stays_what_it_was_next_to_whisper() -> None:
+    # MODEL_SHA256 is the provenance of every preview transcript (TRANS-06) and
+    # must not move when Whisper joins the catalog; /init still fetches two models.
+    assert catalog.MODEL_SHA256 == "3a78ea81526430808b60248acbaa45a3361ad99bdd0b05b7da6ad6548a4dd339"
+    assert catalog.MODEL_RELEASE_TAG == RELEASE_TAG
+    assert procure.MODEL_ORDER == PREVIEW_MODELS
 
 
 # ---------------------------------------------------------------------------

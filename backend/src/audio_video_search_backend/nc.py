@@ -21,7 +21,8 @@ client instead of a new nc_py_api client per call (plan 02-05), and the same
 way the four routes of the periodic reconcile (plan 02-20). nc_queue.py and
 nc_files.py hold the contracts of those routes and never import a client
 themselves. And one job outside the Nextcloud: the model files of plan 03-07
-(``fetch_model_asset``), on a client of its own with a host allowlist.
+(``fetch_model_asset``, and ``fetch_model_part`` for a file the release holds
+in parts, plan 05-08), on a client of its own with a host allowlist.
 """
 
 import asyncio
@@ -60,6 +61,7 @@ __all__ = [
     "fetch_handshake",
     "fetch_head",
     "fetch_model_asset",
+    "fetch_model_part",
     "fetch_to_tempfile",
     "nc_app",
     "new_queue_client",
@@ -782,14 +784,26 @@ def _open_model_part(dest: Path) -> BinaryIO:
     return dest.open("wb")
 
 
+def _cut_back(handle: BinaryIO, start: int) -> None:
+    """Make ``start`` the end of the file and the place of the next write."""
+    handle.flush()
+    handle.seek(start)
+    handle.truncate()
+
+
 async def _stream_model(
     client: httpx.AsyncClient,
     url: str,
-    dest: Path,
+    dest: Path | BinaryIO,
     expected_size: int,
     allowed_hosts: frozenset[str],
     on_chunk: Callable[[bytes], Awaitable[None]] | None,
 ) -> str:
+    """One model download, hop by hop; ``dest`` is a path to create or an open file to write on.
+
+    A path is opened, written and closed here. An open file belongs to the
+    caller: it is written from where it stands and never closed.
+    """
     target = _model_hop(url, allowed_hosts)
     if target is None:
         return MODEL_FOREIGN_HOST
@@ -813,7 +827,8 @@ async def _stream_model(
             if declared.isdigit() and int(declared) > expected_size:
                 return MODEL_TOO_LARGE
             received = 0
-            handle = await asyncio.to_thread(_open_model_part, dest)
+            owned = isinstance(dest, Path)
+            handle = await asyncio.to_thread(_open_model_part, dest) if isinstance(dest, Path) else dest
             try:
                 async for chunk in response.aiter_bytes(CHUNK_SIZE):
                     received += len(chunk)
@@ -823,7 +838,8 @@ async def _stream_model(
                     if on_chunk is not None:
                         await on_chunk(chunk)
             finally:
-                await asyncio.to_thread(handle.close)
+                if owned:
+                    await asyncio.to_thread(handle.close)
             # A body that ends early is a broken transfer, not a verdict on the file.
             return MODEL_FETCHED if received == expected_size else MODEL_NETWORK
     return MODEL_HTTP_ERROR
@@ -867,6 +883,51 @@ async def fetch_model_asset(
             await asyncio.to_thread(_unlink, dest)
     if outcome != MODEL_FETCHED:
         LOGGER.warning("model file refused", extra={"outcome": outcome})
+    return outcome
+
+
+async def fetch_model_part(
+    url: str,
+    handle: BinaryIO,
+    *,
+    start: int,
+    expected_size: int,
+    allowed_hosts: frozenset[str],
+    client: httpx.AsyncClient | None = None,
+    on_chunk: Callable[[bytes], Awaitable[None]] | None = None,
+) -> str:
+    """Stream one part of a model file onto the open ``handle`` behind ``start``.
+
+    The way of :func:`fetch_model_asset` for a file that the release holds in
+    parts (plan 05-08): the parts are appended to one file, so the volume needs
+    the length of the file once and not twice. ``handle`` is open for writing,
+    belongs to the caller and is never closed here. Whatever stood behind
+    ``start`` is cut off first. After ``fetched`` the file ends at
+    ``start + expected_size``; after every other code of
+    :data:`MODEL_FETCH_OUTCOMES`, and after an error, it ends at ``start``
+    again, so the parts before it stay usable.
+
+    Every hop is checked like there: https, a host of ``allowed_hosts``, the
+    cookies of one hop never sent to the next, never more bytes than expected.
+    ``on_chunk`` sees every block after it is written. A local write error is
+    raised as the OSError it is. Logs carry a code and an error type, never a URL.
+    """
+    outcome = MODEL_NETWORK
+    try:
+        await asyncio.to_thread(_cut_back, handle, start)
+        if client is not None:
+            outcome = await _stream_model(client, url, handle, expected_size, allowed_hosts, on_chunk)
+        else:
+            async with new_model_client() as owned:
+                outcome = await _stream_model(owned, url, handle, expected_size, allowed_hosts, on_chunk)
+    except httpx.HTTPError as error:
+        LOGGER.warning("model part not reached", extra={"error_type": type(error).__name__})
+        outcome = MODEL_NETWORK
+    finally:
+        if outcome != MODEL_FETCHED:
+            await asyncio.to_thread(_cut_back, handle, start)
+    if outcome != MODEL_FETCHED:
+        LOGGER.warning("model part refused", extra={"outcome": outcome})
     return outcome
 
 
