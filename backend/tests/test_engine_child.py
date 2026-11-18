@@ -6,6 +6,11 @@ process along; the memory guard refuses a start without room (NO_ROOM, no child
 at all); a child is replaced after MAX_CHUNKS_PER_CHILD jobs. T-03-34: the child
 holds no app secret. After every test no child is left alive.
 
+Plan 05-07 (RES-02, RES-03): the child makes itself the first OOM victim before
+anything else (T-05-14), the guard asks for the need of the model that is to
+run, a child the kernel killed for memory is OUT_OF_MEMORY and not CRASHED
+(T-05-15), and every answer carries the memory peak of the child.
+
 The window logic of the engine (merging the VAD segments, word times from the
 tokens, the swallow guard, the catch rule per window) is tested on an Engine
 whose recognizer, VAD and language identification are replaced; the real model
@@ -19,7 +24,7 @@ import pickle
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +41,7 @@ from audio_video_search_backend.engine.child import (
     MAX_CHUNKS_PER_CHILD,
     NO_ROOM,
     OK,
+    OOM_SCORE_ADJ,
     OUT_OF_MEMORY,
     THREAD_ENV,
     TIMEOUT,
@@ -66,8 +72,14 @@ def _pcm(command: float = engine_fakes.NORMAL, samples: int = 16) -> bytes:
     return pcm.tobytes()
 
 
-def _worker(tmp_path: Path, *, factory: str = FAKE, room: int | None = ROOM) -> EngineWorker:
-    return EngineWorker(tmp_path / "models", factory=factory, headroom=lambda: room)
+def _worker(
+    tmp_path: Path,
+    *,
+    factory: str = FAKE,
+    room: int | None = ROOM,
+    events: Callable[[], dict[str, int] | None] = lambda: None,
+) -> EngineWorker:
+    return EngineWorker(tmp_path / "models", factory=factory, headroom=lambda: room, events=events)
 
 
 def _alive(pid: int) -> bool:
@@ -257,6 +269,11 @@ def test_the_child_pins_its_threads_and_holds_no_secret(tmp_path: Path, monkeypa
     assert seen["sherpa"] == "False"
     if sys.platform.startswith("linux"):
         assert seen["nice"] == str(ENGINE_NICE)
+        # RES-03: read back from the kernel inside the child.
+        assert seen["oom"] == str(OOM_SCORE_ADJ)
+    else:
+        # No such file off Linux: nothing is raised and the child answers all the same.
+        assert seen["oom"] == "none"
     # The parent keeps its own environment.
     assert os.environ["HP_SHARED_KEY"] == "harp-key-not-real"
     assert "OMP_NUM_THREADS" not in os.environ
@@ -273,6 +290,7 @@ def test_the_constants_are_the_planned_ones() -> None:
     assert CHUNK_WALL_SECONDS == 900
     assert MAX_CHUNKS_PER_CHILD == 12
     assert ENGINE_NICE == 10
+    assert OOM_SCORE_ADJ == 1000
     assert THREAD_ENV == {"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
     assert child.SPAWN_CONTEXT.get_start_method() == "spawn"
 
@@ -285,6 +303,287 @@ def test_the_child_source_logs_no_text_and_limits_no_address_space() -> None:
         if "LOGGER." in line:
             assert "text" not in line
             assert "words" not in line
+
+
+# Plan 05-07: the first OOM victim, the guard per model, the OOM code, the peak.
+
+
+def test_the_oom_score_is_written_as_one_line(tmp_path: Path) -> None:
+    target = tmp_path / "oom_score_adj"
+
+    assert child._raise_oom_score(target) is True
+    assert target.read_text(encoding="ascii") == "1000\n"
+
+
+def test_an_unwritable_oom_score_is_false_not_an_error(tmp_path: Path) -> None:
+    assert child._raise_oom_score(tmp_path / "missing" / "oom_score_adj") is False
+    if sys.platform == "win32":
+        # The real path does not exist on Windows.
+        assert child._raise_oom_score() is False
+
+
+class _ScriptedPipe:
+    """The child end of the pipe: hands out the jobs, then ends like a closed pipe."""
+
+    def __init__(self, jobs: list[tuple[object, ...]]) -> None:
+        self.jobs = list(jobs)
+        self.sent: list[tuple[object, ...]] = []
+
+    def recv(self) -> tuple[object, ...]:
+        if not self.jobs:
+            raise EOFError
+        return self.jobs.pop(0)
+
+    def send(self, answer: tuple[object, ...]) -> None:
+        self.sent.append(answer)
+
+
+def _in_process_child(monkeypatch: pytest.MonkeyPatch, order: list[str], peak: int | None) -> None:
+    """Let _child_main run in this process: nothing lowers the test run, the environment comes back."""
+    for name in (*child.SECRET_ENV, *child.THREAD_ENV):
+        monkeypatch.setenv(name, "before")
+    real_factory = child._factory
+
+    def factory(path: str) -> object:
+        order.append("factory")
+        return real_factory(path)
+
+    monkeypatch.setattr(child, "_lower_self", lambda: order.append("lower"))
+    monkeypatch.setattr(child, "_factory", factory)
+    monkeypatch.setattr(child, "_peak_bytes", lambda: peak)
+
+
+def test_the_child_lowers_itself_before_it_loads_the_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+    _in_process_child(monkeypatch, order, None)
+
+    child._child_main(_ScriptedPipe([]), str(tmp_path), FAKE)  # type: ignore[arg-type]
+
+    assert order == ["lower", "factory"]
+
+
+def test_every_answer_of_the_child_carries_its_peak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _in_process_child(monkeypatch, [], 123_456_789)
+    job = ("transcribe", _pcm(), 0, False)
+    failing = ("transcribe", _pcm(engine_fakes.RAISE), 0, False)
+    pipe = _ScriptedPipe([job, failing, job])
+
+    child._child_main(pipe, str(tmp_path), FAKE)  # type: ignore[arg-type]
+
+    assert [(answer[0], answer[2]) for answer in pipe.sent] == [
+        (OK, 123_456_789),
+        (CRASHED, 123_456_789),
+        (OK, 123_456_789),
+    ]
+    assert all(len(answer) == 3 for answer in pipe.sent)
+    assert pipe.sent[1][1] == []
+
+
+def test_a_child_that_could_not_build_its_engine_reports_its_peak_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _in_process_child(monkeypatch, [], 42)
+    pipe = _ScriptedPipe([("transcribe", _pcm(), 0, False)])
+
+    child._child_main(pipe, str(tmp_path), "tests.engine_fakes:exhausted_engine")  # type: ignore[arg-type]
+
+    assert pipe.sent == [(OUT_OF_MEMORY, [], 42)]
+
+
+def test_ru_maxrss_is_taken_as_kib() -> None:
+    # Assumption A12. 1 120 192 KiB is the amd64 peak on record (measured.PARAKEET_PEAK_BYTES).
+    assert child._rss_bytes(1_120_192) == 1_147_076_608
+    assert child._rss_bytes(1) == 1024
+    assert child._rss_bytes(0) == 0
+
+
+def test_the_worker_keeps_the_peak_of_the_last_answer(tmp_path: Path) -> None:
+    worker = _worker(tmp_path)
+    try:
+        assert worker.last_peak_bytes is None
+        assert worker.ask(_pcm(), 0, False)[0] == OK
+        peak = worker.last_peak_bytes
+    finally:
+        worker.stop()
+
+    if sys.platform.startswith("linux"):
+        # A Python child with numpy: tens of MiB. A wrong unit is off by a factor of 1024.
+        assert peak is not None
+        assert 5 * 1024**2 < peak < 2 * 1024**3
+        # The last value stays readable after the child is gone.
+        assert worker.last_peak_bytes == peak
+    else:
+        assert peak is None
+
+
+class _AnsweringChild:
+    """A process and its pipe end in one: alive until joined, answers every job with one tuple."""
+
+    pid = None
+    exitcode = 0
+
+    def __init__(self, answer: tuple[object, ...]) -> None:
+        self.answer = answer
+        self.alive = True
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+    def join(self, timeout: float | None = None) -> None:
+        self.alive = False
+
+    def kill(self) -> None:
+        self.alive = False
+
+    def close(self) -> None:
+        self.alive = False
+
+    def send(self, job: tuple[object, ...]) -> None:
+        pass
+
+    def poll(self, timeout: float) -> bool:
+        return True
+
+    def recv(self) -> tuple[object, ...]:
+        return self.answer
+
+
+def test_the_worker_takes_the_peak_out_of_the_answer(tmp_path: Path) -> None:
+    """The parent side on every platform: the third field of the answer is the peak."""
+    worker = _worker(tmp_path)
+    fake = _AnsweringChild((OK, [], 777_000_000))
+    worker._process = worker._pipe = fake  # type: ignore[assignment]
+
+    assert worker.ask(_pcm(), 0, False) == (OK, [])
+    assert worker.last_peak_bytes == 777_000_000
+
+    worker.stop()
+    assert worker.last_peak_bytes == 777_000_000
+
+
+def test_the_guard_asks_for_the_need_of_the_model_that_is_to_run(tmp_path: Path) -> None:
+    asked: list[str] = []
+
+    def need(model: str) -> int:
+        asked.append(model)
+        return 4_000
+
+    def worker_with(room: int) -> EngineWorker:
+        return EngineWorker(tmp_path / "models", model="turbo", factory=FAKE, headroom=lambda: room, need=need)
+
+    short = worker_with(4_000 + ENGINE_RESERVE_BYTES - 1)
+    enough = worker_with(4_000 + ENGINE_RESERVE_BYTES)
+    try:
+        assert short.start() == NO_ROOM
+        assert short.pid is None
+        assert multiprocessing.active_children() == []
+        assert asked == ["turbo"]
+
+        assert enough.start() == OK
+        assert asked == ["turbo", "turbo"]
+    finally:
+        short.stop()
+        enough.stop()
+
+
+def test_the_catalogue_need_knows_parakeet_only(tmp_path: Path) -> None:
+    assert child._catalog_need("parakeet") == ENGINE_NEED_BYTES
+    with pytest.raises(ValueError, match="turbo"):
+        child._catalog_need("turbo")
+
+    worker = EngineWorker(tmp_path / "models", model="turbo", factory=FAKE, headroom=lambda: 64 * 1024**3)
+    with pytest.raises(ValueError, match="turbo"):
+        worker.start()
+    assert worker.pid is None
+    assert multiprocessing.active_children() == []
+
+
+class _Events:
+    """memory.events as a sequence of readings; the last one repeats."""
+
+    def __init__(self, *readings: dict[str, int] | None) -> None:
+        self.readings = list(readings)
+        self.reads = 0
+
+    def __call__(self) -> dict[str, int] | None:
+        reading = self.readings[min(self.reads, len(self.readings) - 1)]
+        self.reads += 1
+        return reading
+
+
+def test_a_child_that_dies_while_oom_kill_rises_is_out_of_memory(tmp_path: Path) -> None:
+    events = _Events({"oom_kill": 4, "max": 9}, {"oom_kill": 5, "max": 9})
+    worker = _worker(tmp_path, events=events)
+    try:
+        assert worker.start() == OK
+        assert worker.ask(_pcm(engine_fakes.CRASH), 0, False) == (OUT_OF_MEMORY, [])
+        assert events.reads == 2  # once before the job was sent, once after the death
+        assert worker.pid is None
+        assert worker.ask(_pcm(), 0, False)[0] == OK
+    finally:
+        worker.stop()
+
+
+@pytest.mark.parametrize(
+    "readings",
+    [
+        ({"oom_kill": 4}, {"oom_kill": 4}),
+        (None, None),
+        (None, {"oom_kill": 5}),
+        ({"oom_kill": 4}, None),
+        ({"max": 1}, {"max": 2}),
+    ],
+)
+def test_a_child_that_dies_without_a_rise_is_crashed(
+    tmp_path: Path, readings: tuple[dict[str, int] | None, ...]
+) -> None:
+    worker = _worker(tmp_path, events=_Events(*readings))
+    try:
+        assert worker.ask(_pcm(engine_fakes.CRASH), 0, False) == (CRASHED, [])
+    finally:
+        worker.stop()
+
+
+def test_a_rise_while_the_child_answers_changes_nothing(tmp_path: Path) -> None:
+    # One reading per job that is answered; a third one would see the rise.
+    events = _Events({"oom_kill": 0}, {"oom_kill": 0}, {"oom_kill": 7})
+    worker = _worker(tmp_path, events=events)
+    try:
+        assert worker.ask(_pcm(), 0, False)[0] == OK
+        assert worker.ask(_pcm(engine_fakes.RAISE), 0, False) == (CRASHED, [])
+        assert events.reads == 2
+    finally:
+        worker.stop()
+
+
+def test_the_death_code_reads_the_counter_and_the_exit_code() -> None:
+    assert child._death_code(3, 4, 5) == OUT_OF_MEMORY
+    assert child._death_code(None, 0, 1) == OUT_OF_MEMORY
+    assert child._death_code(3, 4, 4) == CRASHED
+    assert child._death_code(3, 5, 4) == CRASHED
+    assert child._death_code(3, None, 5) == CRASHED
+    assert child._death_code(3, 4, None) == CRASHED
+    assert child._death_code(None, None, None) == CRASHED
+    assert child._death_code(-15, None, None) == CRASHED
+    # SIGKILL that the worker did not send itself: the OOM killer, also without a readable counter.
+    assert child._death_code(-9, None, None) == OUT_OF_MEMORY
+    assert child._death_code(-9, 4, 4) == OUT_OF_MEMORY
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL and its exit code -9 exist on POSIX only")
+def test_a_child_killed_from_outside_is_out_of_memory(tmp_path: Path) -> None:
+    worker = _worker(tmp_path)
+    try:
+        assert worker.ask(_pcm(engine_fakes.KILLED), 0, False) == (OUT_OF_MEMORY, [])
+        assert worker.pid is None
+        assert worker.ask(_pcm(), 0, False)[0] == OK
+    finally:
+        worker.stop()
+
+
+def test_the_default_events_reader_is_the_memory_guard(tmp_path: Path) -> None:
+    worker = EngineWorker(tmp_path / "models", factory=FAKE, headroom=lambda: ROOM)
+    assert worker._events is child.memory_guard.memory_events
 
 
 def _fresh_python(code: str) -> str:

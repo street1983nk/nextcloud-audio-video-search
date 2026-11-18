@@ -7,6 +7,7 @@ through it without a second channel into the child.
 """
 
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -22,8 +23,23 @@ EXHAUST = 2.0
 CRASH = 3.0
 REPORT = 4.0
 RAISE = 5.0
+KILLED = 6.0
 HANG_SECONDS = 60.0
 REPORTED_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "APP_SECRET", "HP_SHARED_KEY")
+
+
+def _oom_score() -> str:
+    """The OOM score adjustment of this process as the kernel shows it, "none" without such a file."""
+    try:
+        return Path("/proc/self/oom_score_adj").read_text(encoding="ascii").strip()
+    except OSError:
+        return "none"
+
+
+def _kill_self() -> None:
+    """What the OOM killer does: SIGKILL that the worker did not send (POSIX only)."""
+    if sys.platform != "win32":
+        os.kill(os.getpid(), signal.SIGKILL)
 
 
 def _word(text: str, start_ms: int) -> EngineWord:
@@ -46,11 +62,14 @@ class FakeEngine:
             os._exit(3)
         elif command == RAISE:
             raise RuntimeError("engine failed")
+        elif command == KILLED:
+            _kill_self()
         texts = ["second" if second_pass else "first", f"samples={len(pcm)}", f"root={self.models_root.name}"]
         if command == REPORT:
             texts += [f"{name}={os.environ.get(name, '<absent>')}" for name in REPORTED_VARIABLES]
             texts.append(f"sherpa={'sherpa_onnx' in sys.modules}")
             texts.append(f"nice={os.nice(0) if sys.platform != 'win32' else 'none'}")
+            texts.append(f"oom={_oom_score()}")
         words = tuple(_word(text, offset_ms + 100 * index) for index, text in enumerate(texts))
         return [
             Window(
