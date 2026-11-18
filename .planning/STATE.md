@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Welle 1: 05-04/05/06 fertig; 05-01 wartet am Checkpoint Push phase-05 (Task 2, HEAD bd35501); 05-02 wartet am Legitimitäts-Checkpoint (Task 1); 05-03 nicht begonnen
-last_updated: "2026-11-18T10:37:09.562Z"
+stopped_at: "Welle 1: 05-03/04/05/06 fertig; 05-01 Push c796f4f nicht ausgeführt (ruff check an c796f4f rot, Korrektur 3f6144a, neue Owner-Freigabe für den neuen SHA nötig); 05-02 wartet am Legitimitäts-Checkpoint (Task 1, Audit neu erzeugt)"
+last_updated: "2026-11-18T11:43:18.117Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 86
+  completed_plans: 87
   percent: 36
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-04, 05-05, 05-06 fertig (Welle 1)
+Plan: 05-03, 05-04, 05-05, 05-06 fertig (Welle 1)
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [████████░░] 81%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -88,6 +88,7 @@ Progress: [████████░░] 81%
 | Phase 05 P05 | 60 min | 2 tasks | 17 files |
 | Phase 05 P06 | 30 min | 2 tasks | 9 files |
 | Phase 05 P01 | 30 min | 1 tasks | 3 files |
+| Phase 05 P03 | 60 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -168,6 +169,7 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-16 (Owner 16.11.): X3 setzt controlslist=nodownload am Medium, fail-closed wie der Export (jedes Urteil außer ALLOWED); nur Bedien-Hürde, keine technische Sperre
 - [Phase 04]: 04-18 (Owner 17.11.): Untertitel-Dateinamen schreiben nur Umlaute und ß aus (auch NFD), andere Nicht-ASCII-Zeichen bleiben; Owner-Rückfrage am 17.11. entschieden (04-19-SUMMARY)
 - [Phase 4, 17.11.]: Phase 4 abgeschlossen: 19/19 Pläne, UAT 14/14 (Gap Test 5 nach 04-18/04-19 geschlossen), 04-SECURITY.md verified mit threats_open 0, CI-Beleg Push 6 auf phase-04 ee6bd68 in allen vier Workflows grün
+- [Phase 05]: 05-03: Whisper-Teile gemessen (turbo 2, large-v3 3 Teile zu 1 GiB), Identität in scripts/models/whisper-parts-2026-11.json; das Skript lädt nur über https von huggingface.co und Hosts unter .hf.co, die App-Allowlist bleibt ohne Hugging Face
 
 ### Pending Todos
 
@@ -180,6 +182,8 @@ Recent decisions affecting current work:
 - [Phase 4] Wortform-Lücke "Fischart" findet "Fischarten" nicht (deferred-items 04-14): noch nicht bewertet, bekannte Grenze benennen oder Analyzer mit Messung nachziehen
 - [Phase 4] Backlog (Owner 16.11.): Trefferzeilen-Ausschnitt S6/S7 um den ersten Treffer zentrieren, Phase offen
 - [Phase 4] phase-04 noch nicht nach main gemergt; Merge und Dependabot-PRs #3/#4 danach nur mit Owner-Freigabe
+- [Phase 5] Push für Wave 0 offen: c796f4f hatte ein rotes lokales Gate (ruff I001, test_schedule.py); Owner entscheidet über den neuen SHA
+- [Phase 5] 05-02: zusätzliche transitive Pakete über die im Plan genannten hinaus (tqdm, flatbuffers, protobuf, fsspec, hf-xet, httpx2, httpcore2, truststore), Owner-Freigabe muss sie einschließen
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -194,6 +198,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-18T10:28:40.906Z
-Stopped at: Welle 1: 05-04/05/06 fertig; 05-01 wartet am Checkpoint Push phase-05 (Task 2, HEAD bd35501); 05-02 wartet am Legitimitäts-Checkpoint (Task 1); 05-03 nicht begonnen
+Last session: 2026-11-18T11:43:18.101Z
+Stopped at: Welle 1: 05-03/04/05/06 fertig; 05-01 Push c796f4f nicht ausgeführt (ruff check an c796f4f rot, Korrektur 3f6144a, neue Owner-Freigabe für den neuen SHA nötig); 05-02 wartet am Legitimitäts-Checkpoint (Task 1, Audit neu erzeugt)
 Resume file: None
