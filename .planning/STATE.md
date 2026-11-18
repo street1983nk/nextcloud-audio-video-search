@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: 05-06 complete (catalogues T36 to T96)
+stopped_at: Welle 1: 05-04/05/06 fertig; 05-01 wartet am Checkpoint Push phase-05 (Task 2, HEAD bd35501); 05-02 wartet am Legitimitäts-Checkpoint (Task 1); 05-03 nicht begonnen
 last_updated: "2026-11-18T10:37:09.562Z"
 last_activity: 2026-11-18
 progress:
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-06 fertig (Welle 1)
+Plan: 05-04, 05-05, 05-06 fertig (Welle 1)
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
@@ -87,6 +87,7 @@ Progress: [████████░░] 81%
 | Phase 05 P04 | 35 min | 2 tasks | 4 files |
 | Phase 05 P05 | 60 min | 2 tasks | 17 files |
 | Phase 05 P06 | 30 min | 2 tasks | 9 files |
+| Phase 05 P01 | 30 min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -194,5 +195,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-11-18T10:28:40.906Z
-Stopped at: 05-06 complete (catalogues T36 to T96)
+Stopped at: Welle 1: 05-04/05/06 fertig; 05-01 wartet am Checkpoint Push phase-05 (Task 2, HEAD bd35501); 05-02 wartet am Legitimitäts-Checkpoint (Task 1); 05-03 nicht begonnen
 Resume file: None
