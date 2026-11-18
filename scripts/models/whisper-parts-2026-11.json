@@ -1,0 +1,118 @@
+{
+  "models": {
+    "whisper-large-v3": {
+      "files": [
+        {
+          "asset": "whisper-large-v3.config.json",
+          "name": "config.json",
+          "parts": null,
+          "sha256": "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9",
+          "size": 2394
+        },
+        {
+          "asset": null,
+          "name": "model.bin",
+          "parts": [
+            {
+              "asset": "whisper-large-v3.model.bin.001",
+              "sha256": "ffb5a6cd5d53b9188fc30dfc8c9e59d596fdbc2b2fb61368c0564b407be46591",
+              "size": 1073741824
+            },
+            {
+              "asset": "whisper-large-v3.model.bin.002",
+              "sha256": "c14e94cdd7837754a73f63b3b197925addda5fd0f39cb92bcdfb9e146a0e71d5",
+              "size": 1073741824
+            },
+            {
+              "asset": "whisper-large-v3.model.bin.003",
+              "sha256": "4daea110817f4be7bfe5c0cfb82d01f12adc2684ab3bd548bd43634f658d5380",
+              "size": 939800589
+            }
+          ],
+          "sha256": "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+          "size": 3087284237
+        },
+        {
+          "asset": "whisper-large-v3.preprocessor_config.json",
+          "name": "preprocessor_config.json",
+          "parts": null,
+          "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+          "size": 340
+        },
+        {
+          "asset": "whisper-large-v3.tokenizer.json",
+          "name": "tokenizer.json",
+          "parts": null,
+          "sha256": "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+          "size": 2480617
+        },
+        {
+          "asset": "whisper-large-v3.vocabulary.json",
+          "name": "vocabulary.json",
+          "parts": null,
+          "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+          "size": 1068114
+        }
+      ],
+      "source": {
+        "commit": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+        "repo": "Systran/faster-whisper-large-v3"
+      }
+    },
+    "whisper-turbo": {
+      "files": [
+        {
+          "asset": "whisper-large-v3-turbo.config.json",
+          "name": "config.json",
+          "parts": null,
+          "sha256": "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+          "size": 2263
+        },
+        {
+          "asset": null,
+          "name": "model.bin",
+          "parts": [
+            {
+              "asset": "whisper-large-v3-turbo.model.bin.001",
+              "sha256": "229405133905b758bbdef3a8104ab31939bf8994125d1547ed950799af20d555",
+              "size": 1073741824
+            },
+            {
+              "asset": "whisper-large-v3-turbo.model.bin.002",
+              "sha256": "bfa3916ab9fc48c3af1d994331aadc6df5cfe40776b0d33b4081f5503203dcb4",
+              "size": 544143105
+            }
+          ],
+          "sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+          "size": 1617884929
+        },
+        {
+          "asset": "whisper-large-v3-turbo.preprocessor_config.json",
+          "name": "preprocessor_config.json",
+          "parts": null,
+          "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+          "size": 340
+        },
+        {
+          "asset": "whisper-large-v3-turbo.tokenizer.json",
+          "name": "tokenizer.json",
+          "parts": null,
+          "sha256": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+          "size": 2710337
+        },
+        {
+          "asset": "whisper-large-v3-turbo.vocabulary.json",
+          "name": "vocabulary.json",
+          "parts": null,
+          "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+          "size": 1068114
+        }
+      ],
+      "source": {
+        "commit": "4df90f75321148c3a29a9e2351b7ddf8f5b115a8",
+        "repo": "deepdml/faster-whisper-large-v3-turbo-ct2"
+      }
+    }
+  },
+  "tag": "whisper-2026-11"
+}

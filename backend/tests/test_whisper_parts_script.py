@@ -11,6 +11,8 @@ a fake transport; none of them touches the network.
 import hashlib
 import importlib.util
 import json
+import re
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -22,6 +24,7 @@ import pytest
 from tests.conftest import REPO_ROOT
 
 SCRIPT = REPO_ROOT / "scripts" / "models" / "split_whisper.py"
+PARTS_JSON = REPO_ROOT / "scripts" / "models" / "whisper-parts-2026-11.json"
 
 # Plan 05-03 interfaces, typed here a second time on purpose: the script must
 # carry the same values, a typo on one side fails the comparison.
@@ -487,3 +490,105 @@ def test_the_app_never_names_hugging_face() -> None:
         if "huggingface.co" in path.read_text(encoding="utf-8")
     ]
     assert hits == []
+
+
+# --- the versioned result of the real run (task 2) -----------------------------
+
+GIB = 1_073_741_824
+HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def parts_document() -> dict:
+    return json.loads(PARTS_JSON.read_text(encoding="utf-8"))
+
+
+def whole(document: dict, key: str) -> dict:
+    (entry,) = [item for item in document["models"][key]["files"] if item["name"] == "model.bin"]
+    return entry
+
+
+def test_the_versioned_json_names_both_models_at_their_commit() -> None:
+    document = parts_document()
+
+    assert document["tag"] == "whisper-2026-11"
+    assert sorted(document["models"]) == sorted(SOURCES)
+    for key, (repo, commit) in SOURCES.items():
+        assert document["models"][key]["source"] == {"repo": repo, "commit": commit}
+
+
+def test_turbo_has_two_parts_and_large_v3_three() -> None:
+    document = parts_document()
+
+    turbo = whole(document, "whisper-turbo")
+    assert (turbo["size"], turbo["sha256"]) == TURBO_BIN
+    assert [part["size"] for part in turbo["parts"]] == [GIB, 544_143_105]
+    assert [part["asset"] for part in turbo["parts"]] == [
+        "whisper-large-v3-turbo.model.bin.001",
+        "whisper-large-v3-turbo.model.bin.002",
+    ]
+    large = whole(document, "whisper-large-v3")
+    assert (large["size"], large["sha256"]) == LARGE_BIN
+    assert [part["size"] for part in large["parts"]] == [GIB, GIB, 939_800_589]
+    assert [part["asset"] for part in large["parts"]] == [
+        "whisper-large-v3.model.bin.001",
+        "whisper-large-v3.model.bin.002",
+        "whisper-large-v3.model.bin.003",
+    ]
+    for entry in (turbo, large):
+        assert entry["asset"] is None
+        assert sum(part["size"] for part in entry["parts"]) == entry["size"]
+        digests = [part["sha256"] for part in entry["parts"]]
+        assert all(HEX64.fullmatch(value) for value in digests)
+        # a part is never the whole file and no two parts are the same bytes
+        assert len({*digests, entry["sha256"]}) == len(digests) + 1
+
+
+def test_the_small_files_of_the_versioned_json_are_the_values_of_the_plan() -> None:
+    document = parts_document()
+
+    for key, files in SMALL_FILES.items():
+        prefix = "whisper-large-v3-turbo" if key == "whisper-turbo" else "whisper-large-v3"
+        listed = {
+            item["name"]: (item["size"], item["sha256"], item["asset"], item["parts"])
+            for item in document["models"][key]["files"]
+            if item["name"] != "model.bin"
+        }
+        assert listed == {name: (size, sha, f"{prefix}.{name}", None) for name, (size, sha) in files.items()}
+
+
+def test_every_asset_name_of_the_versioned_json_is_unique() -> None:
+    document = parts_document()
+    names = []
+    for model in document["models"].values():
+        for item in model["files"]:
+            names += [item["asset"]] if item["parts"] is None else [part["asset"] for part in item["parts"]]
+
+    assert len(names) == 13
+    assert len(set(names)) == len(names)
+    assert all(re.fullmatch(r"whisper-large-v3(-turbo)?\.[a-z_]+\.(json|bin\.00[1-3])", name) for name in names)
+
+
+def test_the_versioned_json_is_what_the_script_writes() -> None:
+    raw = PARTS_JSON.read_bytes()
+
+    assert b"\r" not in raw
+    assert raw == (json.dumps(json.loads(raw), indent=2, sort_keys=True) + "\n").encode()
+    # hosts, paths of a workstation and signed URLs have no place in it
+    assert b"http" not in raw
+    assert b"Users" not in raw
+
+
+def test_no_weights_in_the_repository() -> None:
+    """T-05-06b: the parts stay outside, the folder holds the script and the JSON only."""
+    folder = REPO_ROOT / "scripts" / "models"
+    big = [path.name for path in folder.rglob("*") if path.is_file() and path.stat().st_size > 1024 * 1024]
+    assert big == []
+    tracked = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607 - git from PATH
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert [name for name in tracked if "model.bin" in name] == []
+    assert [name for name in tracked if name.endswith((".part", ".onnx"))] == []
