@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05-07 abgeschlossen (Kind als erstes OOM-Opfer, Wächter je Modell, OOM-Erkennung, eine Thread-Zahl; VAD-Gate um zwei wörtliche Zeilen erweitert, Owner 18.11.; Commits 5711ac5 und 81500ac nur lokal); 05-08 abgeschlossen (Commits 456f3af und d27e1bb nur lokal); nächster Plan der Welle 2 ist 05-09"
-last_updated: "2026-11-18T18:10:00.000Z"
+stopped_at: "05-09 abgeschlossen (Admin-Seite: Profil, Rechenzeit, Modelle und Lizenzen; Commits 0b462bd und 11ddd34 nur lokal; PHPUnit, php -l und alles Sichtbare erst in CI bzw. 05-19/05-23 belegt); 05-07 und 05-08 abgeschlossen; nächster Plan der Welle 2 ist 05-10"
+last_updated: "2026-11-18T20:30:00.000Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 91
+  completed_plans: 92
   percent: 36
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2: 05-07 und 05-08 fertig
+Plan: 05-01 bis 05-06 fertig (Welle 1); Welle 2: 05-07, 05-08 und 05-09 fertig
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [█████████░] 86%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -93,6 +93,7 @@ Progress: [█████████░] 86%
 | Phase 05 P01 | 45 min | 1 tasks | 3 files |
 | Phase 05 P08 | 25 min | 2 tasks | 6 files |
 | Phase 05 P07 | 75 min | 2 tasks | 9 files |
+| Phase 05 P09 | 60 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -186,6 +187,12 @@ Recent decisions affecting current work:
 - [Phase 05]: 05-07: das Erkennungs-Kind schreibt als erste Anweisung oom_score_adj 1000 (dann nice 10, eigene Sitzung); der Wächter prüft need(model) plus 512 MiB Reserve, bis 05-12 kennt der Katalog nur parakeet; ein Kind, das bei gestiegenem oom_kill oder mit Exit -9 ohne eigenen Kill stirbt, ist OUT_OF_MEMORY; jede Antwort trägt ru_maxrss in Bytes (EngineWorker.last_peak_bytes)
 - [Phase 05]: 05-07: eine Thread-Zahl N je Kind (thread_env(N), Factory (root, threads), Engine(models_root, threads)); Standard hardware.default_threads(usable_cpus()) statt fest 2; OMP_THREAD_LIMIT wird nie gesetzt und im Kind aus der geerbten Umgebung entfernt; RECOGNIZER_THREADS und CONFIG_VERSION unverändert
 - [Phase 05]: 05-07 (Owner 18.11.): VAD-Gate Regel 1 erlaubt in engine/ zusätzlich genau zwei wörtliche ganze Zeilen, os.environ.pop("OMP_THREAD_LIMIT", None) und os.environ.update(thread_env(threads)); thread_env muss in derselben Datei auf oberster Ebene definiert sein; jede Abwandlung und jedes Lesen bleibt Befund
+- [Phase 05]: 05-09: die Zonenregel der Admin-Routen (zones, defaultZone) liegt statisch in ExAppService::withZones und ::defaultZone; SettingsController und Settings\Admin rufen dieselbe Funktion, ein statischer Test hält, dass \DateTimeZone::listIdentifiers() und default_timezone unter php/lib nur dort stehen
+- [Phase 05]: 05-09: Settings\Admin fragt ExAppService::resources() einmal je Seitenaufruf, bekommt IL10N als achten Konstruktor-Parameter und formatiert jede Menge mit ResourceFormat; Initial State 'resources' trägt den Vertrag plus zones und defaultZone; das Skript bekommt Einheit und Dezimalzeichen als data-Attribute, kein t() in admin.js
+- [Phase 05]: 05-09: Sätze mit Platzhaltern als Slots (U+E010 bis U+E01F): Zahl oder Wort in einem span mit data-value, Lizenz-ID als Link; je Profil zwei vorgerenderte Zeilen (-need frei, -lock gesperrt), aria-describedby am Radio nennt die sichtbare
+- [Phase 05]: 05-09 (Orchestrator 18.11.): `radio` in ALLOWED_SERVER_CLASSES von test_ui_assets.py, weil 05-UI-SPEC.md input.radio nennt (Zeilen 33, 103, 161, 200, 201); Gegenzeile im Selbsttest (radio-big, switch bleiben Befund)
+- [Phase 05]: 05-09: die GB-Rundung steht in PHP (ResourceFormat) und in admin.js; beide hängen an denselben 15 Zeilen (PHPUnit-Data-Provider gigabyteRows, pytest lässt die Funktion aus admin.js unter node laufen)
+- [Phase 05]: 05-09: Annahmen bis zum Owner-Entscheid: availableBytes null wie R2 mit "unbekannt"; ohne gespeicherte Wahl ist das wirksame Profil angehakt; Threads gleich Standard wird als null gesendet
 
 ### Pending Todos
 
@@ -210,6 +217,10 @@ Recent decisions affecting current work:
 - [Phase 5] 05-07: bei 2 nutzbaren CPUs läuft künftig 1 Thread, die Speichermessung (measured.PARAKEET_PEAK_BYTES) lief mit 2; der Fingerabdruck nennt weiter RECOGNIZER_THREADS 2, Wortgleichheit der Transkripte bei 1 Thread ist nicht gemessen (05-20), die Zahl kommt mit 05-11 in die Herkunft
 - [Phase 5] 05-07: T-05-14 und T-05-16 (high) im Code umgesetzt, Container-Nachweis erst mit 05-18 und 05-20; RES-02, RES-03 und RES-05 stehen im Kopf von 05-07, sind aber erst mit 05-11, 05-12, 05-15, 05-18 und 05-20 erfüllt; nicht abgehakt
 - [Phase 5] 05-07 Owner-Frage: das Kind meldet nicht, ob das Schreiben von oom_score_adj gelang
+- [Phase 5] 05-09: Commits 0b462bd und 11ddd34 nur lokal; lokal kein PHP und kein Browser: php -l, PHPUnit (AdminSettingsTest neu, SettingsControllerTest gegen die umgestellte Zonenregel), die DI von IL10N in Settings\Admin und das ganze Verhalten von admin.js im Browser sind erst mit einem CI-Lauf bzw. 05-19 und 05-23 belegt
+- [Phase 5] 05-09 Owner-Fragen: eigener Text für eine unbekannte verfügbare Menge; angehaktes Radio ohne gespeicherte Wahl; Threads gleich Standard als null
+- [Phase 5] RES-01, RES-05, RES-06, RES-07 und PLAT-04 stehen im Kopf von 05-09, sind aber erst mit 05-16, 05-19 und 05-23 erfüllt; nicht abgehakt
+- [Phase 5] 05-09: bis 05-16 liefert die ExApp kein GET /resources im Vertrag, die Admin-Seite steht solange im Zustand R9 (Banner T53)
 - Sprachwechsel (Phase 7): Auslöser ungemessen, Messung vor Bau Pflicht
 - arm64/Pi 5/N100 ungemessen: Profilvorwahl bis Phase 11 nur RAM-basiert
 - Testrechner oft nur 4,5 bis 7 GB frei: Messungen seriell
@@ -224,8 +235,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-11-18T18:10:00.000Z
-Stopped at: 05-07 abgeschlossen (Kind als erstes OOM-Opfer, Wächter je Modell, OOM-Erkennung, eine Thread-Zahl; VAD-Gate um zwei wörtliche Zeilen erweitert, Owner 18.11.; Commits 5711ac5 und 81500ac nur lokal); 05-08 abgeschlossen (Commits 456f3af und d27e1bb nur lokal); nächster Plan der Welle 2 ist 05-09
+Last session: 2026-11-18T20:30:00.000Z
+Stopped at: 05-09 abgeschlossen (Admin-Seite: Profil, Rechenzeit, Modelle und Lizenzen; Commits 0b462bd und 11ddd34 nur lokal; PHPUnit, php -l und alles Sichtbare erst in CI bzw. 05-19/05-23 belegt); 05-07 und 05-08 abgeschlossen; nächster Plan der Welle 2 ist 05-10
 Resume file: None
 
 ## Quick Tasks Completed
