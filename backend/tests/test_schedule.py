@@ -8,6 +8,7 @@ saving changes of 2026 in Europe/Berlin and the run over midnight are covered.
 from datetime import UTC, datetime, time, timedelta
 
 import pytest
+
 from audio_video_search_backend.schedule import (
     WindowError,
     next_change,
