@@ -44,6 +44,11 @@ use Psr\Log\LoggerInterface;
  *   GET  /status                               -> {appVersion, companion, sampleCount, ...}
  *   GET  /workstock      ?state&after&limit    -> {files: [{fileId, mediaId, storageId, state, stage, reason}], next}
  *   GET  /coverage                             -> {contents, transcribed, files, byState, byStage, dueWork}
+ *   GET  /resources                            -> {availableBytes, minimumBytes, proposed, chosen, effective,
+ *                                                  profiles, threads, window, models, offline} (plan 05-05)
+ *   POST /resources      {profile?, threads?, window?, offline?}
+ *                                              -> 200 the GET shape | 400 {field} | 409 {code, needBytes, availableBytes}
+ *   POST /resources/verify                     -> {models}
  *
  * The state of the other half (plan 07, research decision 6) is read in two
  * steps: the registration in AppAPI first, without a network call, then
@@ -196,6 +201,41 @@ class ExAppService {
 
 	/** Defense in depth: the provider shortens to 120 characters anyway. */
 	private const MAX_EXCERPT_LENGTH = 1000;
+
+	// -- resources (plan 05-05, the contract is the same in plan 05-16) ----------
+
+	/** The three profiles, in the order the page shows them, and no other. */
+	public const RESOURCE_PROFILES = ['fast', 'balanced', 'quality'];
+
+	/** What proposed and effective may say: a profile, or none below the minimum memory. */
+	public const RESOURCE_PROFILE_NONE = 'none';
+
+	/** The four models, in the order the page shows them. */
+	public const RESOURCE_MODELS = ['parakeet', 'silero', 'whisper-turbo', 'whisper-large-v3'];
+
+	/** The closed list of model states (UI-SPEC M1 to M11). */
+	public const RESOURCE_MODEL_STATES = [
+		'in_image', 'present', 'not_needed', 'waiting', 'downloading', 'verifying',
+		'wrong_digest_download', 'wrong_digest_placed', 'offline_missing', 'failed', 'disk_full',
+	];
+
+	/** The field codes of a 400 answer, from this app or from the container. */
+	public const RESOURCE_FIELDS = ['profile', 'threads', 'window_start', 'window_end', 'window_zone', 'window_same', 'offline', 'body'];
+
+	/** The code of a 409 answer: the profile needs more memory than there is. */
+	public const RESOURCE_LOCKED = 'profile_locked';
+
+	/** The keys of GET /resources, exactly. */
+	public const RESOURCE_KEYS = ['availableBytes', 'minimumBytes', 'proposed', 'chosen', 'effective', 'profiles', 'threads', 'window', 'models', 'offline'];
+
+	/** A time of the window: two digit hours 00 to 23 and minutes, nothing else. */
+	public const TIME_PATTERN = '/^([01]\d|2[0-3]):[0-5]\d$/D';
+
+	/**
+	 * Checking the sha256 of 4.7 GB of Whisper files takes the container longer
+	 * than the ten seconds of the other admin calls.
+	 */
+	public const VERIFY_TIMEOUT_SECONDS = 300.0;
 
 	public function __construct(
 		private IAppManager $appManager,
@@ -730,6 +770,287 @@ class ExAppService {
 		return $counters;
 	}
 
+	// -- resources --------------------------------------------------------------
+
+	/**
+	 * Profile, threads, window, models and offline switch of the container
+	 * (GET /resources, plan 05-05), asked as the first admin.
+	 *
+	 * Only exactly the contract shape is an answer: codes of the closed lists,
+	 * whole numbers in range, booleans, times as HH:MM and an IANA zone. A
+	 * foreign key, an unknown code, a negative number or a time like "7:5"
+	 * make the whole answer null, so nothing the container volunteers reaches
+	 * the page (T-05-12b).
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	public function resources(): ?array {
+		$uid = $this->firstAdmin();
+		if ($uid === null) {
+			return null;
+		}
+		$answer = $this->call('/resources', $uid, [], self::ADMIN_TIMEOUT_SECONDS, 'GET');
+
+		return $answer === null ? null : $this->resourceShape($answer);
+	}
+
+	/**
+	 * Hand a checked settings body to POST /resources.
+	 *
+	 * The status comes back with the body: 200 with the GET shape, 400 with a
+	 * field code, 409 with profile_locked and its two numbers. Each body is
+	 * passed on only in its contract shape; anything else, a silent container
+	 * included, is status 503 without a body.
+	 *
+	 * @param array<string, mixed> $body
+	 * @return array{status: int, body: ?array<string, mixed>}
+	 */
+	public function saveResources(array $body): array {
+		$failed = ['status' => 503, 'body' => null];
+		$uid = $this->firstAdmin();
+		if ($uid === null) {
+			return $failed;
+		}
+		$answer = $this->callWithStatus('/resources', $uid, $body, self::ADMIN_TIMEOUT_SECONDS);
+		if ($answer === null || $answer['body'] === null) {
+			return $failed;
+		}
+
+		$checked = match ($answer['status']) {
+			200 => $this->resourceShape($answer['body']),
+			400 => self::fieldShape($answer['body']),
+			409 => self::lockedShape($answer['body']),
+			default => null,
+		};
+		if ($checked === null) {
+			$this->logger->warning('Audio & Video Search: malformed resources answer', ['status' => $answer['status']]);
+			return $failed;
+		}
+
+		return ['status' => $answer['status'], 'body' => $checked];
+	}
+
+	/**
+	 * Check every model file against its sha256 now (POST /resources/verify,
+	 * occ audio_video_search:models --verify).
+	 *
+	 * @return array{models: list<array<string, mixed>>}|null
+	 */
+	public function verifyModels(): ?array {
+		$uid = $this->firstAdmin();
+		if ($uid === null) {
+			return null;
+		}
+		$answer = $this->call('/resources/verify', $uid, [], self::VERIFY_TIMEOUT_SECONDS);
+		if ($answer === null || !self::hasExactKeys($answer, ['models'])) {
+			return null;
+		}
+		$models = self::modelsShape($answer['models']);
+		if ($models === null) {
+			$this->logger->warning('Audio & Video Search: malformed verify answer');
+			return null;
+		}
+
+		return ['models' => $models];
+	}
+
+	/**
+	 * The GET shape of /resources, rebuilt key by key, or null.
+	 *
+	 * @param array<mixed> $answer
+	 * @return array<string, mixed>|null
+	 */
+	private function resourceShape(array $answer): ?array {
+		if (!self::hasExactKeys($answer, self::RESOURCE_KEYS)) {
+			$this->logger->warning('Audio & Video Search: malformed resources answer');
+			return null;
+		}
+		$withNone = [...self::RESOURCE_PROFILES, self::RESOURCE_PROFILE_NONE];
+
+		$available = $answer['availableBytes'];
+		$minimum = $answer['minimumBytes'];
+		$proposed = $answer['proposed'];
+		$chosen = $answer['chosen'];
+		$effective = $answer['effective'];
+		$profiles = self::profilesShape($answer['profiles']);
+		$threads = self::threadsShape($answer['threads']);
+		$window = self::windowShape($answer['window']);
+		$models = self::modelsShape($answer['models']);
+		$offline = self::offlineShape($answer['offline']);
+
+		if (($available !== null && !self::isCount($available))
+			|| !self::isCount($minimum)
+			|| !in_array($proposed, $withNone, true)
+			|| ($chosen !== null && !in_array($chosen, self::RESOURCE_PROFILES, true))
+			|| !in_array($effective, $withNone, true)
+			|| $profiles === null || $threads === null || $window === null || $models === null || $offline === null) {
+			$this->logger->warning('Audio & Video Search: malformed resources answer');
+			return null;
+		}
+
+		return [
+			'availableBytes' => $available,
+			'minimumBytes' => $minimum,
+			'proposed' => $proposed,
+			'chosen' => $chosen,
+			'effective' => $effective,
+			'profiles' => $profiles,
+			'threads' => $threads,
+			'window' => $window,
+			'models' => $models,
+			'offline' => $offline,
+		];
+	}
+
+	/** A whole number of zero or more. */
+	private static function isCount(mixed $value): bool {
+		return is_int($value) && $value >= 0;
+	}
+
+	/** A whole number of one or more. */
+	private static function isPositive(mixed $value): bool {
+		return is_int($value) && $value >= 1;
+	}
+
+	/** null, or a time as HH:MM. */
+	private static function isTimeOrNull(mixed $value): bool {
+		return $value === null || (is_string($value) && preg_match(self::TIME_PATTERN, $value) === 1);
+	}
+
+	/**
+	 * Exactly the three profiles in their order, each {id, locked, needBytes}.
+	 *
+	 * @return list<array{id: string, locked: bool, needBytes: int}>|null
+	 */
+	private static function profilesShape(mixed $profiles): ?array {
+		if (!is_array($profiles) || !array_is_list($profiles) || count($profiles) !== count(self::RESOURCE_PROFILES)) {
+			return null;
+		}
+		$kept = [];
+		foreach (self::RESOURCE_PROFILES as $index => $id) {
+			$profile = $profiles[$index];
+			if (!is_array($profile) || !self::hasExactKeys($profile, ['id', 'locked', 'needBytes'])
+				|| $profile['id'] !== $id || !is_bool($profile['locked']) || !self::isCount($profile['needBytes'])) {
+				return null;
+			}
+			$kept[] = ['id' => $id, 'locked' => $profile['locked'], 'needBytes' => $profile['needBytes']];
+		}
+
+		return $kept;
+	}
+
+	/** @return array{cpus: int, standard: int, admin: ?int, effective: int}|null */
+	private static function threadsShape(mixed $threads): ?array {
+		if (!is_array($threads) || !self::hasExactKeys($threads, ['cpus', 'standard', 'admin', 'effective'])
+			|| !self::isPositive($threads['cpus']) || !self::isPositive($threads['standard'])
+			|| ($threads['admin'] !== null && !self::isPositive($threads['admin']))
+			|| !self::isPositive($threads['effective'])) {
+			return null;
+		}
+
+		return [
+			'cpus' => $threads['cpus'],
+			'standard' => $threads['standard'],
+			'admin' => $threads['admin'],
+			'effective' => $threads['effective'],
+		];
+	}
+
+	/** @return array{start: ?string, end: ?string, zone: ?string, openNow: bool, changeAt: ?string}|null */
+	private static function windowShape(mixed $window): ?array {
+		if (!is_array($window) || !self::hasExactKeys($window, ['start', 'end', 'zone', 'openNow', 'changeAt'])
+			|| !self::isTimeOrNull($window['start']) || !self::isTimeOrNull($window['end'])
+			|| !self::isTimeOrNull($window['changeAt']) || !is_bool($window['openNow'])
+			|| ($window['zone'] !== null && !(is_string($window['zone']) && self::isZone($window['zone'])))) {
+			return null;
+		}
+
+		return [
+			'start' => $window['start'],
+			'end' => $window['end'],
+			'zone' => $window['zone'],
+			'openNow' => $window['openNow'],
+			'changeAt' => $window['changeAt'],
+		];
+	}
+
+	/**
+	 * Exactly the four models in their order, each {id, state, doneBytes,
+	 * totalBytes, needFreeBytes}.
+	 *
+	 * @return list<array{id: string, state: string, doneBytes: int, totalBytes: int, needFreeBytes: ?int}>|null
+	 */
+	private static function modelsShape(mixed $models): ?array {
+		if (!is_array($models) || !array_is_list($models) || count($models) !== count(self::RESOURCE_MODELS)) {
+			return null;
+		}
+		$kept = [];
+		foreach (self::RESOURCE_MODELS as $index => $id) {
+			$model = $models[$index];
+			if (!is_array($model) || !self::hasExactKeys($model, ['id', 'state', 'doneBytes', 'totalBytes', 'needFreeBytes'])
+				|| $model['id'] !== $id
+				|| !in_array($model['state'], self::RESOURCE_MODEL_STATES, true)
+				|| !self::isCount($model['doneBytes']) || !self::isPositive($model['totalBytes'])
+				|| ($model['needFreeBytes'] !== null && !self::isCount($model['needFreeBytes']))) {
+				return null;
+			}
+			$kept[] = [
+				'id' => $id,
+				'state' => $model['state'],
+				'doneBytes' => $model['doneBytes'],
+				'totalBytes' => $model['totalBytes'],
+				'needFreeBytes' => $model['needFreeBytes'],
+			];
+		}
+
+		return $kept;
+	}
+
+	/** @return array{value: bool, forcedByEnv: bool}|null */
+	private static function offlineShape(mixed $offline): ?array {
+		if (!is_array($offline) || !self::hasExactKeys($offline, ['value', 'forcedByEnv'])
+			|| !is_bool($offline['value']) || !is_bool($offline['forcedByEnv'])) {
+			return null;
+		}
+
+		return ['value' => $offline['value'], 'forcedByEnv' => $offline['forcedByEnv']];
+	}
+
+	/**
+	 * A 400 body: exactly {field} with a code of the closed list.
+	 *
+	 * @param array<mixed> $body
+	 * @return array{field: string}|null
+	 */
+	private static function fieldShape(array $body): ?array {
+		if (!self::hasExactKeys($body, ['field']) || !in_array($body['field'], self::RESOURCE_FIELDS, true)) {
+			return null;
+		}
+
+		return ['field' => $body['field']];
+	}
+
+	/**
+	 * A 409 body: exactly {code: profile_locked, needBytes, availableBytes}.
+	 *
+	 * @param array<mixed> $body
+	 * @return array{code: string, needBytes: int, availableBytes: ?int}|null
+	 */
+	private static function lockedShape(array $body): ?array {
+		if (!self::hasExactKeys($body, ['code', 'needBytes', 'availableBytes'])
+			|| $body['code'] !== self::RESOURCE_LOCKED || !self::isCount($body['needBytes'])
+			|| ($body['availableBytes'] !== null && !self::isCount($body['availableBytes']))) {
+			return null;
+		}
+
+		return ['code' => self::RESOURCE_LOCKED, 'needBytes' => $body['needBytes'], 'availableBytes' => $body['availableBytes']];
+	}
+
+	/** True for an IANA zone PHP knows (the same list the admin page offers). */
+	public static function isZone(string $zone): bool {
+		return in_array($zone, \DateTimeZone::listIdentifiers(), true);
+	}
+
 	// -- lockstep ---------------------------------------------------------------
 
 	/**
@@ -1157,6 +1478,42 @@ class ExAppService {
 		}
 
 		return $decoded;
+	}
+
+	/**
+	 * call() for the routes whose 4xx bodies mean something (POST /resources):
+	 * the status comes back beside the parsed body instead of turning every
+	 * status of 400 and above into null. A transport failure and a refused
+	 * pre-flight are still null; a body that is not a bounded JSON object is
+	 * a null body. The semantics of call() stay as they are.
+	 *
+	 * @param array<string,mixed> $body
+	 * @return array{status: int, body: ?array<mixed>}|null
+	 */
+	private function callWithStatus(string $route, string $userId, array $body, float $timeout, string $method = 'POST'): ?array {
+		$response = $this->proxyRequest($route, $userId, $method, $body, $timeout);
+		if ($response === null) {
+			return null;
+		}
+		if (is_array($response)) {
+			$this->logger->warning('Audio & Video Search: backend unreachable', [
+				'route' => $route,
+				'error' => is_string($response['error'] ?? null) ? mb_substr($response['error'], 0, 200) : 'unknown',
+			]);
+			return null;
+		}
+
+		$status = $response->getStatusCode();
+		$responseBody = $response->getBody();
+		if (!is_string($responseBody) || strlen($responseBody) > self::MAX_BODY_BYTES) {
+			return ['status' => $status, 'body' => null];
+		}
+		$decoded = json_decode($responseBody, true);
+		if (!is_array($decoded) || ($decoded !== [] && array_is_list($decoded))) {
+			return ['status' => $status, 'body' => null];
+		}
+
+		return ['status' => $status, 'body' => $decoded];
 	}
 
 	// -- field checks -----------------------------------------------------------

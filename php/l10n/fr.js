@@ -90,6 +90,7 @@ OC.L10N.register(
     "German": "Allemand",
     "English": "Anglais",
     "French": "Français",
-    "Subtitle draft, created automatically and not reviewed.": "Brouillon de sous-titres, créé automatiquement et non vérifié."
+    "Subtitle draft, created automatically and not reviewed.": "Brouillon de sous-titres, créé automatiquement et non vérifié.",
+    "%s GB": "%s Go"
 },
 "nplurals=3; plural=(n == 0 || n == 1) ? 0 : n != 0 && n % 1000000 == 0 ? 1 : 2;");

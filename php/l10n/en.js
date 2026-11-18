@@ -89,6 +89,7 @@ OC.L10N.register(
     "German": "German",
     "English": "English",
     "French": "French",
-    "Subtitle draft, created automatically and not reviewed.": "Subtitle draft, created automatically and not reviewed."
+    "Subtitle draft, created automatically and not reviewed.": "Subtitle draft, created automatically and not reviewed.",
+    "%s GB": "%s GB"
 },
 "nplurals=2; plural=(n != 1);");

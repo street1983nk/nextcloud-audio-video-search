@@ -842,4 +842,194 @@ final class ExAppServiceTest extends TestCase {
 		self::assertNull($this->adminService($this->json(self::reconcileAnswer()), null)->reconcileNow(false));
 		self::assertCount(2, $this->calls);
 	}
+
+	// -- resources (plan 05-05) ---------------------------------------------------
+
+	/**
+	 * The contract shape of GET /resources (plan 05-05 and 05-16), with a
+	 * replacement for single top level keys.
+	 *
+	 * @param array<string, mixed> $override
+	 * @return array<string, mixed>
+	 */
+	private static function resourcesAnswer(array $override = []): array {
+		return array_replace([
+			'availableBytes' => 3328599654,
+			'minimumBytes' => 2362232012,
+			'proposed' => 'balanced',
+			'chosen' => 'fast',
+			'effective' => 'fast',
+			'profiles' => [
+				['id' => 'fast', 'locked' => false, 'needBytes' => 2362232012],
+				['id' => 'balanced', 'locked' => false, 'needBytes' => 3221225472],
+				['id' => 'quality', 'locked' => true, 'needBytes' => 5368709120],
+			],
+			'threads' => ['cpus' => 8, 'standard' => 4, 'admin' => 2, 'effective' => 2],
+			'window' => ['start' => '22:00', 'end' => '06:00', 'zone' => 'Europe/Berlin', 'openNow' => false, 'changeAt' => '22:00'],
+			'models' => self::modelList(),
+			'offline' => ['value' => false, 'forcedByEnv' => false],
+		], $override);
+	}
+
+	/**
+	 * @param array<int, array<string, mixed>> $override entries replaced by index
+	 * @return list<array<string, mixed>>
+	 */
+	private static function modelList(array $override = []): array {
+		$models = [
+			['id' => 'parakeet', 'state' => 'in_image', 'doneBytes' => 0, 'totalBytes' => 670000000, 'needFreeBytes' => null],
+			['id' => 'silero', 'state' => 'in_image', 'doneBytes' => 0, 'totalBytes' => 640000, 'needFreeBytes' => null],
+			['id' => 'whisper-turbo', 'state' => 'downloading', 'doneBytes' => 1073741824, 'totalBytes' => 1621665983, 'needFreeBytes' => null],
+			['id' => 'whisper-large-v3', 'state' => 'disk_full', 'doneBytes' => 0, 'totalBytes' => 3090835702, 'needFreeBytes' => 3500000000],
+		];
+		foreach ($override as $index => $entry) {
+			$models[$index] = array_replace($models[$index], $entry);
+		}
+
+		return $models;
+	}
+
+	public function testAResourcesAnswerInShapeIsTakenAsItIs(): void {
+		$answer = self::resourcesAnswer();
+
+		self::assertSame($answer, $this->adminService($this->json($answer))->resources());
+		self::assertSame('/resources', $this->calls[0]['path']);
+		self::assertSame('GET', $this->calls[0]['method']);
+		self::assertSame('root', $this->calls[0]['userId']);
+	}
+
+	public function testAlwaysAndNullValuesAreInShape(): void {
+		$answer = self::resourcesAnswer([
+			'availableBytes' => null,
+			'proposed' => 'none',
+			'chosen' => null,
+			'effective' => 'none',
+			'threads' => ['cpus' => 1, 'standard' => 1, 'admin' => null, 'effective' => 1],
+			'window' => ['start' => null, 'end' => null, 'zone' => null, 'openNow' => true, 'changeAt' => null],
+		]);
+
+		self::assertSame($answer, $this->adminService($this->json($answer))->resources());
+	}
+
+	/** @return array<string, array{array<string, mixed>}> */
+	public static function malformedResources(): array {
+		$profiles = self::resourcesAnswer()['profiles'];
+		$swapped = [$profiles[1], $profiles[0], $profiles[2]];
+
+		return [
+			'foreign key' => [self::resourcesAnswer() + ['path' => '/srv/models']],
+			'missing key' => [array_diff_key(self::resourcesAnswer(), ['offline' => true])],
+			'negative available' => [self::resourcesAnswer(['availableBytes' => -1])],
+			'available as text' => [self::resourcesAnswer(['availableBytes' => '3328599654'])],
+			'unknown proposed' => [self::resourcesAnswer(['proposed' => 'turbo'])],
+			'chosen none' => [self::resourcesAnswer(['chosen' => 'none'])],
+			'two profiles' => [self::resourcesAnswer(['profiles' => [$profiles[0], $profiles[1]]])],
+			'profiles out of order' => [self::resourcesAnswer(['profiles' => $swapped])],
+			'locked as text' => [self::resourcesAnswer(['profiles' => [['id' => 'fast', 'locked' => 'no', 'needBytes' => 1], $profiles[1], $profiles[2]]])],
+			'profile with markup' => [self::resourcesAnswer(['profiles' => [$profiles[0] + ['label' => '<b>x</b>'], $profiles[1], $profiles[2]]])],
+			'threads zero' => [self::resourcesAnswer(['threads' => ['cpus' => 8, 'standard' => 0, 'admin' => null, 'effective' => 1]])],
+			'threads admin zero' => [self::resourcesAnswer(['threads' => ['cpus' => 8, 'standard' => 4, 'admin' => 0, 'effective' => 1]])],
+			'time 7:5' => [self::resourcesAnswer(['window' => ['start' => '7:5', 'end' => '06:00', 'zone' => 'UTC', 'openNow' => true, 'changeAt' => null]])],
+			'changeAt 24:00' => [self::resourcesAnswer(['window' => ['start' => '22:00', 'end' => '06:00', 'zone' => 'UTC', 'openNow' => true, 'changeAt' => '24:00']])],
+			'unknown zone' => [self::resourcesAnswer(['window' => ['start' => '22:00', 'end' => '06:00', 'zone' => 'Mars/Base', 'openNow' => true, 'changeAt' => null]])],
+			'openNow as text' => [self::resourcesAnswer(['window' => ['start' => null, 'end' => null, 'zone' => null, 'openNow' => 'yes', 'changeAt' => null]])],
+			'three models' => [self::resourcesAnswer(['models' => array_slice(self::modelList(), 0, 3)])],
+			'unknown model state' => [self::resourcesAnswer(['models' => self::modelList([2 => ['state' => 'https://example.org/model.bin']])])],
+			'model total zero' => [self::resourcesAnswer(['models' => self::modelList([0 => ['totalBytes' => 0]])])],
+			'model done negative' => [self::resourcesAnswer(['models' => self::modelList([1 => ['doneBytes' => -1]])])],
+			'model with a host' => [self::resourcesAnswer(['models' => self::modelList([3 => ['host' => 'github.com']])])],
+			'offline as text' => [self::resourcesAnswer(['offline' => ['value' => 'false', 'forcedByEnv' => false]])],
+		];
+	}
+
+	/** @param array<string, mixed> $answer */
+	#[DataProvider('malformedResources')]
+	public function testAResourcesAnswerOutOfShapeIsNoAnswer(array $answer): void {
+		self::assertNull($this->adminService($this->json($answer))->resources());
+	}
+
+	public function testResourcesWithoutABackendOrAnAdminIsNoAnswer(): void {
+		self::assertNull($this->adminService(['error' => 'refused'])->resources());
+		self::assertNull($this->adminService($this->answer('{}', 500))->resources());
+		self::assertNull($this->adminService($this->json(self::resourcesAnswer()), null)->resources());
+		self::assertCount(2, $this->calls);
+	}
+
+	public function testASavedSettingComesBackInTheGetShape(): void {
+		$body = ['profile' => 'fast', 'threads' => null];
+		$service = $this->adminService($this->json(self::resourcesAnswer()));
+
+		$saved = $service->saveResources($body);
+
+		self::assertSame(['status' => 200, 'body' => self::resourcesAnswer()], $saved);
+		self::assertSame('/resources', $this->calls[0]['path']);
+		self::assertSame('POST', $this->calls[0]['method']);
+		self::assertSame($body, $this->calls[0]['params']);
+	}
+
+	public function testARefusalOfTheBackendKeepsItsFieldCode(): void {
+		$answer = $this->answer('{"field":"window_zone"}', 400);
+
+		self::assertSame(['status' => 400, 'body' => ['field' => 'window_zone']], $this->adminService($answer)->saveResources(['offline' => true]));
+	}
+
+	public function testALockedProfileKeepsItsNumbers(): void {
+		$answer = $this->answer('{"code":"profile_locked","needBytes":5368709120,"availableBytes":3328599654}', 409);
+
+		self::assertSame(
+			['status' => 409, 'body' => ['code' => 'profile_locked', 'needBytes' => 5368709120, 'availableBytes' => 3328599654]],
+			$this->adminService($answer)->saveResources(['profile' => 'quality']),
+		);
+	}
+
+	/** @return array<string, array{int, string}> */
+	public static function failedSaves(): array {
+		return [
+			'unknown field code' => [400, '{"field":"name"}'],
+			'field with a sentence' => [400, '{"field":"window_zone","error":"Zone /etc/x"}'],
+			'other conflict code' => [409, '{"code":"busy","needBytes":1,"availableBytes":1}'],
+			'locked with text numbers' => [409, '{"code":"profile_locked","needBytes":"1","availableBytes":1}'],
+			'not json' => [409, 'gateway down'],
+			'a list' => [400, '["window_zone"]'],
+		];
+	}
+
+	#[DataProvider('failedSaves')]
+	public function testAnAnswerOutOfShapeIsAFailedSave(int $status, string $body): void {
+		self::assertSame(['status' => 503, 'body' => null], $this->adminService($this->answer($body, $status))->saveResources(['offline' => true]));
+	}
+
+	public function testAServerErrorOrASilentBackendIsAFailedSave(): void {
+		self::assertSame(['status' => 503, 'body' => null], $this->adminService($this->answer('{"x":1}', 500))->saveResources(['offline' => true]));
+		self::assertSame(['status' => 503, 'body' => null], $this->adminService(['error' => 'timeout'])->saveResources(['offline' => true]));
+		self::assertSame(['status' => 503, 'body' => null], $this->adminService(null)->saveResources(['offline' => true]));
+		self::assertSame(['status' => 503, 'body' => null], $this->adminService($this->json(self::resourcesAnswer()), null)->saveResources(['offline' => true]));
+		self::assertSame(
+			['status' => 503, 'body' => null],
+			$this->adminService($this->json(self::resourcesAnswer(['proposed' => 'x'])))->saveResources(['offline' => true]),
+		);
+	}
+
+	public function testVerifyAsksTheBackendWithItsOwnBudget(): void {
+		$service = $this->adminService($this->json(['models' => self::modelList()]));
+
+		self::assertSame(['models' => self::modelList()], $service->verifyModels());
+		self::assertSame('/resources/verify', $this->calls[0]['path']);
+		self::assertSame('POST', $this->calls[0]['method']);
+		self::assertSame(ExAppService::VERIFY_TIMEOUT_SECONDS, $this->calls[0]['timeout']);
+	}
+
+	public function testAVerifyAnswerOutOfShapeIsNoAnswer(): void {
+		self::assertNull($this->adminService($this->json(['models' => self::modelList(), 'path' => '/x']))->verifyModels());
+		self::assertNull($this->adminService($this->json(['models' => self::modelList([0 => ['state' => 'gone']])]))->verifyModels());
+		self::assertNull($this->adminService($this->answer('{}', 500))->verifyModels());
+		self::assertNull($this->adminService($this->json(['models' => self::modelList()]), null)->verifyModels());
+	}
+
+	public function testOnlyZonesOfPhpAreZones(): void {
+		self::assertTrue(ExAppService::isZone('Europe/Berlin'));
+		self::assertTrue(ExAppService::isZone('UTC'));
+		self::assertFalse(ExAppService::isZone('Mars/Base'));
+		self::assertFalse(ExAppService::isZone('../etc/passwd'));
+	}
 }
