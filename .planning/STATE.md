@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: 05-05 complete (PHP resources routes, ResourceFormat, occ models)
-last_updated: "2026-11-18T10:31:49.367Z"
+stopped_at: 05-06 complete (catalogues T36 to T96)
+last_updated: "2026-11-18T10:37:09.562Z"
 last_activity: 2026-11-18
 progress:
   total_phases: 11
   completed_phases: 4
   total_plans: 106
-  completed_plans: 85
+  completed_plans: 86
   percent: 36
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-17)
 ## Current Position
 
 Phase: 5 (Ressourcen, Profile und Modellbezug)
-Plan: 05-05 fertig (Welle 1)
+Plan: 05-06 fertig (Welle 1)
 Status: Executing Phase 5
 Last activity: 2026-11-18
 
-Progress: [████████░░] 80%
+Progress: [████████░░] 81%
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [████████░░] 80%
 | Phase 04 P18 | 45min | 2 tasks | 12 files |
 | Phase 05 P04 | 35 min | 2 tasks | 4 files |
 | Phase 05 P05 | 60 min | 2 tasks | 17 files |
+| Phase 05 P06 | 30 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -193,5 +194,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-11-18T10:28:40.906Z
-Stopped at: 05-05 complete (PHP resources routes, ResourceFormat, occ models)
+Stopped at: 05-06 complete (catalogues T36 to T96)
 Resume file: None
