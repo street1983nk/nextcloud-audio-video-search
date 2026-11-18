@@ -212,3 +212,9 @@ Items acknowledged and carried forward from previous milestone close:
 Last session: 2026-11-18T15:00:00.000Z
 Stopped at: Welle 1 abgeschlossen (05-01 bis 05-06); 05-01: Linux-Spitze Parakeet amd64 1089 MiB, arm64 1124 MiB (Lauf 44304526791), Commit 9d0068b nur lokal; nächster Schritt Welle 2 nach Owner-Freigabe
 Resume file: None
+
+## Quick Tasks Completed
+
+| ID | Date | Task | Status |
+|----|------|------|--------|
+| 261118-lkb | 2026-11-18 | Security scans (CodeQL, REUSE, pip-audit) also on phase branches | done, CI proof pending |

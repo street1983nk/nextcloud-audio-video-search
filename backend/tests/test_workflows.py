@@ -64,6 +64,18 @@ def test_push_blocks_name_branches_or_release_tags_only() -> None:
         assert all(pattern == RELEASE_TAG for pattern in tag_patterns(source)), path.name
 
 
+def test_the_security_scans_run_on_main_and_on_the_phase_branches() -> None:
+    """A phase lives on its branch for weeks without a pull request: a scan
+    that runs on main only lets a new dependency through unaudited."""
+    block = on_block((WORKFLOWS / "security.yml").read_text(encoding="utf-8"))
+    push = block.split("  push:\n", 1)[1]
+    branches = re.search(r"^ {4}branches:\n((?: {6}- .*\n)+)", push, re.MULTILINE)
+    assert branches is not None
+    names = {line.strip()[2:].strip("'\"") for line in branches.group(1).splitlines()}
+
+    assert "**" in names or {"main", "phase-*"} <= names
+
+
 def test_the_signing_workflows_cannot_be_started_from_a_pull_request() -> None:
     for name in SECRET_HOLDERS:
         assert "pull_request" not in on_block((WORKFLOWS / name).read_text(encoding="utf-8")), name

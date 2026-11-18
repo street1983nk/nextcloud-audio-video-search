@@ -2,9 +2,16 @@ name: Security scans
 
 # Same three scans as Findling: CodeQL over the Python, REUSE licensing lint, and
 # pip-audit over the locked runtime set.
+#
+# The work of a phase lives on its phase branch for weeks before it reaches
+# main, and no pull request is open in between: without the phase branches
+# here a new dependency would be locked, built and deployed in CI without one
+# audit (found on 2026-11-18 with the Whisper runtime of plan 05-02).
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'phase-*'
   pull_request:
   schedule:
     - cron: '30 5 * * 1'
