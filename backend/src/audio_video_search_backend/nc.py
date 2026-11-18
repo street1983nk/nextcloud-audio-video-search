@@ -71,6 +71,7 @@ __all__ = [
     "report_init_status",
     "run_app",
     "set_handlers",
+    "set_models_offline",
 ]
 
 LOGGER = logging.getLogger(__name__)
@@ -739,19 +740,55 @@ async def fetch_head(file_id: int, user_id: str, *, client: httpx.AsyncClient | 
 # https, at most MODEL_MAX_REDIRECTS hops, never more bytes than expected. The
 # request carries no credential, no cookie and a user agent that names the
 # software and nothing else; nothing of the instance or its content goes out.
+# With the offline check true (set_models_offline) not even that request exists.
 MODEL_FETCHED: Final = "fetched"
 MODEL_FOREIGN_HOST: Final = "foreign_host"
 MODEL_HTTP_ERROR: Final = "http_error"
 MODEL_TOO_LARGE: Final = "too_large"
 MODEL_NETWORK: Final = "network"
+MODEL_OFFLINE: Final = "offline"
 MODEL_FETCH_OUTCOMES: Final = frozenset(
-    {MODEL_FETCHED, MODEL_FOREIGN_HOST, MODEL_HTTP_ERROR, MODEL_TOO_LARGE, MODEL_NETWORK}
+    {MODEL_FETCHED, MODEL_FOREIGN_HOST, MODEL_HTTP_ERROR, MODEL_TOO_LARGE, MODEL_NETWORK, MODEL_OFFLINE}
 )
 # Hugging Face and GitHub need one hop today; five leave room and still end a loop.
 MODEL_MAX_REDIRECTS: Final = 5
 # Connect fast or fail; a CDN may pause a while between two blocks.
 MODEL_TIMEOUT: Final = httpx.Timeout(60.0, connect=15.0)
 _REDIRECT_STATUS: Final = frozenset({301, 302, 303, 307, 308})
+
+
+def _always_online() -> bool:
+    return False
+
+
+# The offline lock (plan 05-08, PLAT-04, D-05-07). The model download is the
+# only way out of the container, so the lock sits here and nowhere else: both
+# fetch functions ask this check as their first act, on every call, and answer
+# MODEL_OFFLINE before a client exists and before a name is looked up.
+_OFFLINE_CHECK: Callable[[], bool] = _always_online
+
+
+def set_models_offline(check: Callable[[], bool]) -> None:
+    """Register the check that says whether model downloads are forbidden right now.
+
+    It is asked again before every download, so a switch takes effect at once.
+    Without a registered check the download is allowed.
+    """
+    global _OFFLINE_CHECK
+    _OFFLINE_CHECK = check
+
+
+def _models_offline() -> bool:
+    """Whether the download must not happen; logs the refusal with a code only."""
+    try:
+        offline = _OFFLINE_CHECK()
+    except Exception as error:
+        # Not knowing is no licence to connect: a check that fails counts as offline.
+        LOGGER.warning("offline check failed", extra={"error_type": type(error).__name__})
+        return True
+    if offline:
+        LOGGER.info("model download refused", extra={"outcome": MODEL_OFFLINE})
+    return offline
 
 
 def model_user_agent() -> str:
@@ -867,7 +904,12 @@ async def fetch_model_asset(
 
     A local write error (volume full, read only) is raised as the OSError it is;
     ``dest`` is removed first. Logs carry a code and an error type, never a URL.
+
+    With the offline check true the answer is ``offline`` at once: no client,
+    no name lookup, and ``dest`` is not touched.
     """
+    if _models_offline():
+        return MODEL_OFFLINE
     outcome = MODEL_NETWORK
     try:
         if client is not None:
@@ -911,7 +953,12 @@ async def fetch_model_part(
     cookies of one hop never sent to the next, never more bytes than expected.
     ``on_chunk`` sees every block after it is written. A local write error is
     raised as the OSError it is. Logs carry a code and an error type, never a URL.
+
+    With the offline check true the answer is ``offline`` at once: no client,
+    no name lookup, and the file is not touched, not even cut.
     """
+    if _models_offline():
+        return MODEL_OFFLINE
     outcome = MODEL_NETWORK
     try:
         await asyncio.to_thread(_cut_back, handle, start)

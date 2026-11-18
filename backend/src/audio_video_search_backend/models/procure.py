@@ -58,7 +58,9 @@ PRESENT: Final = "present"
 UNAVAILABLE: Final = "unavailable"
 WRONG_DIGEST: Final = "wrong_digest"
 NO_ROOM: Final = "no_room"
-PROCURE_OUTCOMES: Final = frozenset({PROCURED, PRESENT, UNAVAILABLE, WRONG_DIGEST, NO_ROOM})
+# A file is missing and the admin forbade the download (plan 05-08): nothing was asked.
+OFFLINE: Final = "offline"
+PROCURE_OUTCOMES: Final = frozenset({PROCURED, PRESENT, UNAVAILABLE, WRONG_DIGEST, NO_ROOM, OFFLINE})
 READY_OUTCOMES: Final = frozenset({PROCURED, PRESENT})
 
 PART_SUFFIX: Final = ".part"
@@ -191,6 +193,8 @@ async def _download(entry: catalog.ModelFile, directory: Path, fetch: FetchModel
         )
         if code == nc.MODEL_TOO_LARGE:
             return WRONG_DIGEST
+        if code == nc.MODEL_OFFLINE:
+            return OFFLINE
         if code != nc.MODEL_FETCHED:
             return UNAVAILABLE
         if received != entry.size or digest.hexdigest() != entry.sha256:
@@ -313,6 +317,8 @@ async def _append_parts(
         )
         if code == nc.MODEL_TOO_LARGE:
             return WRONG_DIGEST
+        if code == nc.MODEL_OFFLINE:
+            return OFFLINE
         if code != nc.MODEL_FETCHED:
             return UNAVAILABLE
         if received != piece.size or digest.hexdigest() != piece.sha256:
@@ -391,6 +397,9 @@ async def procure(
     silent overwrite. ``fetch`` brings whole files, ``fetch_part`` the parts of
     a file the release holds in parts. ``progress`` gets the bytes of this model
     done so far.
+
+    With the offline check of ``nc`` true, files on the volume are judged as
+    always (PRESENT, WRONG_DIGEST) and a missing one is OFFLINE without a request.
     """
     report = progress if progress is not None else _no_progress
     directory = model_dir(root, name)

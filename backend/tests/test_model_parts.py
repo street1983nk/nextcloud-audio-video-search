@@ -500,14 +500,16 @@ async def test_a_part_overwrites_what_stood_behind_the_start(tmp_path: Path) -> 
         (PART_BYTES[1] + b"!", nc.MODEL_TOO_LARGE),
     ],
 )
-async def test_a_failed_part_cuts_the_file_back_to_the_start(tmp_path: Path, body: bytes, expected: str) -> None:
+async def test_a_failed_part_cuts_the_file_back_to_the_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: bytes, expected: str
+) -> None:
     path = tmp_path / "model.bin.part"
+    # Small blocks and no declared length, so bytes are on the file before the
+    # count can refuse the answer.
+    monkeypatch.setattr(nc, "CHUNK_SIZE", 64)
 
     async def stream():
-        # No declared length and two blocks, so bytes are on the file before
-        # the count can refuse the answer.
-        yield body[:100]
-        yield body[100:]
+        yield body
 
     def handler(request: httpx.Request) -> httpx.Response:
         del request
