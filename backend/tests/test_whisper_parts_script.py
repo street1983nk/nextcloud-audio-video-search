@@ -292,6 +292,11 @@ def client_for(handler: Handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def body(status: int, data: bytes, headers: dict[str, str] | None = None) -> httpx.Response:
+    """An unread stream, as a real server gives it; ``content=`` would be read already."""
+    return httpx.Response(status, stream=httpx.ByteStream(data), headers=headers)
+
+
 def test_download_follows_the_cdn_redirect_and_checks_the_digest(script: ModuleType, tmp_path: Path) -> None:
     data = pattern(3000)
     seen: list[str] = []
@@ -300,7 +305,7 @@ def test_download_follows_the_cdn_redirect_and_checks_the_digest(script: ModuleT
         seen.append(request.url.host)
         if request.url.host == "huggingface.co":
             return httpx.Response(302, headers={"location": "https://us.aws.cdn.hf.co/blob?X-Signature=secret"})
-        return httpx.Response(200, content=data)
+        return body(200, data)
 
     dest = tmp_path / "model.bin"
     with client_for(handler) as client:
@@ -339,7 +344,7 @@ def test_a_wrong_digest_leaves_no_file(script: ModuleType, tmp_path: Path) -> No
     tampered = data[:-1] + bytes([data[-1] ^ 1])
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=tampered)
+        return body(200, tampered)
 
     dest = tmp_path / "model.bin"
     with client_for(handler) as client, pytest.raises(script.DigestError):
@@ -352,7 +357,7 @@ def test_a_body_longer_than_the_fixed_size_is_cut_off(script: ModuleType, tmp_pa
     data = pattern(3000)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=data + b"more")
+        return body(200, data + b"more")
 
     dest = tmp_path / "model.bin"
     with client_for(handler) as client, pytest.raises(script.FetchError, match="longer"):
@@ -365,7 +370,7 @@ def test_a_short_body_is_an_error_and_never_the_final_file(script: ModuleType, t
     data = pattern(3000)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=data[:1000])
+        return body(200, data[:1000])
 
     dest = tmp_path / "model.bin"
     with client_for(handler) as client, pytest.raises(script.FetchError, match="short"):
@@ -392,7 +397,7 @@ def test_a_started_download_goes_on_with_a_range(script: ModuleType, tmp_path: P
 
     def handler(request: httpx.Request) -> httpx.Response:
         ranges.append(request.headers.get("range"))
-        return httpx.Response(206, content=data[1200:], headers={"content-range": f"bytes 1200-2999/{len(data)}"})
+        return body(206, data[1200:], {"content-range": f"bytes 1200-2999/{len(data)}"})
 
     with client_for(handler) as client:
         script.download(client, "https://huggingface.co/x", dest, len(data), digest(data))
@@ -407,7 +412,7 @@ def test_a_server_without_range_starts_again_from_zero(script: ModuleType, tmp_p
     (tmp_path / "model.bin.part").write_bytes(b"stale bytes that do not belong")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=data)
+        return body(200, data)
 
     with client_for(handler) as client:
         script.download(client, "https://huggingface.co/x", dest, len(data), digest(data))
@@ -420,7 +425,7 @@ def test_a_range_answer_for_another_offset_is_refused(script: ModuleType, tmp_pa
     (tmp_path / "model.bin.part").write_bytes(data[:1200])
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(206, content=data[1000:], headers={"content-range": f"bytes 1000-2999/{len(data)}"})
+        return body(206, data[1000:], {"content-range": f"bytes 1000-2999/{len(data)}"})
 
     with client_for(handler) as client, pytest.raises(script.FetchError, match="range"):
         script.download(client, "https://huggingface.co/x", tmp_path / "model.bin", len(data), digest(data))
@@ -460,7 +465,7 @@ def test_output_names_hosts_only(script: ModuleType, tmp_path: Path, capsys: pyt
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "huggingface.co":
             return httpx.Response(302, headers={"location": "https://us.aws.cdn.hf.co/blob/abc?X-Signature=secret"})
-        return httpx.Response(200, content=data)
+        return body(200, data)
 
     with client_for(handler) as client:
         script.download(client, "https://huggingface.co/r/resolve/c/model.bin", tmp_path / "f", len(data), digest(data))
