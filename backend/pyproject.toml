@@ -14,11 +14,11 @@ dependencies = [
     # Same pins as Findling 1.6.x. nc-py-api owns the AppAPI contract (signed
     # requests, /enabled, /heartbeat, /init, declarative settings); the sync API
     # disappears in 0.31.0, so only the async entry points are used.
-    "nc-py-api[app]==0.30.3",
-    "fastapi==0.162.0",
+    "nc-py-api[app]==0.31.0",
+    "fastapi==0.165.0",
     # The derived search index (Findling pin, owner approved in plan 01-01;
     # wheel sha256 for amd64 and arm64 are held in uv.lock).
-    "tantivy==0.26.2",
+    "tantivy==0.27.0",
     # Streams the file bytes from the PHP content gateway (nc.py only).
     "httpx==0.28.1",
     # Parakeet-TDT-0.6B-v3 and Silero VAD (Apache-2.0, owner approved in plan 03-01;
@@ -29,7 +29,7 @@ dependencies = [
     "sherpa-onnx-core==2.0.1",
     # PCM buffers between ffmpeg and the engine (BSD-3-Clause, Findling pin, owner
     # approved in plan 03-01).
-    "numpy==2.5.4",
+    "numpy==2.5.5",
     # Text language of a window for the catch rule (BSD-3-Clause, owner approved in
     # plan 03-01); only py3langid.langid is used, never py3langid.server.
     "py3langid==0.4.0",
@@ -37,11 +37,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.17.3",
+    "ruff==0.17.6",
     "pyright==1.1.414",
     "vulture==2.16",
     "pytest==9.2.0",
-    "pytest-asyncio==1.4.1.post1",
+    "pytest-asyncio==1.5.0",
     "pytest-cov==7.1.0",
     "webvtt-py==0.8.0",
     "srt==3.5.3",
